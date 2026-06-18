@@ -4,22 +4,25 @@ Phase-by-phase build plan. Do not proceed to the next phase until the
 gate criteria are met. Claude Code should always know which phase is
 active and never build ahead of it.
 
+**Active phase: 0** (data backfill finalizing). Status legend:
+✅ done · 🔄 in progress · ⬜ not started.
+
 ---
 
 ## Overview
 
-| Phase | Scope | Gate |
-|---|---|---|
-| 0 | Scaffold + data pipeline + backfill | Clean data in Parquet and PostgreSQL |
-| 1 | Factor scoring | Factor scores look reasonable on historical data |
-| 2 | Optimizer + equity-only backtest | Backtest Sharpe > 1.0 after transaction costs |
-| 2b | Full strategy backtest including covered calls | Combined strategy Sharpe validated |
-| 3 | Execution engine + risk gate | Orders submit and fill correctly in paper account |
-| 4 | Covered call overlay | Calls written, rolled, and assigned correctly in paper |
-| 5 | Dashboard + alerting | Live dashboard shows portfolio state, alerts deliver |
-| 6 | Crypto allocation | Crypto positions added to paper portfolio |
-| 7 | Go-live | User-defined gate criteria met |
-| 8 | Leverage (TBD) | Live track record validated, CADIEM approval |
+| Phase | Scope | Gate | Status |
+|---|---|---|---|
+| 0 | Scaffold + data pipeline + backfill | Clean data in Parquet and PostgreSQL | 🔄 |
+| 1 | Factor scoring | Factor scores look reasonable on historical data | ⬜ |
+| 2 | Optimizer + equity-only backtest | Backtest Sharpe > 1.0 after transaction costs | ⬜ |
+| 2b | Full strategy backtest including covered calls | Combined strategy Sharpe validated | ⬜ |
+| 3 | Execution engine + risk gate | Orders submit and fill correctly in paper account | ⬜ |
+| 4 | Covered call overlay | Calls written, rolled, and assigned correctly in paper | ⬜ |
+| 5 | Dashboard + alerting | Live dashboard shows portfolio state, alerts deliver | ⬜ |
+| 6 | Crypto allocation | Crypto positions added to paper portfolio | ⬜ |
+| 7 | Go-live | User-defined gate criteria met | ⬜ |
+| 8 | Leverage (TBD) | Live track record validated, CADIEM approval | ⬜ |
 
 ---
 
@@ -28,50 +31,59 @@ active and never build ahead of it.
 **Goal:** Working data pipeline with clean historical data ready for
 factor computation.
 
+**Status (2026-06-18):** Build ✅ complete. Data backfill in progress —
+equities done (mid-2020→present; see gate note), fundamentals running
+(scoped to the liquid universe). Postgres schema created. Unit tests 22/22.
+
 **Build:**
 
-1. Repo structure — create all directories per CLAUDE.md layout
-2. `.gitignore` — exclude .env.*, data/, logs/, *.pyc, __pycache__
-3. `.env.paper` and `.env.live` — credential file templates (do not
+1. ✅ Repo structure — create all directories per CLAUDE.md layout
+2. ✅ `.gitignore` — exclude .env.*, data/, logs/, *.pyc, __pycache__
+3. ✅ `.env.paper` and `.env.live` — credential file templates (do not
    populate with real keys in the repo)
-4. `config/settings.yaml` — stub all parameter groups with starting
+4. ✅ `config/settings.yaml` — stub all parameter groups with starting
    values from ARCHITECTURE.md; nothing hardcoded in source files
-5. `requirements.txt`:
+5. ✅ `requirements.txt`:
    ```
    alpaca-py, yfinance, pandas, pyarrow, psycopg2-binary, sqlalchemy,
    apscheduler, cvxpy, pandas-datareader, requests,
    fastapi, uvicorn, pytz, pytest, python-dotenv, numpy, scipy
    ```
-6. PostgreSQL setup — create `sharpe_engine` database and all tables
+6. ✅ PostgreSQL setup — create `sharpe_engine` database and all tables
    defined in ARCHITECTURE.md via a `scripts/init_db.py` migration script
-7. `engine/logger.py` — shared structured JSON logger; daily rotation,
+7. ✅ `engine/logger.py` — shared structured JSON logger; daily rotation,
    30-day retention; imported by every module
-8. `scripts/backfill.py` — one-time historical data pull from ~2016:
+8. ✅ `scripts/backfill.py` — one-time historical data pull (target ~2016;
+   currently mid-2020 on the free IEX feed — see gate note and DECISIONS D21):
    - Alpaca historical OHLCV for full equity universe (adjustment='all')
-   - yfinance historical quarterly fundamentals for full universe
-     (quarterly_financials + quarterly_balance_sheet per ticker)
+   - yfinance historical quarterly fundamentals (scoped to the liquid
+     universe via `--fundamentals-universe liquid`)
    - Derives historical P/E and P/B from price history + quarterly EPS
      and book value; writes to `data/raw/fundamentals/YYYY-QN.parquet`
-   - Rate-limit aware: sleep between ticker pulls; retry logic; idempotent
+   - Rate-limit aware and **resumable**: sleeps, retry/backoff, per-year
+     (equities) and per-50-symbol checkpoint (fundamentals); idempotent
    - This script runs once before anything else; not part of daily pipeline
-9. `engine/ingest.py` — daily incremental pull:
+9. ✅ `engine/ingest.py` — daily incremental pull:
    - Today's OHLCV from Alpaca
    - yfinance fundamentals only if current quarter not already cached
    - Market calendar check via Alpaca API
    - 3 retries with exponential backoff (30s, 60s, 120s) on any failure
    - Same output schema as backfill — downstream modules see no difference
-10. `engine/reconcile.py` — position reconciliation stub (can be minimal
+10. ✅ `engine/reconcile.py` — position reconciliation stub (can be minimal
     at this stage since no positions exist yet, but module must exist)
 
 **Gate criteria:**
-- `python scripts/backfill.py` completes without errors
-- `data/raw/equities/` contains Parquet files from 2016 to present
-- `data/raw/fundamentals/` contains quarterly fundamental snapshots
-- `python engine/ingest.py` runs correctly for today's date
-- Backfill and daily ingest produce identical Parquet schema
-- Re-running either for the same date overwrites cleanly
-- `pytest tests/unit/test_ingest.py` passes (mock Alpaca + yfinance)
-- No credentials hardcoded anywhere; all from environment
+- ✅ `python scripts/backfill.py` completes without errors
+- ⚠️ `data/raw/equities/` contains Parquet files — **mid-2020 → present**,
+  not 2016: the free Alpaca IEX feed only serves history back to
+  ~2020-07-27 (DECISIONS D21). Full 2016+ history needs the paid SIP feed.
+- 🔄 `data/raw/fundamentals/` contains quarterly fundamental snapshots —
+  scoped backfill to the liquid universe (~2,700 names) in progress
+- ✅ `python -m engine.ingest` runs correctly for today's date
+- ✅ Backfill and daily ingest produce identical Parquet schema
+- ✅ Re-running either for the same date overwrites cleanly
+- ✅ `pytest tests/unit/test_ingest.py` passes (mock Alpaca + yfinance)
+- ✅ No credentials hardcoded anywhere; all from environment
 
 ---
 
@@ -93,7 +105,8 @@ sensible output on historical data.
    - Write daily factor scores to PostgreSQL `factor_scores` table
 
 2. `scripts/backtest_factors.py` — quick sanity check before optimizer:
-   - For each month from 2018 to present:
+   - For each month from 2018 to present (⚠️ bounded to mid-2020→present
+     on the free IEX feed until SIP is enabled — DECISIONS D21):
      - Compute factor scores on universe
      - Take top quintile by composite score, equally weight
      - Compute next-month return
@@ -131,7 +144,8 @@ sensible output on historical data.
    - Test in isolation with synthetic inputs first
 
 2. `scripts/backtest.py` — walk-forward monthly backtest:
-   - For each month from 2019 to present:
+   - For each month from 2019 to present (⚠️ bounded to mid-2020→present
+     on the free IEX feed until SIP is enabled — DECISIONS D21):
      - Run factors.py → optimize.py
      - Simulate execution: apply half-spread transaction cost on each trade
      - Apply T+1 settlement on equity sells

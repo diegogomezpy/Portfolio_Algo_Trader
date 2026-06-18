@@ -19,38 +19,49 @@ combined with a volatility risk premium harvest via covered calls.
 
 ## Repo layout
 
+Modules marked ⏳ are planned for a later phase and not built yet (see
+BUILD_ORDER.md); everything else exists today.
+
 ```
 sharpe-engine/
-├── CLAUDE.md                  ← you are here
+├── README.md                  ← project overview + setup
 ├── .env.paper                 ← paper trading credentials (never commit)
 ├── .env.live                  ← live trading credentials (never commit)
+├── .env.example               ← credential template (committed)
 ├── .gitignore                 ← excludes .env.*, data/, logs/
 ├── docs/
+│   ├── CLAUDE.md              ← you are here (primary anchor)
 │   ├── SPEC.md                ← what the system does
 │   ├── ARCHITECTURE.md        ← how it is built
 │   ├── DECISIONS.md           ← why key choices were made
-│   └── BUILD_ORDER.md         ← phase-by-phase build plan
+│   ├── BUILD_ORDER.md         ← phase-by-phase build plan
+│   └── CLI.md                 ← all command-line entry points
 ├── data/
 │   └── raw/
 │       ├── equities/          ← daily OHLCV Parquet per date
 │       └── fundamentals/      ← quarterly fundamental snapshots
 ├── engine/
+│   ├── config.py              ← env + settings.yaml loader, Alpaca client factory
+│   ├── logger.py              ← shared structured JSON logger
+│   ├── db.py                  ← PostgreSQL schema + connection factory
+│   ├── alpaca_client.py       ← thin Alpaca REST wrapper
 │   ├── ingest.py              ← Alpaca + yfinance data pulls
-│   ├── factors.py             ← factor score computation
-│   ├── optimize.py            ← cvxpy max-Sharpe optimizer
-│   ├── covered_calls.py       ← covered call selection + roll logic
-│   ├── execute.py             ← order routing + Alpaca execution
-│   ├── risk.py                ← pre-trade risk gate
-│   ├── reconcile.py           ← position reconciliation vs Alpaca
-│   └── monitor.py             ← drift monitor + NAV tracking
-├── dashboard/
+│   ├── reconcile.py           ← position reconciliation vs Alpaca (stub)
+│   ├── factors.py             ← ⏳ factor score computation
+│   ├── optimize.py            ← ⏳ cvxpy max-Sharpe optimizer
+│   ├── covered_calls.py       ← ⏳ covered call selection + roll logic
+│   ├── execute.py             ← ⏳ order routing + Alpaca execution
+│   ├── risk.py                ← ⏳ pre-trade risk gate
+│   └── monitor.py             ← ⏳ drift monitor + NAV tracking
+├── dashboard/                 ← ⏳ Phase 5
 │   ├── app.py                 ← FastAPI backend
 │   └── static/index.html      ← single-page dashboard
 ├── scripts/
+│   ├── init_db.py             ← create the PostgreSQL schema
 │   ├── backfill.py            ← one-time historical data pull
-│   ├── backtest.py            ← walk-forward backtest
-│   └── run_eod.py             ← scheduler entry point (terminal 1)
-│   └── run_dashboard.py       ← dashboard entry point (terminal 2)
+│   ├── backtest.py            ← ⏳ walk-forward backtest
+│   ├── run_eod.py             ← ⏳ scheduler entry point (terminal 1)
+│   └── run_dashboard.py       ← ⏳ dashboard entry point (terminal 2)
 ├── tests/
 │   ├── unit/                  ← one file per engine module
 │   └── integration/           ← full pipeline tests on synthetic data
@@ -94,7 +105,7 @@ sharpe-engine/
 | Testing | Unit + integration + backtest as system test |
 | Shutdown | SIGTERM handler: finish stage, cancel orders, exit 0 |
 | Logging | Daily rotation, 30-day retention, structured JSON |
-| Backfill | From ~2016, one-time script, separate from daily ingest |
+| Backfill | Target ~2016; currently from 2020-07-27 on the free IEX feed (DECISIONS D21). One-time script, separate from daily ingest |
 | Survivorship bias | ADV + price filter, point-in-time |
 | Settlement | T+1 equities, immediate crypto |
 | Corporate actions | adjustment='all' on all Alpaca price pulls |

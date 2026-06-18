@@ -89,6 +89,10 @@ Runs at the start of every rebalance cycle and daily for drift monitoring.
 - Daily OHLCV bars for full equity universe (adjustment='all')
 - Options chain snapshots for held positions (for covered call management)
 - Market calendar check (confirms trading day before proceeding)
+- Feed: free `iex` tier — history back to ~2020-07-27, IEX-exchange volume
+  only. Paid `sip` feed is the upgrade for 2016+ history and the
+  consolidated tape (DECISIONS D21). `end` is an exclusive bar-timestamp
+  boundary, so pulls go through `end+1` to include the as-of day.
 
 **yfinance (fundamentals — backtest and live):**
 - No API key required — free, installs via pip
@@ -421,6 +425,14 @@ all downstream jobs cancel for that day. Alert sent on any cancellation.
 universe:
   min_price: 5.0
   min_adv_usd: 1_000_000
+
+ingest:
+  backfill_start: "2020-07-27"   # free IEX feed history floor (DECISIONS D21)
+  adv_window: 20                 # trading days for average dollar volume
+  lookback_days: 40              # calendar days pulled daily to compute adv_20d
+  symbol_chunk_size: 200         # symbols per multi-symbol Alpaca bars request
+  request_sleep_s: 0.2           # rate-limit pause between batched requests
+  retry_backoff_s: [30, 60, 120] # exponential backoff on API failure
 
 portfolio:
   nav: 100_000

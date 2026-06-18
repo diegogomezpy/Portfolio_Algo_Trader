@@ -414,3 +414,32 @@ magnitude, which is empirical. Setting it upfront risks either a
 highly concentrated portfolio (μ too large relative to Σ) or a near
 equal-weight portfolio (μ too small). Phase 2 calibration with real
 historical data is the correct approach.
+
+---
+
+## D21 — Free IEX feed sets the backfill history floor (~mid-2020); SIP is the upgrade path
+
+**Decision:** The one-time backfill starts at **2020-07-27**
+(`settings.ingest.backfill_start`), not 2016. The free Alpaca **IEX** feed
+only serves daily history back to roughly that date and reports
+IEX-exchange volume only (a fraction of the consolidated tape). We proceed
+with ~6 years of free history for now; the paid **SIP** feed (~$99/mo) is
+the upgrade path for full 2016+ history and consolidated volume — and only
+`settings.ingest.backfill_start` plus the feed setting change, no code.
+
+**Why proceed on IEX:** ~6 years spans a full cycle (2020 COVID crash, 2022
+bear, 2023–25 recovery) — enough to validate factor signals in Phases 1–2.
+Paying for SIP before the strategy is validated is premature.
+
+**Consequence for backtests:** the equity backtest window is bounded to
+mid-2020→present until SIP is enabled. Partial IEX volume also means
+`adv_20d` understates true liquidity, so the universe filter is
+conservative (fewer names pass) — acceptable, and re-derived once on SIP.
+
+**Fundamentals scope (related):** the fundamentals backfill is scoped to
+the **liquid universe** (`--fundamentals-universe liquid`, ~2,700 names
+passing ADV>$1M / price>$5) rather than the full ~13k tradable universe.
+The illiquid/ETF tail is never traded, so pulling its fundamentals is ~11h
+of yfinance calls for nothing (~2h scoped instead). Survivorship caveat:
+the scope is *today's* liquid set; revisit for point-in-time coverage if a
+Phase 2 backtest needs it.
