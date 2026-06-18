@@ -35,6 +35,7 @@ from sqlalchemy import (
     String,
     Table,
     create_engine,
+    false,
     func,
 )
 from sqlalchemy.engine import Engine
@@ -112,7 +113,7 @@ pending_adjustments = Table(
     Column("delta_usd", Float),
     Column("qty", Float),
     Column("reason", String),
-    Column("applied", Boolean, server_default=func.false()),
+    Column("applied", Boolean, server_default=false()),
     Column("created_at", DateTime, server_default=func.now()),
 )
 
@@ -124,7 +125,7 @@ alerts = Table(
     Column("ts", DateTime, nullable=False, index=True),
     Column("alert_type", String, nullable=False, index=True),
     Column("message", String),
-    Column("delivered", Boolean, server_default=func.false()),
+    Column("delivered", Boolean, server_default=false()),
     Column("created_at", DateTime, server_default=func.now()),
 )
 
@@ -157,7 +158,7 @@ factor_scores = Table(
     Column("value_score", Float),
     Column("momentum_score", Float),
     Column("lowvol_score", Float),
-    Column("stale", Boolean, server_default=func.false()),
+    Column("stale", Boolean, server_default=false()),
     Column("created_at", DateTime, server_default=func.now()),
 )
 
