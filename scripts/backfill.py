@@ -9,10 +9,13 @@ Runs once before anything else; NOT part of the daily pipeline. Pulls:
 
 * **Fundamentals** — historical quarterly P/E, P/B, ROE, and gross margin
   derived from yfinance ``quarterly_financials`` + ``quarterly_balance_sheet``
-  per ticker (DECISIONS D7), written per-quarter and cached (skipped if present).
+  per ticker (DECISIONS D7). Checkpointed and resumable: progress is flushed to
+  the per-quarter files every N symbols (merging, not overwriting) and symbols
+  already on disk are skipped, so an interrupted run continues where it stopped.
 
-Idempotent and rate-limit aware (chunked requests, sleeps, retry/backoff). Safe
-to re-run; equity files overwrite, cached fundamental quarters are skipped.
+Idempotent, resumable, and rate-limit aware (chunked requests, sleeps,
+retry/backoff). Safe to re-run: completed equity years and fundamental symbols
+are skipped (pass --no-resume to force a full re-pull).
 
     python scripts/backfill.py --env paper
     python scripts/backfill.py --env paper --start 2016-01-01 --symbols AAPL,MSFT
@@ -39,6 +42,11 @@ from engine.logger import get_logger  # noqa: E402
 log = get_logger("backfill")
 
 
+def _year_has_files(prices_dir: Path, year: int) -> bool:
+    """True if any per-date equity Parquet for ``year`` already exists on disk."""
+    return any(Path(prices_dir).glob(f"{year}-*.parquet"))
+
+
 def backfill_equities(
     client,
     start: str,
@@ -50,15 +58,30 @@ def backfill_equities(
     chunk_size: int = 200,
     sleep_s: float = 0.2,
     backoff_s=ingest.DEFAULT_BACKOFF_S,
+    resume: bool = True,
 ) -> int:
-    """Backfill per-date equity Parquet files for ``[start, end]``. Returns files written."""
+    """Backfill per-date equity Parquet files for ``[start, end]``. Returns files written.
+
+    Resumable at year granularity: a fully-elapsed year that already has files on
+    disk was written by a prior run (daily ingest only ever writes the *current*
+    year), so ``resume`` skips re-pulling it. The current year is always pulled.
+    """
     start_d = datetime.fromisoformat(start).date()
     end_d = datetime.fromisoformat(end).date()
+    today = date.today()
     files_written = 0
 
     for year in range(start_d.year, end_d.year + 1):
         year_start = max(date(year, 1, 1), start_d)
         window_end = min(date(year, 12, 31), end_d)
+        # Resume: skip a past year already on disk. The realistic interruption — a
+        # kill during the network pull — leaves zero files for the in-progress year
+        # (it writes only after all chunks load), so that year is re-pulled cleanly
+        # while completed earlier years are skipped. Re-run with --no-resume to
+        # force a full re-pull (e.g. to repair a year partially written mid-flush).
+        if resume and window_end < today and _year_has_files(prices_dir, year):
+            log.info("equities year already on disk, skipping", extra={"year": year})
+            continue
         # Pull extra lookback so adv_20d is defined from the first day of the year.
         pull_start = (year_start - timedelta(days=adv_window * 2 + 15)).isoformat()
         # end is exclusive at the bar timestamp (daily bars stamped ~04:00Z), so pull
@@ -148,27 +171,85 @@ def derive_historical_fundamentals_yf(symbol: str) -> list[dict]:
     return records
 
 
+def _completed_symbols(fundamentals_dir: Path) -> set[str]:
+    """Symbols already present in any on-disk quarter file (i.e. fully derived).
+
+    A symbol's quarters are all produced by a single
+    :func:`derive_historical_fundamentals_yf` call, so presence in *any* quarter
+    file means it finished. Names yfinance returned nothing for (delisted / timed
+    out) never land on disk, so a re-run retries them — which is what we want.
+    """
+    done: set[str] = set()
+    for path in Path(fundamentals_dir).glob("*.parquet"):
+        try:
+            done |= set(pd.read_parquet(path).index)
+        except Exception:  # a half-written / corrupt file shouldn't abort resume
+            log.warning("could not read for resume", extra={"path": str(path)})
+    return done
+
+
+def _flush_quarters(by_quarter: dict[str, list[dict]], fundamentals_dir: Path) -> None:
+    """Merge buffered rows into the on-disk quarter files, then clear the buffer.
+
+    Each quarter file is read, rows for symbols in the new batch are replaced, and
+    everything else is preserved — so checkpoints accumulate instead of clobbering
+    earlier ones (``write_fundamentals_parquet`` is a whole-file overwrite). This
+    is what makes the backfill recoverable: progress is durable every flush.
+    """
+    fundamentals_dir = Path(fundamentals_dir)
+    for quarter, rows in by_quarter.items():
+        new = pd.DataFrame(rows).set_index("symbol")
+        new.index.name = "symbol"
+        path = fundamentals_dir / f"{quarter}.parquet"
+        if path.exists():
+            existing = pd.read_parquet(path)
+            kept = existing[~existing.index.isin(new.index)]
+            combined = pd.concat([kept, new]).sort_index()
+        else:
+            combined = new.sort_index()
+        ingest.write_fundamentals_parquet(combined, quarter, fundamentals_dir)
+    by_quarter.clear()
+
+
 def backfill_fundamentals(
     symbols: list[str],
     fundamentals_dir: Path = ingest.DEFAULT_FUNDAMENTALS_DIR,
     *,
     sleep_s: float = 0.5,
+    flush_every: int = 50,
+    resume: bool = True,
+    derive=derive_historical_fundamentals_yf,
 ) -> int:
-    """Backfill per-quarter fundamentals for ``symbols``. Returns quarter files written."""
+    """Backfill per-quarter fundamentals for ``symbols``. Returns quarter files on disk.
+
+    Checkpointed and resumable: symbols already on disk are skipped (``resume``),
+    and results are flushed/merged to the quarter files every ``flush_every``
+    symbols so an interrupted run loses at most that many symbols' work and a
+    re-run continues where it stopped. ``derive`` is injected for testing.
+    """
+    fundamentals_dir = Path(fundamentals_dir)
+    done = _completed_symbols(fundamentals_dir) if resume else set()
+    todo = [s for s in symbols if s not in done]
+    log.info(
+        "fundamentals backfill plan",
+        extra={"requested": len(symbols), "already_done": len(symbols) - len(todo), "todo": len(todo)},
+    )
+
     by_quarter: dict[str, list[dict]] = {}
-    for symbol in symbols:
-        for rec in derive_historical_fundamentals_yf(symbol):
+    for processed, symbol in enumerate(todo, start=1):
+        for rec in derive(symbol):
             by_quarter.setdefault(rec["quarter"], []).append(rec)
         if sleep_s:
             time.sleep(sleep_s)
+        if flush_every and processed % flush_every == 0 and by_quarter:
+            _flush_quarters(by_quarter, fundamentals_dir)
+            log.info("fundamentals checkpoint", extra={"processed": processed, "of": len(todo)})
 
-    written = 0
-    for quarter, rows in by_quarter.items():
-        frame = pd.DataFrame(rows).set_index("symbol")
-        frame.index.name = "symbol"
-        ingest.write_fundamentals_parquet(frame, quarter, fundamentals_dir)
-        written += 1
-    log.info("fundamentals backfill done", extra={"quarters": written, "symbols": len(symbols)})
+    if by_quarter:
+        _flush_quarters(by_quarter, fundamentals_dir)
+
+    written = len(list(fundamentals_dir.glob("*.parquet")))
+    log.info("fundamentals backfill done", extra={"quarter_files": written, "processed": len(todo)})
     return written
 
 
@@ -220,6 +301,12 @@ def main() -> None:
         "(ADV>$1M, price>$5, from the latest backfilled equities) to skip the "
         "~13k illiquid/ETF names we never trade",
     )
+    parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="re-pull everything, ignoring data already on disk (completed years "
+        "for equities, completed symbols for fundamentals)",
+    )
     args = parser.parse_args()
 
     config.load_env(args.env)
@@ -242,6 +329,7 @@ def main() -> None:
             chunk_size=settings.ingest.symbol_chunk_size,
             sleep_s=settings.ingest.request_sleep_s,
             backoff_s=tuple(settings.ingest.retry_backoff_s),
+            resume=not args.no_resume,
         )
         log.info("equities backfill complete", extra={"files": files})
 
@@ -254,7 +342,9 @@ def main() -> None:
             log.info("fundamentals scoped to liquid universe", extra={"symbols": len(fund_symbols)})
         else:
             fund_symbols = symbols
-        quarters = backfill_fundamentals(fund_symbols, sleep_s=settings.ingest.request_sleep_s)
+        quarters = backfill_fundamentals(
+            fund_symbols, sleep_s=settings.ingest.request_sleep_s, resume=not args.no_resume
+        )
         log.info("fundamentals backfill complete", extra={"quarters": quarters})
 
     print("Backfill complete.")

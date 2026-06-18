@@ -136,6 +136,7 @@ documented upgrade path, not a current dependency.
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How it is built |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Why key choices were made (source of truth) |
 | [docs/BUILD_ORDER.md](docs/BUILD_ORDER.md) | Phase-by-phase build plan and gates |
+| [docs/CLI.md](docs/CLI.md) | All command-line entry points and their flags |
 | [docs/CLAUDE.md](docs/CLAUDE.md) | Primary anchor / working agreement |
 
 ---

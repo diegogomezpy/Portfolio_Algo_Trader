@@ -12,6 +12,7 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from engine import ingest
 
@@ -78,3 +79,99 @@ def test_liquid_universe_uses_completed_day_not_partial_today(tmp_path):
 
     liq = backfill.liquid_universe(tmp_path, min_price=5.0, min_adv_usd=1e6)
     assert liq == ["AAA"]  # from the completed prior day, not today's partial
+
+
+def _rec(symbol, quarter):
+    """One derived-fundamental record, shaped like derive_historical_fundamentals_yf."""
+    return {
+        "symbol": symbol, "quarter": quarter, "pe_ratio": 10.0, "pb_ratio": 2.0,
+        "roe": 0.15, "gross_margin": 0.4, "report_date": "2025-03-31", "source": "yfinance",
+    }
+
+
+def test_backfill_fundamentals_resumes_and_merges(tmp_path):
+    # A symbol from a prior run already sits on disk (e.g. the proving set).
+    seed = pd.DataFrame([_rec("OLD", "2025-Q1")]).set_index("symbol")
+    ingest.write_fundamentals_parquet(seed, "2025-Q1", tmp_path)
+
+    derived = []
+
+    def fake_derive(symbol):
+        derived.append(symbol)
+        return [_rec(symbol, "2025-Q1")]
+
+    backfill.backfill_fundamentals(
+        ["OLD", "NEW"], tmp_path, sleep_s=0, flush_every=1, derive=fake_derive
+    )
+    assert derived == ["NEW"]  # OLD already on disk -> skipped (resume)
+    out = pd.read_parquet(tmp_path / "2025-Q1.parquet")
+    assert set(out.index) == {"OLD", "NEW"}  # merge kept OLD, added NEW (no clobber)
+
+
+def test_backfill_fundamentals_checkpoint_survives_interruption(tmp_path):
+    # Flush after every symbol; the second symbol blows up mid-run.
+    def derive_then_die(symbol):
+        if symbol == "B":
+            raise RuntimeError("network died")
+        return [_rec(symbol, "2025-Q1")]
+
+    with pytest.raises(RuntimeError):
+        backfill.backfill_fundamentals(
+            ["A", "B"], tmp_path, sleep_s=0, flush_every=1, derive=derive_then_die
+        )
+    # A was checkpointed before B failed -> durable on disk, not lost.
+    assert list(pd.read_parquet(tmp_path / "2025-Q1.parquet").index) == ["A"]
+
+    # Re-run resumes: A is skipped, only the previously-failed B is retried.
+    retried = []
+
+    def derive_ok(symbol):
+        retried.append(symbol)
+        return [_rec(symbol, "2025-Q1")]
+
+    backfill.backfill_fundamentals(
+        ["A", "B"], tmp_path, sleep_s=0, flush_every=1, derive=derive_ok
+    )
+    assert retried == ["B"]
+    assert set(pd.read_parquet(tmp_path / "2025-Q1.parquet").index) == {"A", "B"}
+
+
+class _RecordingClient:
+    """Fake Alpaca client that records each bars_multi window and returns nothing."""
+
+    def __init__(self):
+        self.windows = []  # list of (start, end) pull windows requested
+
+    def bars_multi(self, symbols, start, end, timeframe):
+        self.windows.append((start, end))
+        return {}  # no bars -> backfill writes nothing, but the call is recorded
+
+
+def test_year_has_files_detects_year_on_disk(tmp_path):
+    ingest.write_equities_parquet(_equity({"AAA": (10.0, 5e6)}), "2021-06-15", tmp_path)
+    assert backfill._year_has_files(tmp_path, 2021) is True
+    assert backfill._year_has_files(tmp_path, 2022) is False
+
+
+def test_backfill_equities_resume_skips_completed_year(tmp_path):
+    # 2021 already on disk (a prior run), 2022 missing. Both are past years.
+    ingest.write_equities_parquet(_equity({"AAA": (10.0, 5e6)}), "2021-06-15", tmp_path)
+    client = _RecordingClient()
+
+    backfill.backfill_equities(client, "2021-01-01", "2022-12-31", ["AAA"], tmp_path, sleep_s=0)
+
+    # Only 2022 was pulled; 2021 skipped. 2022's window ends exclusively at 2023-01-01.
+    assert len(client.windows) == 1
+    assert client.windows[0][1] == "2023-01-01"
+
+
+def test_backfill_equities_no_resume_repulls_every_year(tmp_path):
+    ingest.write_equities_parquet(_equity({"AAA": (10.0, 5e6)}), "2021-06-15", tmp_path)
+    client = _RecordingClient()
+
+    backfill.backfill_equities(
+        client, "2021-01-01", "2022-12-31", ["AAA"], tmp_path, sleep_s=0, resume=False
+    )
+
+    # resume disabled -> both 2021 and 2022 pulled despite 2021 being on disk.
+    assert len(client.windows) == 2
