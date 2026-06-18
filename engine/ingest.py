@@ -180,10 +180,14 @@ def ingest_equities(
     ``chunk_size`` batches via :meth:`AlpacaClient.bars_multi`. Returns the path.
     """
     start = (_coerce_date(as_of) - timedelta(days=lookback_days)).isoformat()
+    # Alpaca's `end` is an exclusive timestamp boundary and daily bars are stamped
+    # at ~04:00Z of their own day, so end=as_of would drop the as_of bar itself.
+    # Pull through the next day; equity_frame_for_date slices back to exactly as_of.
+    end = (_coerce_date(as_of) + timedelta(days=1)).isoformat()
     bars_by_symbol: dict[str, list[dict]] = {}
     for chunk in _chunks(symbols, chunk_size):
         batch = _with_retries(
-            lambda: client.bars_multi(list(chunk), start, as_of, "1Day"),
+            lambda: client.bars_multi(list(chunk), start, end, "1Day"),
             backoff_s,
             label=f"bars_multi[{len(chunk)}]",
         )

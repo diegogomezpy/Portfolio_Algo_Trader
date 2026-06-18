@@ -61,11 +61,14 @@ def backfill_equities(
         window_end = min(date(year, 12, 31), end_d)
         # Pull extra lookback so adv_20d is defined from the first day of the year.
         pull_start = (year_start - timedelta(days=adv_window * 2 + 15)).isoformat()
+        # end is exclusive at the bar timestamp (daily bars stamped ~04:00Z), so pull
+        # through the day after window_end; the date filter below trims the overshoot.
+        pull_end = (window_end + timedelta(days=1)).isoformat()
 
         parts: list[pd.DataFrame] = []
         for chunk in ingest._chunks(symbols, chunk_size):
             bars = ingest._with_retries(
-                lambda: client.bars_multi(list(chunk), pull_start, window_end.isoformat(), "1Day"),
+                lambda: client.bars_multi(list(chunk), pull_start, pull_end, "1Day"),
                 backoff_s,
                 label=f"backfill bars {year} [{len(chunk)}]",
             )
@@ -107,7 +110,10 @@ def derive_historical_fundamentals_yf(symbol: str) -> list[dict]:
         return []
 
     records: list[dict] = []
-    quarter_ends = list(income.columns)
+    # yfinance returns quarters newest-first; sort ascending so the trailing-4Q
+    # window in _trailing_sum looks back in time, not forward (avoids look-ahead
+    # bias and the 1-quarter-EPS bug that inflated P/E ~4x).
+    quarter_ends = sorted(income.columns)
     for i, qend in enumerate(quarter_ends):
         try:
             qdate = pd.Timestamp(qend).date()
@@ -166,6 +172,38 @@ def backfill_fundamentals(
     return written
 
 
+def liquid_universe(
+    prices_dir: Path = ingest.DEFAULT_PRICES_DIR,
+    *,
+    min_price: float,
+    min_adv_usd: float,
+) -> list[str]:
+    """Symbols passing the SPEC liquidity filter on the most recent backfilled date.
+
+    Reads the latest per-date equity Parquet and applies ``ingest.current_universe``
+    (price + dollar-ADV). Used to scope the fundamentals backfill to investable
+    names rather than the full ~13k tradable universe (mostly ETFs/micro-caps we
+    never trade). Returns a sorted symbol list; empty if no equity files exist.
+
+    Note: this is the *current* liquid snapshot. Names that were liquid years ago
+    but are not today won't get fundamentals — a survivorship caveat to revisit
+    when the Phase 2 backtest needs point-in-time fundamental coverage.
+    """
+    prices_dir = Path(prices_dir)
+    files = sorted(prices_dir.glob("*.parquet"))
+    if not files:
+        return []
+    # The current-day file may hold only a partial (intraday) bar — daily ingest
+    # runs EOD — which undercounts the universe (not all names have printed yet).
+    # Prefer the latest completed trading day strictly before today.
+    today = date.today().isoformat()
+    completed = [f for f in files if f.stem < today]
+    chosen = completed[-1] if completed else files[-1]
+    latest = ingest.load_equities(chosen.stem, prices_dir)
+    kept = ingest.current_universe(latest, min_price=min_price, min_adv_usd=min_adv_usd)
+    return sorted(kept.index)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="sharpe-engine one-time backfill")
     parser.add_argument("--env", choices=("paper", "live"), default="paper")
@@ -174,6 +212,14 @@ def main() -> None:
     parser.add_argument("--symbols", default=None, help="Comma-separated subset (default: full universe)")
     parser.add_argument("--skip-fundamentals", action="store_true")
     parser.add_argument("--skip-equities", action="store_true")
+    parser.add_argument(
+        "--fundamentals-universe",
+        choices=("all", "liquid"),
+        default="all",
+        help="symbols to pull fundamentals for: 'all' (full universe) or 'liquid' "
+        "(ADV>$1M, price>$5, from the latest backfilled equities) to skip the "
+        "~13k illiquid/ETF names we never trade",
+    )
     args = parser.parse_args()
 
     config.load_env(args.env)
@@ -200,7 +246,15 @@ def main() -> None:
         log.info("equities backfill complete", extra={"files": files})
 
     if not args.skip_fundamentals:
-        quarters = backfill_fundamentals(symbols, sleep_s=settings.ingest.request_sleep_s)
+        if args.fundamentals_universe == "liquid":
+            fund_symbols = liquid_universe(
+                min_price=settings.universe.min_price,
+                min_adv_usd=settings.universe.min_adv_usd,
+            )
+            log.info("fundamentals scoped to liquid universe", extra={"symbols": len(fund_symbols)})
+        else:
+            fund_symbols = symbols
+        quarters = backfill_fundamentals(fund_symbols, sleep_s=settings.ingest.request_sleep_s)
         log.info("fundamentals backfill complete", extra={"quarters": quarters})
 
     print("Backfill complete.")
@@ -222,11 +276,20 @@ def _row(frame, labels: tuple[str, ...], column) -> float | None:
 
 
 def _trailing_sum(frame, labels, columns, end_idx: int, n: int) -> float | None:
-    """Sum a line item over the ``n`` quarters ending at ``end_idx`` (inclusive)."""
-    cols = columns[max(0, end_idx - n + 1) : end_idx + 1]
+    """Sum a line item over the ``n`` quarters ending at ``end_idx`` (inclusive).
+
+    ``columns`` must be ascending (oldest→newest) so the window is
+    ``[end_idx-n+1 .. end_idx]`` — i.e. looking back in time. Returns ``None``
+    unless all ``n`` quarters are present and non-null; partial windows (the first
+    few quarters of available history) yield no value rather than an understated,
+    misleading sum that would distort the derived P/E.
+    """
+    if end_idx - n + 1 < 0:
+        return None
+    cols = columns[end_idx - n + 1 : end_idx + 1]
     vals = [_row(frame, labels, c) for c in cols]
     vals = [v for v in vals if v is not None]
-    return sum(vals) if len(vals) == min(n, end_idx + 1) else None
+    return sum(vals) if len(vals) == n else None
 
 
 def _price_on_or_before(prices, when: date) -> float | None:

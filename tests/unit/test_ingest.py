@@ -41,13 +41,25 @@ def bars_by_symbol():
 
 
 class MockAlpaca:
-    """Minimal stand-in for AlpacaClient.bars_multi."""
+    """Stand-in for AlpacaClient.bars_multi that honors Alpaca's date range.
+
+    Crucially models that Alpaca's ``end`` is an *exclusive* timestamp boundary:
+    a daily bar dated ``D`` is only returned when ``end`` is strictly after ``D``
+    (in practice ``end >= D+1``). If the mock ignored ``end``, the ingest path's
+    end-boundary handling would go untested — that exact gap hid a real bug where
+    ``ingest_equities`` dropped the as_of bar.
+    """
 
     def __init__(self, bars):
         self._bars = bars
 
     def bars_multi(self, symbols, start, end, timeframe="1Day"):
-        return {s: self._bars[s] for s in symbols if s in self._bars}
+        s_day, e_day = start[:10], end[:10]
+        return {
+            s: [b for b in self._bars[s] if s_day <= b["time"][:10] < e_day]
+            for s in symbols
+            if s in self._bars
+        }
 
 
 # ----------------------------- pure compute ------------------------------- #
@@ -128,6 +140,19 @@ def test_ingest_equities_writes_as_of(bars_by_symbol, tmp_path):
     loaded = ingest.load_equities(AS_OF, tmp_path)
     assert list(loaded.index) == ["AAPL", "MSFT"]
     assert loaded.loc["AAPL", "adv_20d"] == pytest.approx(1200.0)
+
+
+def test_ingest_pulls_through_as_of_exclusive_end(bars_by_symbol, tmp_path):
+    """Regression: Alpaca's ``end`` is exclusive, so ingest must request through
+    ``as_of + 1`` or it silently drops the as_of bar and writes an empty file.
+    With the boundary-aware MockAlpaca, end=as_of would yield an empty frame."""
+    client = MockAlpaca(bars_by_symbol)
+    ingest.ingest_equities(
+        client, AS_OF, ["AAPL", "MSFT"], tmp_path, adv_window=3, chunk_size=1
+    )
+    loaded = ingest.load_equities(AS_OF, tmp_path)
+    assert not loaded.empty  # the as_of bar survived the exclusive end boundary
+    assert loaded.loc["AAPL", "close"] == 130  # value from the AS_OF bar itself
 
 
 # ------------------------------ fundamentals ----------------------------- #

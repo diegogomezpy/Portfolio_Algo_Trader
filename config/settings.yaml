@@ -49,7 +49,10 @@ covariance:
   factor_source: pandas_datareader
 
 ingest:
-  backfill_start: "2016-01-01"   # one-time historical pull start date
+  # Free Alpaca IEX feed only has consolidated history from ~2020-07-27; full
+  # 2016+ history needs the paid SIP feed (documented upgrade path). Decided
+  # 2026-06-18 to proceed with the free ~6yr window for now.
+  backfill_start: "2020-07-27"   # one-time historical pull start date
   adv_window: 20                 # trading days for average dollar volume
   lookback_days: 40              # calendar days pulled daily to compute adv_20d
   symbol_chunk_size: 200         # symbols per multi-symbol Alpaca bars request
