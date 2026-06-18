@@ -1,0 +1,23 @@
+# Secrets / environment — real credentials live in .env.paper / .env.live
+.env
+.env.paper
+.env.live
+
+# Regenerable / large artifacts
+data/
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Virtualenvs
+.venv/
+venv/
+
+# OS / editor
+.DS_Store

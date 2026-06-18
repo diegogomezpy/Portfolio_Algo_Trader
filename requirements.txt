@@ -1,0 +1,34 @@
+# sharpe-engine runtime + dev dependencies.
+# Pin in a follow-up once the environment is validated (Phase 0).
+
+# Broker / market data
+alpaca-py
+yfinance
+pandas-datareader
+
+# Data handling
+pandas
+numpy
+scipy
+pyarrow
+
+# Operational store
+psycopg2-binary
+SQLAlchemy
+
+# Optimizer (Phase 2)
+cvxpy
+
+# Scheduler / runtime
+apscheduler
+pytz
+requests
+python-dotenv
+PyYAML
+
+# Dashboard (Phase 5)
+fastapi
+uvicorn
+
+# Testing
+pytest

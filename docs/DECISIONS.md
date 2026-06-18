@@ -1,0 +1,416 @@
+# DECISIONS.md — sharpe-engine
+
+Why key decisions were made. Read before changing anything structural.
+
+---
+
+## D1 — Factor investing over ML return prediction
+
+**Decision:** The equity scoring model uses explicit, formula-based factor
+scores (quality, value, momentum, low-vol) rather than a machine learning
+model predicting forward returns.
+
+**Why:** Cross-sectional return prediction from price features is the most
+crowded, most efficiently arbitraged signal space in finance. A LightGBM
+model trained on standard momentum and vol features in 2026 competes with
+Renaissance, Two Sigma, and thousands of quant funds who have been trading
+these signals for decades. The half-life of ML price signals has compressed
+dramatically as more capital chases them.
+
+Factor premia are different — they are persistent risk premia with 50 years
+of academic evidence across dozens of markets and time periods. They work
+because they are compensation for systematic risk, not because they identify
+mispricings. This makes them more durable and more defensible to management.
+
+**Why this fits CADIEM's mandate:** The goal is capital preservation and
+uncorrelated returns, not alpha generation. A clean factor portfolio with
+an options income overlay is honest about what it is, easy to explain to
+an investment committee, and has a credible academic track record. A black-
+box ML model is harder to defend when it goes through a bad stretch.
+
+---
+
+## D2 — Equal factor weights to start, adjust after backtesting
+
+**Decision:** Quality, value, momentum, and low-vol are weighted equally
+(25% each) in the composite score. Weights will be adjusted after seeing
+backtest results.
+
+**Why equal weights:** Equal weighting is the most defensible starting
+point when you don't have a strong prior on which factors will dominate
+in the backtest period. Research-based weights (e.g. quality 35%, low-vol
+30%) embed assumptions about future factor premia that may not hold.
+Equal weighting also avoids overfitting the weight selection to historical
+data before the backtest is run.
+
+**What was considered:** Research-based weights from academic Sharpe
+rankings (Novy-Marx quality, Frazzini-Pedersen low-vol, Jegadeesh-Titman
+momentum, Fama-French value). These would tilt toward quality and low-vol
+given the capital preservation mandate. Revisit after backtest if equal
+weighting produces a clearly suboptimal factor mix.
+
+---
+
+## D3 — Covered call overlay as primary income source
+
+**Decision:** The system writes covered calls (delta = 0.25, 30-45 DTE)
+against held equity positions to harvest the volatility risk premium.
+
+**Why covered calls over cash-secured puts:** Puts require holding large
+cash reserves as collateral — dead weight in a prop book. Covered calls
+generate income on capital that is already deployed in the factor portfolio.
+The capped upside is acceptable given the capital preservation mandate —
+CADIEM doesn't need 50% years, they need consistent income.
+
+**Why not the wheel strategy (puts + calls):** Additional operational
+complexity. The put side creates cash drag. For a first version, covered
+calls alone are cleaner and more controllable. Puts can be added later.
+
+**Academic basis:** The volatility risk premium — implied vol persistently
+overstating realized vol — is one of the most robust anomalies in options
+markets. The CBOE BuyWrite Index (BXM) has historically delivered similar
+returns to the S&P 500 with ~30% lower volatility. Premium is typically
+1-3% annualized on a risk-adjusted basis above buy-and-hold. It is a risk
+premium (compensation for bearing vol risk), not pure alpha, and it
+underperforms in strong bull markets.
+
+---
+
+## D4 — Delta = 0.25 targeting for strike selection
+
+**Decision:** Covered calls are written at the strike with delta closest
+to 0.25, regardless of the stock or its factor classification.
+
+**Why delta targeting over fixed OTM percentage:** A fixed 7% OTM strike
+means very different things for a 15% vol stock vs a 40% vol stock. Delta
+targeting gives a consistent probability of assignment (~25%) across all
+names and adapts naturally to each stock's volatility. In high-IV
+environments the call is further OTM in dollar terms; in low-IV
+environments it is closer, maximizing premium relative to assignment risk.
+
+**Why 0.25:** Balances premium income against upside capture. A delta of
+0.25 means roughly 25% probability of assignment — low enough to let most
+winners run, high enough to collect meaningful premium. Industry standard
+for systematic covered call programs.
+
+**What was considered:** Factor-specific delta targeting (0.15 for
+momentum, 0.30 for quality/low-vol, 0.20 for value). This is the natural
+upgrade once the base strategy is validated — momentum names should have
+wider strikes to let winners run. Uniform delta is the right starting point.
+
+---
+
+## D5 — No regime filter; quality and low-vol factors handle defensiveness
+
+**Decision:** No regime filter. The system maintains a stable base equity
+allocation (95%) at all times. Defensive rotation in risk-off environments
+is handled naturally by the factor model — quality and low-vol stocks
+outperform in downturns, so the optimizer naturally tilts defensive when
+these factors score highly.
+
+**Why drop the regime filter:** The factor model already adapts defensively.
+High-quality, low-vol stocks by definition hold up better in market stress.
+Adding a regime filter on top creates double-counting — the portfolio would
+reduce equity allocation AND rotate defensively at the same time, making
+the risk-off response too aggressive. Simplicity is also a virtue: the
+fewer moving parts, the easier the system is to audit and explain to CADIEM.
+
+**What was considered:** Composite z-score regime filter using VIX, yield
+curve, and HY credit spread. Rejected because: (1) factor model subsumes
+this defensiveness naturally, (2) macro timing is notoriously unreliable
+and most regime filters destroy rather than add value over full cycles,
+(3) removes FRED as a dependency, simplifying the data pipeline.
+
+---
+
+## D6 — Monthly rebalance primary, L1 drift threshold secondary
+
+**Decision:** The primary rebalance trigger is the first trading day of
+each calendar month. A secondary drift trigger fires an out-of-cycle
+rebalance if L1 weight drift exceeds a threshold.
+
+**Why monthly over daily:** Factor scores change slowly — fundamentals
+update quarterly, momentum is stable over weeks. Daily rebalancing
+generates unnecessary turnover and transaction costs without improving
+the portfolio meaningfully. Monthly rebalancing is standard for factor
+portfolios and consistent with the low-turnover nature of the strategy.
+
+**Why keep a drift trigger:** Large market dislocations (e.g. a 15%
+market crash) can rapidly move the portfolio far from its factor targets
+as some sectors fall more than others. A drift trigger catches these
+events without waiting up to a month for the next scheduled rebalance.
+
+**Threshold:** TBD — calibrate during backtesting. Starting suggestion
+8% L1 drift. Factor portfolios are less sensitive to drift than ML
+signal portfolios because the signals are slow-moving.
+
+---
+
+## D7 — yfinance for fundamentals, FMP/Bloomberg as upgrade path
+
+**Decision:** yfinance provides fundamental data (P/E, P/B, ROE, gross
+margins) for both backtesting and live trading. No API key required.
+Upgrade to FMP paid tier or Bloomberg API when available.
+
+**Why yfinance over FMP free tier:**
+No API key, no rate limit concerns for the backfill, no signup required.
+For getting the system built and validated quickly, yfinance removes all
+data source friction. FMP and Bloomberg are better long-term solutions
+but the switching cost is low — only engine/ingest.py needs to change.
+
+**Why yfinance over Bloomberg manual export:**
+The Bloomberg export requires manual batching of 2,000-3,000 tickers
+across multiple Excel sessions — a multi-hour process before a single
+line of code can be written. yfinance provides the same fields
+programmatically and lets Phase 0 start immediately.
+
+**Known limitation — look-ahead bias:**
+yfinance serves current restated fundamentals rather than as-reported
+point-in-time data. For backtesting quality and value factors in 2019,
+the P/E and ROE figures may reflect subsequent restatements. This makes
+the backtest quality and value signals slightly optimistic. Mentally
+discount the backtest Sharpe by ~5-10% and document this limitation
+clearly in any CADIEM presentation.
+
+**Known limitation — reliability:**
+yfinance is an unofficial Yahoo Finance scraper and can break when Yahoo
+changes their backend. For quarterly fundamental updates in a live system,
+brief outages are acceptable — if yfinance is down for a few days, the
+cached quarterly fundamentals from the last pull remain valid.
+
+**Upgrade path:**
+When Bloomberg API access becomes available or FMP paid tier is justified
+by live system performance, swap yfinance for the new source in
+engine/ingest.py only. All downstream modules are agnostic to the
+fundamental data source.
+
+---
+
+## D8 — Fama-French 5 factor model for covariance
+
+**Decision:** Portfolio covariance estimated via Fama-French 5 factor
+model (Σ = BFBᵀ + D). Factor returns from Ken French library via
+pandas-datareader. Accept 3-5 day publication lag.
+
+**Why factor model:** The full Alpaca universe (8,000+ symbols) makes
+sample covariance singular — more parameters than observations. Factor
+models scale to any universe size by decomposing covariance into a
+small number of common factors plus idiosyncratic noise.
+
+**Why FF5 specifically:** The five factors (market, size, value,
+profitability, investment) align directly with the factor scores being
+computed — using the same factor structure for both scoring and
+covariance estimation is consistent and interpretable.
+
+---
+
+## D9 — Conditional re-entry after assignment
+
+**Decision:** When a covered call is exercised, re-enter the position
+only if the stock's current composite factor score is above the
+configured re-entry threshold.
+
+**Why conditional over automatic:** Automatic re-entry can mean buying
+back a stock that just ran 8% above your strike — paying a high price
+to re-enter something you just sold cheaper. The factor score is the
+objective measure of whether the position is still worth holding.
+If momentum has peaked and the stock's composite score has fallen,
+letting the cash deploy naturally at the next monthly rebalance is
+the right call.
+
+---
+
+## D10 — No ML, no model versioning, no training pipeline
+
+**Decision:** There are no machine learning models in this system.
+Factor scores are computed from explicit formulas. No training,
+no serialized model files, no IC validation, no signal decay analysis.
+
+**Why this simplifies the system significantly:** Removes the entire
+ML infrastructure: no training scripts, no model versioning, no
+rollback logic, no held-out test sets, no backfill_meta, no
+meta-model cold start problem. The system is simpler, more auditable,
+and easier to explain to CADIEM management.
+
+**What replaces model quality monitoring:** Factor score stability
+monitoring in the dashboard (are factor scores behaving reasonably?),
+backtest performance attribution by factor (which factors contributed
+in which periods?), and live P&L attribution (equity vs covered call
+premium component).
+
+---
+
+## D11 — Leverage deferred to post-live validation
+
+**Decision:** The system launches unlevered (weights sum to ≤ 1.0).
+1.5x margin leverage via Alpaca is a planned Phase 8 addition after
+the live strategy has a validated track record.
+
+**Why defer:** Paper trading validates signal quality and execution.
+Live unlevered validates real-world performance. Adding leverage to
+an unvalidated strategy amplifies both returns and errors. Presenting
+an unlevered system to CADIEM first also builds trust — it's easier
+to add leverage to a proven strategy than to explain leverage losses
+on an unproven one.
+
+**Implementation when added:** Alpaca margin account, optimizer
+weight sum constraint changed from 1.0 to 1.5, margin utilization
+check added to risk gate. No other changes required.
+
+---
+
+## D12 — Crypto as small allocation, size TBD
+
+**Decision:** A small crypto allocation is included for diversification
+but the exact size is deferred until the equity strategy is validated.
+
+**Why include crypto:** Low correlation to equities provides genuine
+portfolio diversification. At small allocations the tail risk is
+bounded and the diversification benefit is real.
+
+**Why defer sizing:** Crypto's volatility profile means even a 5%
+allocation can dominate portfolio drawdown in a severe crypto crash
+(-80% on BTC = -4% on total NAV at 5% allocation). The right size
+depends on the equity portfolio's vol profile, which becomes clear
+after backtesting. A reasonable starting range is 3-7%.
+
+---
+
+## D13 — Alpaca as source of truth, reconcile at every startup
+
+**Decision:** PostgreSQL is reconciled against Alpaca live positions
+at every pipeline startup. Alpaca is always source of truth.
+Pipeline is blocked if Alpaca is unreachable.
+
+---
+
+## D14 — Monthly rebalance, daily monitoring, 2-year raw data retention
+
+**Decision:** Raw Parquet equity files kept for 2 years (rolling).
+Fundamental Parquet files kept forever. Disk usage monitored.
+
+**Why 2 years for raw prices:** The factor computation needs
+252 trading days (1 year) of price history for momentum and vol.
+2 years provides a generous buffer. Raw prices can be re-pulled
+from Alpaca's historical API if needed — they are not the primary
+asset. Fundamental data is kept forever as it is harder to
+reconstruct and changes meaningfully over time.
+
+---
+
+## Open decisions
+
+| Decision | What's needed to resolve it |
+|---|---|
+| L1 drift threshold | Backtest calibration — start at 8% |
+| Sector cap | Backtest — start at 30% |
+| Factor weight adjustment | Run backtest, check factor contribution |
+| Crypto allocation size | After equity backtest — likely 3-7% |
+| Go-live gate criteria | User-defined before real capital deployed |
+| DB backup | Set up before go-live |
+| Secret rotation | Set up before go-live |
+| Leverage details | After live track record established |
+| Covered call re-entry threshold | Calibrate in backtest |
+
+---
+
+## D15 — Close all covered calls at monthly rebalance, rewrite fresh
+
+**Decision:** At each monthly rebalance, all existing covered calls are
+closed before equity trades execute. After new equity positions are set,
+calls are rewritten fresh against the new portfolio.
+
+**Why close all rather than selectively:** Selectively keeping calls on
+positions that are being held requires tracking which calls are still
+appropriate for the new position sizes and weights. Closing everything
+and rewriting fresh is simpler, always correct, and ensures calls are
+always aligned to current positions. The additional transaction cost is
+minimal at monthly frequency.
+
+---
+
+## D16 — Close covered calls before earnings, rewrite after
+
+**Decision:** Any covered call on a stock with an earnings announcement
+within the call's remaining DTE window is closed before the announcement
+and rewritten after. Systematic, no discretion.
+
+**Why:** Earnings announcements cause gap moves that make covered calls
+unpredictable. A large upside gap means the call is exercised far below
+the new price — the upside is captured by the counterparty, not the
+portfolio. A large downside gap means the call provided almost no
+protection and you still hold a losing position. Closing before earnings
+removes this binary risk cleanly.
+
+**How earnings dates are sourced:** Alpaca provides earnings calendar
+data via their news/corporate actions API. Alternatively, yfinance
+provides earnings dates (`ticker.calendar` / `ticker.earnings_dates`).
+
+---
+
+## D17 — Mini options contracts where available, standard otherwise
+
+**Decision:** The covered call module prefers mini options contracts
+(10 shares per contract) where available on Alpaca. Standard contracts
+(100 shares) are used where mini contracts are not listed.
+
+**Why:** At $100k NAV with 20-30 names, average position size is $3,300-
+$5,000. On a $200 stock that is 16-25 shares. One standard contract
+requires 100 shares ($20,000 notional) — most positions can't support
+even one contract. Mini contracts require only 10 shares ($2,000
+notional), making the covered call overlay viable across the full
+portfolio rather than only on the largest positions.
+
+**Minimum position for mini contract:** $2,000 notional at minimum
+(10 shares × $200 stock). The $4,000 minimum position size ensures
+most positions can support at least 2 mini contracts.
+
+---
+
+## D18 — Minimum position size $4,000
+
+**Decision:** Increased from $2,000 to $4,000 to ensure covered call
+eligibility. A $4,000 position supports at least 2 mini contracts on
+stocks up to $200/share, giving meaningful options overlay coverage
+across the portfolio.
+
+**Tradeoff:** Fewer names in the portfolio at $100k NAV. At $4,000
+minimum, maximum holdings drops from 50 to 25. This is acceptable and
+consistent with the target of 20-30 names.
+
+---
+
+## D19 — Price factors recomputed daily, fundamentals from last quarterly pull
+
+**Decision:** On non-rebalance days, momentum and realized vol are
+recomputed fresh from that day's prices. Quality and value scores use
+the most recent quarterly fundamental pull and are not updated intraday
+or daily.
+
+**Why:** Momentum and vol are pure price derivatives — trivial to
+recompute daily and meaningfully updated by each day's price move.
+Fundamentals (P/E, ROE, gross margin) are reported quarterly and don't
+change between earnings releases. Pulling fundamentals daily when they
+haven't changed wastes API calls and adds complexity.
+
+**For drift-triggered rebalances:** The optimizer uses fresh momentum/vol
+scores from today's prices combined with the most recent quarterly
+fundamental scores. This is the most current information available and
+is appropriate — a mid-month drift rebalance is responding to price
+moves, so fresh price-derived factors are what matter most.
+
+---
+
+## D20 — μ scaling TBD, calibrate in Phase 2
+
+**Decision:** The mapping from composite factor scores to optimizer μ
+(expected returns) is not hardcoded. Rank-normalized scores will be
+scaled to annualized return space (rank/N × target_return_scale) and
+target_return_scale + λ calibrated together during Phase 2 to produce
+the desired 20-30 name portfolio with reasonable weight distribution.
+
+**Why defer:** The right scaling depends on the covariance matrix
+magnitude, which is empirical. Setting it upfront risks either a
+highly concentrated portfolio (μ too large relative to Σ) or a near
+equal-weight portfolio (μ too small). Phase 2 calibration with real
+historical data is the correct approach.

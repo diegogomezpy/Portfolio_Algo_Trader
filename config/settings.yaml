@@ -1,0 +1,66 @@
+# sharpe-engine tuneable parameters. Nothing in source code hardcodes these.
+# Starting values per ARCHITECTURE.md; TBD items are calibrated in backtest.
+
+universe:
+  min_price: 5.0
+  min_adv_usd: 1_000_000
+
+portfolio:
+  nav: 100_000
+  min_position_usd: 4_000        # sized for covered-call (mini) contract eligibility
+  max_single_name_pct: 0.10
+  max_sector_pct: 0.30
+  base_equity_allocation: 0.95   # 95% equity, 5% cash buffer (no regime filter)
+  infeasibility_max_retries: 3
+  risk_aversion_lambda: 1.0
+
+factors:
+  weights:
+    quality: 0.25
+    value: 0.25
+    momentum: 0.25
+    low_vol: 0.25
+  momentum_long_window: 252      # 12 months
+  momentum_short_window: 21      # 1 month (excluded from momentum)
+  vol_window: 252
+  exclude_missing_fundamentals: false
+
+rebalancing:
+  primary: monthly               # first trading day of month
+  drift_threshold_l1: 0.08       # TBD — calibrate in backtest
+
+covered_calls:
+  target_delta: 0.25
+  min_dte_entry: 30
+  max_dte_entry: 45
+  roll_dte_trigger: 21
+  reentry_threshold: 0.0         # re-enter if composite score > 0 after assignment
+  prefer_mini_contracts: true    # use 10-share mini contracts where available
+  close_before_earnings: true    # always close calls before earnings announcement
+
+execution:
+  min_trade_usd: 500
+  large_cap_adv_threshold: 50_000_000
+  spread_threshold: 0.001
+  price_adjustment: all
+
+covariance:
+  estimation_window_days: 60
+  factor_source: pandas_datareader
+
+ingest:
+  backfill_start: "2016-01-01"   # one-time historical pull start date
+  adv_window: 20                 # trading days for average dollar volume
+  lookback_days: 40              # calendar days pulled daily to compute adv_20d
+  symbol_chunk_size: 200         # symbols per multi-symbol Alpaca bars request
+  request_sleep_s: 0.2           # rate-limit pause between batched requests
+  retry_backoff_s: [30, 60, 120] # exponential backoff on API failure
+
+data_retention:
+  raw_equities_days: 730         # 2-year rolling
+  fundamentals: forever
+
+alerts:
+  smtp_host: TBD
+  smtp_port: 587
+  staleness_threshold_pct: 0.10
