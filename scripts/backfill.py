@@ -1,4 +1,4 @@
-"""One-time historical data backfill (~2016 to present).
+"""One-time historical data backfill (default mid-2020 to present; DECISIONS D21).
 
 Runs once before anything else; NOT part of the daily pipeline. Pulls:
 
@@ -18,7 +18,11 @@ retry/backoff). Safe to re-run: completed equity years and fundamental symbols
 are skipped (pass --no-resume to force a full re-pull).
 
     python scripts/backfill.py --env paper
-    python scripts/backfill.py --env paper --start 2016-01-01 --symbols AAPL,MSFT
+    python scripts/backfill.py --env paper --start 2021-01-01 --symbols AAPL,MSFT
+
+The default start is settings.ingest.backfill_start (2020-07-27, the free IEX
+feed history floor); an earlier --start only returns data on the paid SIP feed
+(DECISIONS D21).
 
 Note: the fundamentals derivation is best-effort against yfinance's
 version-variable statement labels; a bad ticker is skipped, never fatal.

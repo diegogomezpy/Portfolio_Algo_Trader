@@ -202,6 +202,14 @@ profitability, investment) align directly with the factor scores being
 computed — using the same factor structure for both scoring and
 covariance estimation is consistent and interpretable.
 
+**⚠️ Phase 2 prerequisite (2026-06-18):** `pandas_datareader` currently fails
+at import in the venv (`TypeError: deprecate_kwarg()` — incompatible with the
+installed pandas). It is the only thing that fetches the Ken French FF5 series,
+so Phase 2 cannot estimate covariance until this is resolved. Two paths: pin a
+compatible `pandas`/`pandas-datareader` pair, or drop the dependency and fetch
+the FF5 CSV directly from the Ken French data library. Decide at the start of
+Phase 2 — does not affect Phase 0 or Phase 1.
+
 ---
 
 ## D9 — Conditional re-entry after assignment
@@ -306,6 +314,7 @@ reconstruct and changes meaningfully over time.
 | Sector cap | Backtest — start at 30% |
 | Factor weight adjustment | Run backtest, check factor contribution |
 | Crypto allocation size | After equity backtest — likely 3-7% |
+| FF5 covariance source | Phase 2 — `pandas_datareader` import is broken (see D8); pin compatible versions or fetch Ken French CSV directly |
 | Go-live gate criteria | User-defined before real capital deployed |
 | DB backup | Set up before go-live |
 | Secret rotation | Set up before go-live |

@@ -463,6 +463,7 @@ covered_calls:
   min_dte_entry: 30
   max_dte_entry: 45
   roll_dte_trigger: 21
+  min_holding_days: 10           # don't write calls on positions about to be exited (Phase 4)
   reentry_threshold: 0.0         # reenter if composite score > 0 after assignment
   prefer_mini_contracts: true    # use 10-share mini contracts where available
   close_before_earnings: true    # always close calls before earnings announcement

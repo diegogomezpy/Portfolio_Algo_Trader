@@ -3,7 +3,7 @@
 This module pulls external data and writes it to the on-disk Parquet store in
 the schema downstream factor computation expects. It backs two entry points:
 
-* ``scripts/backfill.py`` — one-time historical pull from ~2016.
+* ``scripts/backfill.py`` — one-time historical pull (default mid-2020; DECISIONS D21).
 * the daily incremental pull (``run_daily_ingest`` / ``python -m engine.ingest``).
 
 Both share the same compute helpers (:func:`bars_to_long_frame`,
