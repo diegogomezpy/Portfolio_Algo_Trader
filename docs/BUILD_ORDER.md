@@ -14,7 +14,7 @@ active and never build ahead of it.
 | Phase | Scope | Gate | Status |
 |---|---|---|---|
 | 0 | Scaffold + data pipeline + backfill | Clean data in Parquet and PostgreSQL | ✅ |
-| 1 | Factor scoring | Factor scores look reasonable on historical data | 🔄 |
+| 1 | Factor scoring | Factor scores look reasonable on historical data | ✅ |
 | 2 | Optimizer + equity-only backtest | Backtest Sharpe > 1.0 after transaction costs | ⬜ |
 | 2b | Full strategy backtest including covered calls | Combined strategy Sharpe validated | ⬜ |
 | 3 | Execution engine + risk gate | Orders submit and fill correctly in paper account | ⬜ |
@@ -92,6 +92,8 @@ Unit tests 22/22.
 
 ## Phase 1 — Factor scoring
 
+**Status (2026-06-19):** ✅ Complete — gate passed. See "Gate result" below.
+
 **Goal:** Factor scores computed for the full universe, producing
 sensible output on historical data.
 
@@ -99,12 +101,16 @@ sensible output on historical data.
 
 1. `engine/factors.py` — full factor score computation:
    - Universe filter (price > min_price, ADV > min_adv_usd)
-   - Quality sub-score: z_score(ROE) + z_score(gross_margin)
-   - Value sub-score: z_score(-PE) + z_score(-PB)
+   - Quality sub-score: double-z of z_score(ROE) + z_score(gross_margin)
+   - Value sub-score: double-z of z_score(E/P) + z_score(B/P) — earnings/book
+     YIELD, not -PE/-PB; avoids the negative-PE inversion trap (~24% of names)
    - Momentum sub-score: 12-1 month return, cross-sectional z-score
    - Low-vol sub-score: z_score(-realized_vol_252d)
-   - Composite: equal-weighted average of four z-scored sub-scores
-   - Staleness flag for stocks with missing fundamentals
+   - Composite: equal-weighted average of four z-scored sub-scores; each metric
+     percentile-winsorized (winsor_pct) before z-scoring; missing fields
+     neutral-filled per-field so partial fundamentals still contribute
+   - Staleness flag for stocks missing any fundamental field (diagnostic only —
+     does not zero the score)
    - Write daily factor scores to PostgreSQL `factor_scores` table
 
 2. `scripts/backtest_factors.py` — quick sanity check before optimizer:
@@ -116,13 +122,30 @@ sensible output on historical data.
    - Output: quintile spread (top vs bottom), hit rate, monthly IC
 
 **Gate criteria:**
-- Factor scores computed for full universe without errors
-- Top quintile of composite score shows positive spread over bottom
+- ✅ Factor scores computed for full universe without errors
+- ✅ Top quintile of composite score shows positive spread over bottom
   quintile in backtest (doesn't need to be large, just directionally correct)
-- No forward-looking bias: momentum and vol use only data available
+- ✅ No forward-looking bias: momentum and vol use only data available
   at computation date; fundamentals use the most recent quarterly report
-  available at that date (not current restated values)
-- `pytest tests/unit/test_factors.py` passes
+  available at that date (not current restated values) — point-in-time via
+  EDGAR filed date (report_lag_days=0); 3 no-look-ahead unit tests
+- ✅ `pytest tests/unit/test_factors.py` passes
+
+**Gate result (2026-06-19, `scripts/backtest_factors.py` 2021-08 → 2026-05,
+58 monthly rebalances, ~1,759 names/mo):**
+- Top–bottom quintile spread **+0.58%/mo (+6.9%/yr)**; monotonic ladder
+  Q1 +0.15% → Q5 +0.73%
+- Long-short Sharpe **0.50**; hit rate 59%
+- Mean monthly rank IC **+0.037, t-stat +2.12** (statistically significant)
+- Fundamental coverage (avg/mo over scored universe): Value 68%, Quality 71%,
+  all-four-fields 33% — Value/Quality finally backed by real EDGAR history
+  (back to 2009), not just momentum+low-vol as in the pre-EDGAR run
+- **Deferred to Phase 2:** raise gross_margin point-in-time coverage (~45%
+  avg/mo). Banks/financials legitimately lack a gross margin, but the rest is
+  likely a `CostOfRevenue`/`CostOfGoodsSold` XBRL tag-fallback gap in
+  `engine/edgar.py`. Also (carried from EDGAR build) quarter-ize cash-flow
+  fields (OCF/capex/FCF/dividends) via YTD differencing — currently NaN, not a
+  factor input.
 
 ---
 

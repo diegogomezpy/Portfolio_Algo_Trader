@@ -110,10 +110,20 @@ def run_backtest(
         q = pd.qcut(sub["composite_score"].rank(method="first"), quintiles, labels=False)
         qret = sub.groupby(q)["fwd"].mean()
         ic = sub["composite_score"].corr(sub["fwd"], method="spearman")
+        # Per-field point-in-time coverage over the scored universe. `stale`
+        # (= missing ANY field) understates usable signal because the engine
+        # neutral-fills each missing field independently, so a name with E/P+B/P
+        # but no gross_margin still gets Value and partial Quality.
+        pit = factors.point_in_time_fundamentals(
+            all_fundamentals, d.date(), settings.factors.report_lag_days
+        ).reindex(sub.index)
         rows.append({
             "date": d.date(),
             "n": len(sub),
-            "fund_cov": float((~sub["stale"]).mean()),  # share with real fundamentals
+            "fund_cov": float((~sub["stale"]).mean()),  # share with all four fields
+            "cov_value": float((pit["pe_ratio"].notna() | pit["pb_ratio"].notna()).mean()),
+            "cov_quality": float((pit["roe"].notna() | pit["gross_margin"].notna()).mean()),
+            **{f"cov_{c}": float(pit[c].notna().mean()) for c in factors.FUNDAMENTAL_FIELDS},
             "top": qret[quintiles - 1],
             "bottom": qret[0],
             "spread": qret[quintiles - 1] - qret[0],
@@ -147,9 +157,19 @@ def summarize(res: pd.DataFrame, quintiles: int = 5) -> None:
     print(f"  Mean monthly rank IC           : {ic.mean():+.4f}   (t-stat {ic_t:+.2f})")
     print(f"  Avg universe / month           : {res['n'].mean():.0f} names")
     months_with_fund = int((res["fund_cov"] > 0).sum())
-    print(f"  Months with fundamentals        : {months_with_fund}/{n}  "
-          f"(avg {res['fund_cov'].mean()*100:.0f}% of names; rest score on "
-          f"momentum+low-vol only — yfinance fundamentals begin ~2024-Q3)")
+    print(f"  Months with fundamentals       : {months_with_fund}/{n}")
+    # Per-field point-in-time coverage (avg share of scored names). The engine
+    # neutral-fills each missing field independently, so Value reaches any name
+    # with E/P or B/P and Quality any name with ROE or gross_margin — far more
+    # than the all-four-fields figure suggests.
+    print(f"  Fundamental coverage (avg/mo)  : "
+          f"Value {res['cov_value'].mean()*100:.0f}%  "
+          f"Quality {res['cov_quality'].mean()*100:.0f}%  "
+          f"(all 4 fields {res['fund_cov'].mean()*100:.0f}%)")
+    print(f"    by field: E/P {res['cov_pe_ratio'].mean()*100:.0f}%  "
+          f"B/P {res['cov_pb_ratio'].mean()*100:.0f}%  "
+          f"ROE {res['cov_roe'].mean()*100:.0f}%  "
+          f"gross-margin {res['cov_gross_margin'].mean()*100:.0f}%")
     print("\n  Quintile return ladder (mean monthly %, Q1=worst → "
           f"Q{quintiles}=best):")
     for k in range(quintiles):

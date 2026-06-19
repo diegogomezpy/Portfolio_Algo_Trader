@@ -47,7 +47,8 @@ sharpe-engine/
 │   ├── alpaca_client.py       ← thin Alpaca REST wrapper
 │   ├── ingest.py              ← Alpaca + yfinance data pulls
 │   ├── reconcile.py           ← position reconciliation vs Alpaca (stub)
-│   ├── factors.py             ← ⏳ factor score computation
+│   ├── factors.py             ← factor score computation (Phase 1 ✅)
+│   ├── edgar.py               ← SEC EDGAR point-in-time fundamentals (D22)
 │   ├── optimize.py            ← ⏳ cvxpy max-Sharpe optimizer
 │   ├── covered_calls.py       ← ⏳ covered call selection + roll logic
 │   ├── execute.py             ← ⏳ order routing + Alpaca execution
@@ -161,6 +162,7 @@ SMTP_PASSWORD            # email alert credentials
 
 ## Where to start
 
-See docs/BUILD_ORDER.md. Phase 0 is data pipeline + backfill.
-Do not build the execution engine until the factor model is
-validated in backtest.
+See docs/BUILD_ORDER.md. Phases 0 (data pipeline + backfill) and 1
+(factor scoring) are ✅ gate-passed; **Phase 2 (optimizer + full backtest)
+is next.** Do not build the execution engine until the factor model is
+validated in the Phase 2 walk-forward backtest.
