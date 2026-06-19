@@ -54,7 +54,11 @@ execution:
 
 covariance:
   estimation_window_days: 60
-  factor_source: pandas_datareader
+  factor_source: ken_french      # FF5 daily, downloaded directly from the Ken French
+                                 # data library (DECISIONS D23a) — pandas_datareader
+                                 # import-crashes under pandas 3.0.
+  min_regression_obs: 40         # a name needs >= this many aligned days in the window
+                                 # or it is dropped from Sigma (history too thin)
 
 ingest:
   # Free Alpaca IEX feed only has consolidated history from ~2020-07-27; full
