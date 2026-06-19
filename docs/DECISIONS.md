@@ -452,3 +452,40 @@ The illiquid/ETF tail is never traded, so pulling its fundamentals is ~11h
 of yfinance calls for nothing (~2h scoped instead). Survivorship caveat:
 the scope is *today's* liquid set; revisit for point-in-time coverage if a
 Phase 2 backtest needs it.
+
+---
+
+## D22 — SEC EDGAR for deep point-in-time fundamental history (resolves D7's upgrade path)
+
+**Decision:** Source historical fundamentals from the **SEC EDGAR**
+`companyfacts` XBRL API (`data.sec.gov`), not yfinance, for the backfill.
+yfinance stays as a convenient *current-quarter* fallback for daily ingest,
+but the historical store is rebuilt from EDGAR. This resolves the D7
+"FMP/Bloomberg as upgrade path" question in favor of EDGAR — **free** and
+genuinely **point-in-time** (each XBRL fact carries its `filed` date), with
+history back to ~2009.
+
+**Why this surfaced now (Phase 1):** the factor sanity backtest
+(`scripts/backtest_factors.py`) revealed that yfinance quarterly statements
+only return ~8 quarters — our fundamentals store spanned just **2024-Q3 →
+2026-Q2**. So **40 of 59 backtest months had zero fundamentals**, and the
+"4-factor" composite was silently momentum + low-vol over 2021–2024. Value
+and Quality cannot be validated on a ~2-year window; a credible Phase 2
+Sharpe gate is impossible without deeper history.
+
+**Why EDGAR over FMP (paid) or yfinance (as-is):** FMP (~$22-50/mo) is fast
+to integrate but a recurring cost on a not-yet-validated strategy; yfinance
+as-is leaves Value/Quality untestable. EDGAR is free, authoritative, and
+point-in-time via filing dates — the right long-term foundation for a real
+book. Cost is engineering, not dollars.
+
+**Consequence / scope:** a data-foundation build (ticker→CIK mapping via
+`company_tickers.json`; pull `companyfacts`; map US-GAAP tags →
+revenue / gross profit / net income / stockholders' equity → derive
+ROE, gross_margin, and — with the price panel — point-in-time P/E and P/B;
+write the existing `data/raw/fundamentals/YYYY-QN.parquet` schema so
+`engine/factors.py` is unchanged). Honors SEC fair-access limits
+(declared User-Agent, ≤10 req/s). Still bounded *below* by the D21 price
+floor (~mid-2020) for P/E and P/B that need prices, but ROE and gross_margin
+go back as far as EDGAR — and the 2020→present 4-factor backtest becomes
+credible. Validated **2026-06-18**, Phase 1.

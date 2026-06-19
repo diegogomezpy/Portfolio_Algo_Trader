@@ -95,7 +95,7 @@ sharpe-engine/
 | Leverage | TBD — paper trade unlevered first, 1.5x margin after validation |
 | Covariance | Fama-French 5 factor model via pandas-datareader |
 | Price data | Alpaca Data API, adjustment='all' |
-| Fundamental data | yfinance (P/E, P/B, ROE, gross margins); upgrade path to FMP/Bloomberg later |
+| Fundamental data | SEC EDGAR for deep point-in-time history (DECISIONS D22); yfinance current-quarter fallback |
 | Data stores | Parquet (raw prices + fundamentals), PostgreSQL (operational) |
 | Scheduler | APScheduler, America/New_York timezone via pytz |
 | Dashboard | FastAPI + plain HTML, two separate processes |
@@ -124,7 +124,8 @@ sharpe-engine/
 - L1 drift threshold for secondary rebalance (calibrate in backtest)
 - Sector cap level (start at 30%, adjust in backtest)
 - Factor weight adjustment (equal weight now, refine after backtest)
-- Fundamental data upgrade — yfinance now; consider FMP paid or Bloomberg API when available
+- Fundamental data upgrade — resolved to **SEC EDGAR** for deep point-in-time
+  history (DECISIONS D22); build pending. yfinance remains the current-quarter fallback.
 - Go-live gate criteria (user-defined before real capital deployed)
 - DB backup strategy (required before go-live)
 - Secret rotation policy (required before go-live)
