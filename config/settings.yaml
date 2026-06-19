@@ -24,6 +24,12 @@ factors:
   momentum_short_window: 21      # 1 month (excluded from momentum)
   vol_window: 252
   exclude_missing_fundamentals: false
+  winsor_pct: 0.01               # winsorize each raw metric to its [1st, 99th] pct
+                                 # before z-scoring — robust to fat tails, keeps the
+                                 # four sub-scores at unit variance (true equal weight)
+  report_lag_days: 45            # fundamentals usable only this many days after the
+                                 # quarter-end report_date — avoids backtest look-ahead
+                                 # (report_date is quarter-end, not the filing date)
 
 rebalancing:
   primary: monthly               # first trading day of month
