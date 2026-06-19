@@ -489,3 +489,22 @@ write the existing `data/raw/fundamentals/YYYY-QN.parquet` schema so
 floor (~mid-2020) for P/E and P/B that need prices, but ROE and gross_margin
 go back as far as EDGAR — and the 2020→present 4-factor backtest becomes
 credible. Validated **2026-06-18**, Phase 1.
+
+**Scope confirmed with Diego (2026-06-18):**
+- **Point-in-time key = the real SEC `filed` date** (not quarter-end + heuristic
+  lag). `report_date` stores the filed date and `report_lag_days` → 0. yfinance
+  ADR-fallback rows store period-end + 45d as their availability proxy, so
+  `report_date` uniformly means "date the data was public".
+- **EDGAR is primary; yfinance is demoted to a thin fallback for foreign ADRs**
+  only (20-F / IFRS filers absent from EDGAR's us-gaap). End-state stack:
+  **Alpaca** = market data + options + execution · **EDGAR** = all fundamentals +
+  (Phase 4) earnings dates · **Ken French** = FF5 factor returns.
+- **Pull a richer tag superset** in the same `companyfacts` call (assets, debt,
+  operating/free cash flow, shares, dividends, plus the raw NI/revenue/equity
+  used for the 4 metrics) so Phase 2+ can build stronger quality/value signals
+  without re-pulling. `factors.py` reads only its four fields; extra columns ride
+  along in the parquet.
+- **Switch both backfill *and* the daily refresh to EDGAR** in this build
+  (yfinance's daily role ends now); the daily path refreshes only when a new
+  filing appears rather than re-fetching every day.
+- **Earnings dates** move to EDGAR (8-K item 2.02 / 10-Q filed date) in Phase 4.
