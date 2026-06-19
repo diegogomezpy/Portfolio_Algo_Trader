@@ -170,13 +170,14 @@ sensible output on historical data.
 
 2. `engine/optimize.py` — convex max-Sharpe optimizer (D23b, no MIQP solver
    available):
-   - μ from `rank(composite)/N × target_return_scale` (new setting; calibrate
-     λ + scale together to 20–30 names — D20)
+   - μ from `rank(composite)/N × target_return_scale`. NB (D24): name count is
+     set by the **max-single-name cap** (≈ budget/max_name), not by λ/scale —
+     calibrated to 5% → ~19-20 names; λ/scale tilt is largely inert at that band
    - Pre-select top-K (≈50) by composite, solve convex QP
      `max μᵀw − λ·wᵀΣw` s.t. `sum(w)=base_equity_allocation`, `0≤w≤
      max_single_name_pct`, `sum(w[sector])≤max_sector_pct` (CLARABEL/OSQP)
-   - Min-position cleanup: zero names < `min_position_usd/NAV`, renormalize,
-     re-solve on survivors
+   - Min-position cleanup: drop the *single smallest* sub-floor name and re-solve,
+     repeat (one-at-a-time, or it collapses to the concentrated corner — D24)
    - Infeasibility ladder: sector cap +5/+10/+15%, min position −$250/−$500,
      max 3 retries, then hold previous weights + alert
    - Cash normalized to invested capital; test in isolation on synthetic μ/Σ

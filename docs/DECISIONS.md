@@ -560,3 +560,41 @@ backtest charges a half-spread in basis points tiered by liquidity
 tiered-bps setting), using the ADV already computed. Transparent and easy to
 stress. *Rejected:* Corwin-Schultz high-low spread estimator — noisier, can go
 negative, needs clamping; the `spread` placeholder is retired either way.
+
+---
+
+## D24 — Portfolio concentration: 5% max single name → ~19-20 names
+
+**Decision:** lower ``portfolio.max_single_name_pct`` from 0.10 to **0.05**,
+producing a diversified ~19-20 name, near-equal-weight book. Confirmed with
+Diego (2026-06-19) during Phase 2 optimizer calibration.
+
+**Why this surfaced — the count lever is the max-name cap, not λ/scale.**
+ARCHITECTURE assumed "calibrate ``target_return_scale`` and
+``risk_aversion_lambda`` until the optimizer produces 20-30 names." Empirically
+(live, 2026-05-01 cross-section) that is false: across a 2-D sweep of
+scale ∈ [0.05, 0.30] and λ ∈ [0.5, 16] the name count barely moved — the book
+sat at ~11 names because both the return-tilt optimum *and* the min-variance
+optimum concentrate, and the **10% max-single-name cap** is what actually sets
+the floor on name count (≈ ``budget / max_name``). Name count is therefore a
+constraint choice, not a calibration outcome. (Also fixed a related defect: the
+min-position cleanup must drop the *single smallest* sub-floor name and re-solve,
+not the whole sub-floor batch at once, or it collapses to the concentrated corner
+or to nothing.)
+
+**Why 5% / diversified.** At 10% the optimizer pins the top 5 names at the cap —
+~50% of the book in five names — which is hard to square with a
+capital-preservation mandate. 5% over the existing 4% min-position floor yields
+~19-20 names, matching the documented 20-30 target and capping single-name risk.
+*Rejected:* keep 10% (~11 concentrated names, max conviction) and the ~6.7%
+middle (~15 names).
+
+**Consequence — effectively equal-weight at the cap.** The 4% floor is
+load-bearing (it is the covered-call mini-contract threshold, so positions can't
+go below it), so the [4%, 5%] band is tight: the optimizer funds the top ~19 by
+composite at 5% each, subject to the 30% sector cap (which does bind, e.g.
+Financials ~25%). λ, ``target_return_scale``, and the FF5 covariance tilt are
+largely inert at this concentration — the factor *selection* and sector caps do
+the work. This is a deliberate, robust construction (equal-weight factor books
+travel well out-of-sample). The covariance machinery (D23a) still serves the
+backtest's risk attribution and would tilt the book if the band is ever widened.

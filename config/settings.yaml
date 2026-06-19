@@ -8,11 +8,19 @@ universe:
 portfolio:
   nav: 100_000
   min_position_usd: 4_000        # sized for covered-call (mini) contract eligibility
-  max_single_name_pct: 0.10
+  max_single_name_pct: 0.05      # ~19-20 names (DECISIONS D24). The max-name cap — not
+                                 # lambda/scale — governs name count; 5% over the 4% floor
+                                 # gives a diversified, ~equal-weight book for capital
+                                 # preservation. Was 0.10 (gave ~11 concentrated names).
   max_sector_pct: 0.30
   base_equity_allocation: 0.95   # 95% equity, 5% cash buffer (no regime filter)
   infeasibility_max_retries: 3
   risk_aversion_lambda: 1.0
+
+optimizer:
+  preselect_top_k: 50            # rank by composite, optimize over this many names
+  target_return_scale: 0.15      # mu = rank(composite)/N * scale; TBD — calibrate with
+                                 # risk_aversion_lambda in Phase 2 to 20-30 held names (D20)
 
 factors:
   weights:
