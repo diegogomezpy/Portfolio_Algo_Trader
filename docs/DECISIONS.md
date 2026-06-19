@@ -681,3 +681,55 @@ stable" guideline; it does not fit a momentum-inclusive book whose churn is prod
 and whose cost is modest and already netted. The turnover gate becomes: *turnover cost
 is modest and accounted for in net returns* — not a hard 30% cap. The knob remains for
 future use (e.g. if costs rise on a larger book or a different cost regime).
+
+---
+
+## D27 — Covered-call overlay (Phase 2b): modeled, honest range, passed on realistic premium
+
+**Decision:** accept Phase 2b (factor book + covered-call overlay) as **gate-passed on a
+realistic-premium basis**. The overlay improves volatility, drawdown, and income
+*unconditionally*, and improves Sharpe (beating SPY) under realistic single-name implied
+vol. Confirmed with Diego (2026-06-19).
+
+**The data constraint (why this is modeled, not measured).** Historical single-name
+option chains / implied vol are not freely available (Yahoo gives only *current* chains;
+Alpaca options data starts ~2024; real history is paid — Polygon/ORATS/OptionMetrics).
+So `scripts/backtest_covered_calls.py` prices calls with Black-Scholes (`engine/options.py`)
+at an **assumed** IV and sensitivity-tests it, rather than pretend one number is right.
+The honest split: the **upside given up is exact** (computed from each stock's real path),
+only the **premium income is modeled**.
+
+**Method.** Monthly, write a 0.25-delta call (~one option life to next rebalance) on each
+held name; settle against the realized price; combined return = capped equity return +
+premium − a 5% premium-execution haircut. IV assumptions: ``realized`` (IV = realized vol,
+the zero-premium floor) and ``vix_scaled`` (IV = realized vol × live VIX/SPX-realized
+ratio — an upper bound, since single-name vol premium is smaller than the index's). The
+*engine* is validated against CBOE's real ``^BXM`` ATM buy-write index (run on SPY priced
+off actual VIX): model +9.8%/yr vs ^BXM +7.9%, monthly corr 0.79 — the BS/strike/payoff
+machinery reproduces reality.
+
+**Result (2021-09 → 2026-05, 57 months).** Equity-only: +14.0%/yr, vol 20.3%, Sharpe 0.75,
+maxDD −23.4%. With the overlay:
+
+| IV / realized | combined Sharpe | vol | maxDD | premium/yr |
+|---|---|---|---|---|
+| 1.00 (zero premium floor) | 0.56 | 14.8% | −20.6% | 16% |
+| 1.08 | ~0.75 | — | — | — | **break-even vs equity-only** |
+| 1.10 | 0.80 | 15.3% | — | 18% | beats SPY (0.76) |
+| 1.20 | 1.01 | 15.8% | — | 19% | **clears the 1.0 gate** |
+| vix_scaled (market) | 1.23 | 16.6% | −17.5% | 21% |
+
+- **Unconditional (any IV):** vol 20.3% → ~15% (−25%), maxDD −23.4% → −18..−21%, premium
+  16-21%/yr, assignment 18-25% (< 30%). A capital-preservation win on its own.
+- **Sharpe lift is premium-dependent.** Break-even is **IV ≈ 1.08× realized**, beating
+  SPY at ~1.10×, clearing 1.0 at ~1.20×. Single-name IV empirically runs ~1.05-1.20×
+  realized, so the break-even sits at the **low end of plausible** ⇒ the overlay *most
+  likely* improves Sharpe and plausibly clears 1.0.
+
+**Why accept rather than buy data.** Under realistic premium (IV ≥ ~1.1×) the combined
+Sharpe (0.80-1.23) beats SPY (0.76) with far lower vol/drawdown — Diego's bar ("beat SPY
+on Sharpe") is met under reasonable assumptions, and the vol/DD benefit is unconditional.
+The residual uncertainty (the zero-premium floor is a loss) is best resolved by **live
+paper-trading on real chains** (Phase 7), not by buying historical options data now.
+*Deferred:* Polygon.io single-name options integration if a firmer historical verdict is
+ever needed.

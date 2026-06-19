@@ -79,6 +79,8 @@ backtest:
                                  # data-glitch guard (held book is liquid; triggers rarely
                                  # and is logged). NOT a routine winsorization.
   benchmark: SPY                 # buy-and-hold comparison
+  cc_premium_slippage: 0.05      # haircut on modeled option premium for execution/bid-ask
+                                 # (Phase 2b covered-call backtest; option spreads not in data)
 
 covariance:
   estimation_window_days: 60

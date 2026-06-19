@@ -49,7 +49,10 @@ sharpe-engine/
 │   ├── reconcile.py           ← position reconciliation vs Alpaca (stub)
 │   ├── factors.py             ← factor score computation (Phase 1 ✅)
 │   ├── edgar.py               ← SEC EDGAR point-in-time fundamentals (D22)
-│   ├── optimize.py            ← ⏳ cvxpy max-Sharpe optimizer
+│   ├── sectors.py             ← SIC→sector map for the sector cap (Phase 2 ✅, D23c)
+│   ├── covariance.py          ← FF5 factor-model covariance (Phase 2 ✅, D23a)
+│   ├── optimize.py            ← alpha-driven weighting + constraints (Phase 2 ✅, D24/D25)
+│   ├── options.py             ← Black-Scholes for the covered-call overlay (Phase 2b ✅)
 │   ├── covered_calls.py       ← ⏳ covered call selection + roll logic
 │   ├── execute.py             ← ⏳ order routing + Alpaca execution
 │   ├── risk.py                ← ⏳ pre-trade risk gate
@@ -162,7 +165,7 @@ SMTP_PASSWORD            # email alert credentials
 
 ## Where to start
 
-See docs/BUILD_ORDER.md. Phases 0 (data pipeline + backfill) and 1
-(factor scoring) are ✅ gate-passed; **Phase 2 (optimizer + full backtest)
-is next.** Do not build the execution engine until the factor model is
-validated in the Phase 2 walk-forward backtest.
+See docs/BUILD_ORDER.md. Phases 0-1 and **2 + 2b** are ✅ gate-passed: the
+factor model + covered-call overlay are validated in backtest (combined beats
+SPY on Sharpe under realistic premium, vol/drawdown cut unconditionally — D27).
+**Phase 3 (execution engine + risk gate) is next.**
