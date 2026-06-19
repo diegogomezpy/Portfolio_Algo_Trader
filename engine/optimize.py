@@ -164,6 +164,22 @@ def _solve_with_cleanup(
     return funded if (funded is not None and not funded.empty) else None
 
 
+def _incumbent_bonus(settings) -> float:
+    """Hysteresis bonus from settings.rebalancing (0 if unset — back-compat for tests)."""
+    reb = getattr(settings, "rebalancing", None)
+    return float(getattr(reb, "incumbent_bonus", 0.0)) if reb is not None else 0.0
+
+
+def _apply_incumbent_bonus(scores: pd.Series, prev_weights: pd.Series | None, bonus: float) -> pd.Series:
+    """Add ``bonus`` to the composite score of currently-held names (in score units)."""
+    if not bonus or prev_weights is None or prev_weights.empty:
+        return scores
+    eff = scores.copy()
+    held = prev_weights.index.intersection(eff.index)
+    eff.loc[held] = eff.loc[held] + bonus
+    return eff
+
+
 def optimize_portfolio(
     scores: pd.Series,
     sigma: pd.DataFrame,
@@ -187,7 +203,11 @@ def optimize_portfolio(
     nav = p.nav
     base_min_pct = p.min_position_usd / nav
 
-    mu_all = compute_mu(scores, o.target_return_scale)
+    # Hysteresis (DECISIONS D26): give currently-held names a composite-score premium so
+    # they stay selected unless a challenger clearly beats them — cuts membership churn /
+    # turnover. The bonus shifts ranks; everything downstream (caps, weights) is unchanged.
+    eff_scores = _apply_incumbent_bonus(scores, prev_weights, _incumbent_bonus(settings))
+    mu_all = compute_mu(eff_scores, o.target_return_scale)
     # Pre-select top-K, then keep only names we can actually risk-model and bucket.
     topk = mu_all.sort_values(ascending=False).head(o.preselect_top_k).index
     active = [s for s in topk if s in sigma.index]

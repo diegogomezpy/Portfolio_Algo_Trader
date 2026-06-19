@@ -26,9 +26,12 @@ def _settings(**over):
              max_sector_pct=0.30, base_equity_allocation=0.95,
              infeasibility_max_retries=3, risk_aversion_lambda=1.0)
     o = dict(preselect_top_k=50, target_return_scale=0.15)
+    r = dict(incumbent_bonus=0.0)
     p.update(over.pop("portfolio", {}))
     o.update(over.pop("optimizer", {}))
-    return SimpleNamespace(portfolio=SimpleNamespace(**p), optimizer=SimpleNamespace(**o))
+    r.update(over.pop("rebalancing", {}))
+    return SimpleNamespace(portfolio=SimpleNamespace(**p), optimizer=SimpleNamespace(**o),
+                           rebalancing=SimpleNamespace(**r))
 
 
 # --------------------------------------------------------------------- μ ----
@@ -175,6 +178,33 @@ def test_optimize_portfolio_infeasible_holds_previous():
     res = optimize.optimize_portfolio(scores, sigma, sectors, settings=_settings(), prev_weights=prev)
     assert res.status == "held"
     pd.testing.assert_series_equal(res.weights, prev)
+
+
+def test_apply_incumbent_bonus_adds_to_held_only():
+    scores = pd.Series({"A": 1.0, "B": 0.5, "C": 0.0})
+    prev = pd.Series({"B": 0.05})
+    eff = optimize._apply_incumbent_bonus(scores, prev, 0.3)
+    assert eff["B"] == pytest.approx(0.8)               # held name boosted
+    assert eff["A"] == 1.0 and eff["C"] == 0.0          # others untouched
+    # No-ops: zero bonus, or no holdings, return the original object unchanged.
+    assert optimize._apply_incumbent_bonus(scores, prev, 0.0) is scores
+    assert optimize._apply_incumbent_bonus(scores, None, 0.3) is scores
+
+
+def test_optimize_portfolio_hysteresis_retains_incumbent():
+    names = [f"S{i}" for i in range(30)]
+    scores = pd.Series(np.linspace(3.0, -3.0, 30), index=names)
+    sigma = _diag_sigma(names, var=0.05)
+    sectors = pd.Series({n: "Unknown" for n in names})
+    prev = pd.Series({"S25": 0.05})                      # a deep-out incumbent (rank 26)
+    cfg = dict(max_single_name_pct=0.05, risk_aversion_lambda=0.0)   # the ~19-name book
+    off = optimize.optimize_portfolio(scores, sigma, sectors,
+                                      settings=_settings(portfolio=cfg), prev_weights=prev)
+    on = optimize.optimize_portfolio(scores, sigma, sectors,
+                                     settings=_settings(portfolio=cfg, rebalancing={"incumbent_bonus": 3.0}),
+                                     prev_weights=prev)
+    assert "S25" not in off.weights.index                # without the bonus it isn't funded
+    assert "S25" in on.weights.index                     # the bonus keeps the incumbent in
 
 
 def test_optimize_portfolio_excludes_names_missing_from_sigma():

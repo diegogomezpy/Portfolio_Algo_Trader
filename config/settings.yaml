@@ -48,6 +48,9 @@ factors:
 rebalancing:
   primary: monthly               # first trading day of month
   drift_threshold_l1: 0.08       # TBD — calibrate in backtest
+  incumbent_bonus: 0.0           # hysteresis (DECISIONS D26): composite-score (z) premium
+                                 # for currently-held names, to cut membership churn /
+                                 # turnover. 0 = off; calibrated by backtest sweep below.
 
 covered_calls:
   target_delta: 0.25

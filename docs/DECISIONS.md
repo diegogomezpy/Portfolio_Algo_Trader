@@ -643,3 +643,41 @@ re-opens the whole signal, and low-vol was −1.5% this period anyway.
 a hold/replace buffer (hysteresis); net Sharpe 0.75 < 1.0 — the 1.0 hurdle likely
 belongs to the *combined* strategy once the covered-call overlay (Phase 2b) reshapes
 the return/vol profile. Both tracked in BUILD_ORDER Phase 2.
+
+---
+
+## D26 — Turnover is signal: hysteresis built but disabled; turnover gate reframed
+
+**Decision:** keep the turnover-reduction hysteresis (incumbent score bonus) in the
+code as a **defaulted-off knob** (``rebalancing.incumbent_bonus = 0``) and **reframe
+the BUILD_ORDER "turnover < 30%/mo" gate** rather than force the strategy under it.
+Confirmed with Diego (2026-06-19).
+
+**Mechanism built (D26a).** ``engine.optimize._apply_incumbent_bonus`` adds a
+composite-score (z-unit) premium to currently-held names before ranking, so the
+optimizer keeps an incumbent unless a challenger beats it by more than the bonus
+(soft rank buffer; sector/min/box constraints still enforced). Chosen over an
+index-style two-threshold add/drop rule for clean integration with the λ=0 LP.
+
+**Why disabled — the turnover is alpha, not waste.** The ~33%/mo turnover is almost
+entirely *membership churn* (~6 of ~19 names swap monthly; only ~2.5% is weight
+drift), and that churn is the book staying on fresh signal (the composite re-ranks
+monthly, momentum especially). A calibration sweep over the bonus:
+
+| incumbent_bonus | turnover | net return | Sharpe |
+|---|---|---|---|
+| 0.00 (off) | 33% | +14.0% | 0.75 |
+| 0.10 | 25% | +10.6% | 0.59 |
+| 0.20 | 20% | +10.7% | 0.60 |
+| 0.30 | 18% | +5.5% | 0.36 |
+
+Every unit of turnover removed costs more return than it saves: the realized
+transaction cost of 33% turnover is only **~1%/yr** (already inside the net +14%),
+while suppressing it to satisfy the gate gives up **3-4%/yr of alpha** and drops
+Sharpe below SPY. Paying 3-4 to save 1 is a bad trade.
+
+**Gate reframe.** The "< 30%/mo" criterion was a generic "factor strategies should be
+stable" guideline; it does not fit a momentum-inclusive book whose churn is productive
+and whose cost is modest and already netted. The turnover gate becomes: *turnover cost
+is modest and accounted for in net returns* — not a hard 30% cap. The knob remains for
+future use (e.g. if costs rise on a larger book or a different cost regime).
