@@ -57,6 +57,10 @@ FLOW_CONCEPTS = {
     ],
     "gross_profit": ["GrossProfit"],
     "cost_of_revenue": ["CostOfGoodsAndServicesSold", "CostOfRevenue", "CostOfGoodsSold"],
+    # NOTE: cash-flow items are filed as cumulative YTD (6/9-month), not 3-month
+    # periods, so the 3-month TTM logic leaves these sparse/NaN. They're rich-superset
+    # extras (not factor inputs), so this is deferred until Phase 2 needs them — at
+    # which point quarter-ize via YTD differencing (Q_n = YTD_n − YTD_{n-1}).
     "operating_cash_flow": ["NetCashProvidedByUsedInOperatingActivities"],
     "capex": ["PaymentsToAcquirePropertyPlantAndEquipment"],
     "dividends_paid": ["PaymentsOfDividendsCommonStock", "PaymentsOfDividends"],

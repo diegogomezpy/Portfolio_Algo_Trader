@@ -40,7 +40,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from engine import config, ingest  # noqa: E402
+from engine import config, edgar, factors, ingest  # noqa: E402
 from engine.logger import get_logger  # noqa: E402
 
 log = get_logger("backfill")
@@ -167,12 +167,68 @@ def derive_historical_fundamentals_yf(symbol: str) -> list[dict]:
                 "pb_ratio": pb_ratio,
                 "roe": roe,
                 "gross_margin": gross_margin,
-                "report_date": qdate.isoformat(),
+                # +45d ≈ filing lag, so report_date is an availability date and the
+                # global report_lag_days can be 0 uniformly (matches EDGAR's filed date).
+                "report_date": (qdate + timedelta(days=45)).isoformat(),
                 "source": "yfinance",
             })
         except Exception:
             continue
     return records
+
+
+def _panel_price_lookup(price_panel, symbol: str):
+    """Return ``f(filed_date) -> close`` (nearest prior trading day) for a symbol.
+
+    Supplies the price EDGAR needs for P/E and P/B. ``None`` if the symbol has no
+    price history (P/E and P/B then come back NaN; ROE and gross margin still derive).
+    """
+    if price_panel is None or symbol not in price_panel.columns:
+        return None
+    series = price_panel[symbol].dropna()
+
+    def lookup(filed):
+        prior = series.loc[: pd.Timestamp(filed)]
+        return float(prior.iloc[-1]) if len(prior) else None
+
+    return lookup
+
+
+def make_edgar_derive(cikmap: dict, price_panel, *, fallback=derive_historical_fundamentals_yf):
+    """Build ``derive(symbol) -> records`` using SEC EDGAR, yfinance ADR fallback.
+
+    Records match what :func:`backfill_fundamentals` / :func:`_flush_quarters` expect
+    (``symbol`` + ``quarter`` + fundamentals columns). EDGAR supplies the rich superset
+    and the real filing date as ``report_date`` (DECISIONS D22); symbols with no CIK
+    (foreign ADRs filing 20-F) or any EDGAR failure fall back to yfinance.
+    """
+    def derive(symbol: str) -> list[dict]:
+        cik = cikmap.get(symbol.upper())
+        if not cik:
+            return fallback(symbol)
+        try:
+            facts = edgar.fetch_companyfacts(cik)
+        except Exception as exc:
+            log.warning("edgar fetch failed, falling back", extra={"symbol": symbol, "error": str(exc)})
+            return fallback(symbol)
+        df = edgar.companyfacts_to_fundamentals(
+            facts, price_lookup=_panel_price_lookup(price_panel, symbol)
+        )
+        if df.empty:
+            return fallback(symbol)
+        records = []
+        for row in df.to_dict("records"):
+            records.append({
+                "symbol": symbol,
+                "quarter": ingest.quarter_label(row["period_end"]),
+                "report_date": str(row["report_date"]),
+                "period_end": str(row["period_end"]),
+                "source": row["source"],
+                **{k: row[k] for k in edgar.FACTOR_FIELDS + edgar.RICH_FIELDS},
+            })
+        return records
+
+    return derive
 
 
 def _completed_symbols(fundamentals_dir: Path) -> set[str]:
@@ -202,7 +258,7 @@ def _flush_quarters(by_quarter: dict[str, list[dict]], fundamentals_dir: Path) -
     """
     fundamentals_dir = Path(fundamentals_dir)
     for quarter, rows in by_quarter.items():
-        new = pd.DataFrame(rows).set_index("symbol")
+        new = pd.DataFrame(rows).set_index("symbol").drop(columns=["quarter"], errors="ignore")
         new.index.name = "symbol"
         path = fundamentals_dir / f"{quarter}.parquet"
         if path.exists():
@@ -306,6 +362,13 @@ def main() -> None:
         "~13k illiquid/ETF names we never trade",
     )
     parser.add_argument(
+        "--fundamentals-source",
+        choices=("edgar", "yfinance"),
+        default="edgar",
+        help="fundamentals provider: 'edgar' (SEC, deep point-in-time, default; "
+        "yfinance fallback for foreign ADRs) or 'yfinance' (legacy ~2yr)",
+    )
+    parser.add_argument(
         "--no-resume",
         action="store_true",
         help="re-pull everything, ignoring data already on disk (completed years "
@@ -346,8 +409,21 @@ def main() -> None:
             log.info("fundamentals scoped to liquid universe", extra={"symbols": len(fund_symbols)})
         else:
             fund_symbols = symbols
+
+        if args.fundamentals_source == "edgar":
+            cikmap = edgar.load_cik_map()
+            price_panel = factors.load_close_panel(
+                ingest.DEFAULT_PRICES_DIR, end=date.today(), lookback=10**9
+            )
+            log.info("fundamentals source: EDGAR",
+                     extra={"ciks": len(cikmap), "panel_days": len(price_panel)})
+            derive = make_edgar_derive(cikmap, price_panel)
+        else:
+            derive = derive_historical_fundamentals_yf
+
         quarters = backfill_fundamentals(
-            fund_symbols, sleep_s=settings.ingest.request_sleep_s, resume=not args.no_resume
+            fund_symbols, sleep_s=settings.ingest.request_sleep_s,
+            resume=not args.no_resume, derive=derive,
         )
         log.info("fundamentals backfill complete", extra={"quarters": quarters})
 

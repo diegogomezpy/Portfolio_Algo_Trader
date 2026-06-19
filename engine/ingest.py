@@ -150,11 +150,21 @@ def load_equities(as_of: str, prices_dir: Path = DEFAULT_PRICES_DIR) -> pd.DataF
 def write_fundamentals_parquet(
     frame: pd.DataFrame, quarter: str, fundamentals_dir: Path = DEFAULT_FUNDAMENTALS_DIR
 ) -> Path:
-    """Write one per-quarter fundamentals Parquet (indexed by symbol). Overwrites."""
+    """Write one per-quarter fundamentals Parquet (indexed by symbol). Overwrites.
+
+    Always writes the core ``FUNDAMENTAL_COLUMNS`` first (filling NaN for any that
+    are absent), then preserves any extra columns — so the EDGAR rich-tag superset
+    (DECISIONS D22) rides along while ``engine.factors`` still finds its core fields.
+    """
     fundamentals_dir = Path(fundamentals_dir)
     fundamentals_dir.mkdir(parents=True, exist_ok=True)
     path = fundamentals_dir / f"{quarter}.parquet"
-    frame[FUNDAMENTAL_COLUMNS].to_parquet(path)
+    out = frame.copy()
+    for col in FUNDAMENTAL_COLUMNS:
+        if col not in out.columns:
+            out[col] = np.nan
+    extras = [c for c in out.columns if c not in FUNDAMENTAL_COLUMNS]
+    out[FUNDAMENTAL_COLUMNS + extras].to_parquet(path)
     return path
 
 
@@ -270,6 +280,38 @@ def fetch_fundamentals_yf(symbol: str) -> dict | None:
     }
 
 
+def make_edgar_fetcher(cikmap: dict, price_by_symbol: dict, *, fallback=fetch_fundamentals_yf):
+    """Build a daily ``fetch_one(symbol)`` backed by SEC EDGAR (DECISIONS D22).
+
+    EDGAR is primary for US filers — returns the most recent filing's fundamentals
+    (the rich superset), with P/E and P/B computed from the supplied current price.
+    Symbols with no CIK (foreign ADRs filing 20-F / IFRS) or any EDGAR failure fall
+    back to yfinance. ``cikmap`` is loaded once by the caller and shared across symbols.
+    """
+    from engine import edgar
+
+    def fetch_one(symbol: str) -> dict | None:
+        cik = cikmap.get(symbol.upper())
+        if not cik:
+            return fallback(symbol)
+        try:
+            facts = edgar.fetch_companyfacts(cik)
+        except Exception as exc:
+            log.warning("edgar fetch failed, using fallback", extra={"symbol": symbol, "error": str(exc)})
+            return fallback(symbol)
+        price = price_by_symbol.get(symbol)
+        lookup = (lambda _f: price) if price else None
+        df = edgar.companyfacts_to_fundamentals(facts, price_lookup=lookup)
+        if df.empty:
+            return fallback(symbol)
+        latest = df.iloc[-1].to_dict()  # most recent fiscal period (sorted ascending)
+        latest["report_date"] = str(latest["report_date"])
+        latest["period_end"] = str(latest["period_end"])
+        return latest
+
+    return fetch_one
+
+
 def is_trading_day(client, as_of: str) -> bool:
     """Whether ``as_of`` is an NYSE trading day per Alpaca's calendar."""
     return bool(client.market_calendar(as_of, as_of))
@@ -312,11 +354,18 @@ def run_daily_ingest(env: str = "paper", as_of: str | None = None) -> None:
         sleep_s=ing.request_sleep_s,
         backoff_s=tuple(ing.retry_backoff_s),
     )
+
+    # Fundamentals from EDGAR (primary), yfinance fallback for non-EDGAR filers.
+    # P/E and P/B use today's close from the equities file just written.
+    from engine import edgar
+
+    current_prices = load_equities(as_of, DEFAULT_PRICES_DIR)["close"].to_dict()
+    cikmap = edgar.load_cik_map()
     ingest_fundamentals(
         symbols,
         quarter_label(as_of),
         DEFAULT_FUNDAMENTALS_DIR,
-        fetch_one=fetch_fundamentals_yf,
+        fetch_one=make_edgar_fetcher(cikmap, current_prices),
         sleep_s=ing.request_sleep_s,
     )
 

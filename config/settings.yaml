@@ -27,9 +27,10 @@ factors:
   winsor_pct: 0.01               # winsorize each raw metric to its [1st, 99th] pct
                                  # before z-scoring — robust to fat tails, keeps the
                                  # four sub-scores at unit variance (true equal weight)
-  report_lag_days: 45            # fundamentals usable only this many days after the
-                                 # quarter-end report_date — avoids backtest look-ahead
-                                 # (report_date is quarter-end, not the filing date)
+  report_lag_days: 0             # report_date now stores the real availability date:
+                                 # EDGAR's actual SEC filing date (D22), and the
+                                 # yfinance ADR fallback bakes in a +45d filing buffer.
+                                 # So no extra lag is needed here.
 
 rebalancing:
   primary: monthly               # first trading day of month
