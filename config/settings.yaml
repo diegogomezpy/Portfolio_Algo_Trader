@@ -15,7 +15,12 @@ portfolio:
   max_sector_pct: 0.30
   base_equity_allocation: 0.95   # 95% equity, 5% cash buffer (no regime filter)
   infeasibility_max_retries: 3
-  risk_aversion_lambda: 1.0
+  risk_aversion_lambda: 0.0      # alpha-driven weighting (DECISIONS D25): the composite
+                                 # score already prices risk (low-vol is 25% of it), so a
+                                 # mean-variance risk penalty double-counts the defensive
+                                 # tilt and cost ~10%/yr in backtest. The box + sector +
+                                 # min-position constraints provide diversification; the
+                                 # FF5 covariance is kept for risk reporting, not weighting.
 
 optimizer:
   preselect_top_k: 50            # rank by composite, optimize over this many names
@@ -57,8 +62,20 @@ covered_calls:
 execution:
   min_trade_usd: 500
   large_cap_adv_threshold: 50_000_000
+  mid_cap_adv_threshold: 5_000_000
   spread_threshold: 0.001
   price_adjustment: all
+  # Backtest transaction-cost model (DECISIONS D23d): a half-spread charged in basis
+  # points, tiered by ADV. Retires the `spread` high-low placeholder.
+  cost_bps_large: 5              # ADV >= large_cap_adv_threshold
+  cost_bps_mid: 10               # mid_cap_adv_threshold <= ADV < large
+  cost_bps_small: 20             # ADV < mid_cap_adv_threshold
+
+backtest:
+  return_clip: 1.0               # clip a held name's monthly return to +/- this as a
+                                 # data-glitch guard (held book is liquid; triggers rarely
+                                 # and is logged). NOT a routine winsorization.
+  benchmark: SPY                 # buy-and-hold comparison
 
 covariance:
   estimation_window_days: 60

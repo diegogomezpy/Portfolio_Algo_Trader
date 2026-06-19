@@ -89,6 +89,22 @@ def test_solve_qp_unknown_sector_is_exempt_from_cap():
     assert w.sum() == pytest.approx(0.40, abs=1e-4)
 
 
+def test_solve_qp_lambda_zero_is_pure_alpha_lp():
+    # λ=0 (DECISIONS D25): no risk term => maximize mu'w, so the highest-mu names
+    # fill to the cap. Σ is irrelevant; pass an absurd one to prove it's unused.
+    names = list("ABCDE")
+    mu = pd.Series({"A": 0.5, "B": 0.4, "C": 0.3, "D": 0.2, "E": 0.1})
+    sectors = pd.Series({n: "Unknown" for n in names})
+    junk_sigma = pd.DataFrame(np.full((5, 5), -999.0), index=names, columns=names)
+    w = optimize.solve_qp(mu, junk_sigma, sectors,
+                          budget=0.20, w_max=0.05, sector_cap=1.0, lam=0.0)
+    assert w is not None
+    assert w.sum() == pytest.approx(0.20, abs=1e-4)
+    # Top-4 by mu funded at the cap; lowest-mu E gets nothing.
+    assert w[["A", "B", "C", "D"]].min() == pytest.approx(0.05, abs=1e-3)
+    assert w["E"] == pytest.approx(0.0, abs=1e-3)
+
+
 def test_solve_qp_infeasible_returns_none():
     names = ["A", "B"]
     mu = pd.Series({"A": 0.2, "B": 0.1})

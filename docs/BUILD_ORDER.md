@@ -173,9 +173,11 @@ sensible output on historical data.
    - μ from `rank(composite)/N × target_return_scale`. NB (D24): name count is
      set by the **max-single-name cap** (≈ budget/max_name), not by λ/scale —
      calibrated to 5% → ~19-20 names; λ/scale tilt is largely inert at that band
-   - Pre-select top-K (≈50) by composite, solve convex QP
-     `max μᵀw − λ·wᵀΣw` s.t. `sum(w)=base_equity_allocation`, `0≤w≤
-     max_single_name_pct`, `sum(w[sector])≤max_sector_pct` (CLARABEL/OSQP)
+   - Pre-select top-K (≈50) by composite, solve `max μᵀw − λ·wᵀΣw` s.t.
+     `sum(w)=base_equity_allocation`, `0≤w≤max_single_name_pct`,
+     `sum(w[sector])≤max_sector_pct` (CLARABEL). **λ=0 by default (D25):** the
+     composite already prices risk, so the mean-variance term double-counts low-vol
+     and cost ~10%/yr — it's pure alpha-weighting LP, Σ kept for risk reporting
    - Min-position cleanup: drop the *single smallest* sub-floor name and re-solve,
      repeat (one-at-a-time, or it collapses to the concentrated corner — D24)
    - Infeasibility ladder: sector cap +5/+10/+15%, min position −$250/−$500,
@@ -206,6 +208,19 @@ sensible output on historical data.
   over the backtest period (if one is consistently negative, investigate)
 - `pytest tests/unit/test_optimize.py` passes
 - `pytest tests/integration/test_backtest_pipeline.py` passes
+
+**Gate status (2026-06-19) — ❌ not yet passed.** Harness built + tested; λ=0
+calibration applied (D25). Walk-forward 2021-09 → 2026-05 (57 months), net of
+tiered-bps costs: **+14.0%/yr (gross +15.3%), Sharpe 0.75, vol 20.3%, maxDD
+−23.4%, Calmar 0.60, turnover 33%** — beats SPY (+11.1%). Sleeves: quality +7.9%,
+value +15.3%, momentum +3.0%, **low-vol −1.5%**. Open items before the gate passes:
+  1. **Turnover 33% > 30%** — add a hold/replace buffer (hysteresis) around the
+     top-N cutoff to cut churn (and cost).
+  2. **Net Sharpe 0.75 < 1.0** — the 1.0 hurdle likely belongs to the *combined*
+     strategy; the covered-call overlay (Phase 2b) reshapes return/vol. Revisit the
+     equity-only threshold vs. deferring the Sharpe gate to 2b.
+  3. **Low-vol sleeve negative** this period — a factor-level question (keep at
+     equal weight? it still diversifies), not a blocker for the others.
 
 
 ---

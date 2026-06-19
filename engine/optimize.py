@@ -8,8 +8,15 @@ Turns composite factor scores + an FF5 covariance into target weights:
                sum(w over sector k) ≤ max_sector_pct  ∀ k
 
 μ is a rank proxy: ``rank(composite)/N × target_return_scale`` (DECISIONS D20),
-so the best-scoring names get the highest expected-return stand-in. λ and the
-scale are calibrated together in Phase 2 to land 20–30 held names.
+so the best-scoring names get the highest expected-return stand-in.
+
+**Default is alpha-driven (λ = 0, DECISIONS D25).** The composite score already
+prices risk (low-vol is one of its four sub-scores), so a mean-variance penalty
+λ·wᵀΣw double-counts the defensive tilt and cost ~10%/yr in backtest. With λ=0 the
+objective is the pure LP ``max μᵀw``; the box / sector / min-position constraints
+supply the diversification, and Σ is kept for risk reporting and the thin-history
+filter. The λ>0 mean-variance path is preserved for when the constraints don't
+already pin the weights (e.g. a widened position band).
 
 **Why this shape (D23b).** The real mandate also wants a *minimum* position
 (``w ≥ min or w = 0``), which is non-convex, and no mixed-integer QP solver is
@@ -93,10 +100,13 @@ def solve_qp(
     n = len(names)
     if n == 0:
         return None
-    Σ = sigma.loc[names, names].to_numpy()
-    Σ = (Σ + Σ.T) / 2.0  # enforce exact symmetry for the solver
     w = cp.Variable(n)
-    objective = cp.Maximize(mu.to_numpy() @ w - lam * cp.quad_form(w, cp.psd_wrap(Σ)))
+    expr = mu.to_numpy() @ w
+    if lam > 0:  # mean-variance; λ=0 ⇒ pure alpha-weighting LP (DECISIONS D25)
+        Σ = sigma.loc[names, names].to_numpy()
+        Σ = (Σ + Σ.T) / 2.0  # enforce exact symmetry for the solver
+        expr = expr - lam * cp.quad_form(w, cp.psd_wrap(Σ))
+    objective = cp.Maximize(expr)
     constraints = [cp.sum(w) == budget, w >= 0, w <= w_max]
     for sec in sectors.loc[names].unique():
         if sec == "Unknown":

@@ -598,3 +598,48 @@ largely inert at this concentration — the factor *selection* and sector caps d
 the work. This is a deliberate, robust construction (equal-weight factor books
 travel well out-of-sample). The covariance machinery (D23a) still serves the
 backtest's risk attribution and would tilt the book if the band is ever widened.
+
+---
+
+## D25 — Alpha-driven weighting: risk-aversion λ = 0 (supersedes the mean-variance framing)
+
+**Decision:** set ``portfolio.risk_aversion_lambda`` to **0**, turning the
+optimizer objective from mean-variance (``max μᵀw − λ·wᵀΣw``) into pure
+constrained alpha-weighting (``max μᵀw`` s.t. the budget / max-name / sector /
+min-position constraints). The FF5 covariance (D23a) is retained for **risk
+reporting and the thin-history filter**, not as a return penalty. Confirmed with
+Diego (2026-06-19) from the Phase 2 walk-forward backtest.
+
+**Why — the risk term double-counts low-vol and destroys return.** The composite
+score *already* prices risk: low-volatility is one of its four equal-weighted
+sub-scores. Adding a mean-variance penalty λ·wᵀΣw on top tilts the book toward
+low-vol names a *second* time. In the 2021-2026 walk-forward (led by higher-vol
+value/momentum names) this cost ~10%/yr. Decomposition (same scores, same
+universe, gross annualized return):
+
+| optimizer config | return |
+|---|---|
+| λ=1, sector cap 30% (original) | +2.3% |
+| λ≈0, sector cap 30% | +12.8% |
+| λ=1, no sector cap | +2.4% |
+| λ≈0, no sector cap | +12.2% |
+| naive top-19 equal-weight by composite | +13.7% |
+
+The risk term — not the sector caps — was the cause; removing it recovered the
+signal. Full backtest at λ=0: net **+14.0%/yr** (gross +15.3%), Sharpe **0.75**
+(was 0.15), vol 20.3%, beating SPY (+11.1%). The risk term shed a little vol but
+killed far more return, so λ=0 is better on Sharpe too.
+
+**Why this is sound, not reckless.** λ=0 would normally concentrate in the single
+highest-μ name — but the **box constraints already enforce diversification** (5%
+max, 4% min, 30% sector), so the LP solution is "top ~19 by composite, equal-weight
+at the cap, sector-capped." The alpha model selects; the constraints diversify; the
+risk model monitors. This is a standard institutional split (alpha vs. risk model)
+and matches D24's equal-weight reality. *Rejected:* drop low-vol from the composite
+and keep λ>0 (let the risk term be the defensive layer) — cleaner in theory but
+re-opens the whole signal, and low-vol was −1.5% this period anyway.
+
+**Open follow-ups (not yet passing the gate):** turnover ~33%/mo (> 30% cap) needs
+a hold/replace buffer (hysteresis); net Sharpe 0.75 < 1.0 — the 1.0 hurdle likely
+belongs to the *combined* strategy once the covered-call overlay (Phase 2b) reshapes
+the return/vol profile. Both tracked in BUILD_ORDER Phase 2.
