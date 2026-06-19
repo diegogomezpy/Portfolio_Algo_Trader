@@ -508,3 +508,55 @@ credible. Validated **2026-06-18**, Phase 1.
   (yfinance's daily role ends now); the daily path refreshes only when a new
   filing appears rather than re-fetching every day.
 - **Earnings dates** move to EDGAR (8-K item 2.02 / 10-Q filed date) in Phase 4.
+
+---
+
+## D23 — Phase 2 optimizer/backtest implementation choices
+
+Four implementation decisions made at the start of Phase 2 (2026-06-19,
+confirmed with Diego). Each adapts the ARCHITECTURE plan to what actually
+holds today; none changes the strategy, only how it is computed.
+
+**(a) Covariance — keep FF5 factor model, but fetch Ken French data directly.**
+ARCHITECTURE specifies FF5 covariance via `pandas_datareader`, but pdr
+import-crashes under pandas 3.0 (`deprecate_kwarg` signature change). Rather
+than pin pandas backward or swap to a plain sample covariance, `engine/
+covariance.py` downloads the daily 5-factor file from the Dartmouth/Ken French
+data library directly (`requests` + zip, cached to disk), then builds
+Σ = B·cov(F)·Bᵀ + diag(resid var) by OLS-regressing each asset's excess
+returns on the five factors over `covariance.estimation_window_days`. This
+preserves the documented, well-conditioned factor-model Σ (PSD for any N) and
+drops the broken dependency. *Rejected:* Ledoit-Wolf sample covariance —
+self-contained but departs from the FF5 design and is worse-conditioned on a
+60-day window.
+
+**(b) Min-position constraint — pre-select top-K + convex QP + cleanup, not MIQP.**
+The `w ≥ min_position or w = 0` rule is semi-continuous (non-convex), and the
+installed cvxpy solvers (CLARABEL/OSQP/SCS/HIGHS) include no MIQP backend. So
+`engine/optimize.py` (1) pre-selects the top-K names by composite score
+(K ≈ 50), (2) solves the convex QP `max μᵀw − λ·wᵀΣw` s.t. budget =
+base_equity_allocation, 0 ≤ w ≤ max_single_name_pct, sector caps, (3) zeroes
+any name below `min_position_usd/NAV`, renormalizes, and re-solves on the
+survivors, then (4) applies the D-existing infeasibility-relaxation ladder.
+The 95% budget / 4% min ratio caps the book at ~23 names organically, hitting
+the 20–30 target. *Rejected:* true MIQP via a new solver (e.g. pyscipopt) —
+faithful to the spec but adds a dependency and is slower in the walk-forward
+loop; revisit only if the cleanup heuristic misbehaves.
+
+**(c) Sector data for the 30% sector cap — EDGAR SIC → sector buckets.**
+No sector field exists in the store. `engine/sectors.py` reads each filer's
+SIC code from the SEC submissions endpoint (`data.sec.gov/submissions/
+CIK{…}.json` — already within our EDGAR access), maps SIC ranges to ~11
+sector buckets, and caches `data/ref/sectors.parquet`. Self-contained, stable,
+point-in-time-safe; names without a CIK (ETFs/ADRs) bucket to "Unknown".
+*Rejected:* yfinance `.info['sector']` (cleaner GICS labels but flaky,
+rate-limited, not point-in-time) and deferring the cap (risks a concentrated
+first backtest).
+
+**(d) Transaction costs — tiered fixed bps by ADV.**
+The stored `spread` column is a high-low *placeholder*, not bid/ask. The
+backtest charges a half-spread in basis points tiered by liquidity
+(large-cap / mid / small via `execution.large_cap_adv_threshold` and a new
+tiered-bps setting), using the ADV already computed. Transparent and easy to
+stress. *Rejected:* Corwin-Schultz high-low spread estimator — noisier, can go
+negative, needs clamping; the `spread` placeholder is retired either way.

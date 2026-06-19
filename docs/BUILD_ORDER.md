@@ -154,32 +154,43 @@ sensible output on historical data.
 **Goal:** Complete walk-forward backtest of the full factor portfolio
 (without covered calls) producing clean performance metrics.
 
-**Build:**
+**Build** (incremental order; implementation choices fixed in DECISIONS D23):
 
-1. `engine/optimize.py` — cvxpy max-Sharpe optimizer:
-   - Inputs: factor scores (μ proxy), FF5 covariance matrix, NAV,
-     constraint parameters
-   - Calibrate μ scaling: rank/N × target_return_scale, tune
-     target_return_scale and λ together until optimizer produces
-     20-30 names with reasonable weight distribution
-   - FF5 covariance via pandas-datareader + OLS factor loading estimation
-   - Enforce all constraints from SPEC.md
-   - Infeasibility relaxation: sector cap +5% → min position -$250,
-     max 3 retries, then hold previous weights and alert
-   - Cash handling: weights normalized to invested capital
-   - Test in isolation with synthetic inputs first
+0. `engine/sectors.py` — sector map for the sector cap (no sector field exists
+   in the store yet). Read each filer's SIC from the SEC submissions endpoint
+   (`data.sec.gov/submissions/CIK{…}.json`), map SIC ranges → ~11 sector
+   buckets, cache `data/ref/sectors.parquet`; no-CIK names → "Unknown".
 
-2. `scripts/backtest.py` — walk-forward monthly backtest:
-   - For each month from 2019 to present (⚠️ bounded to mid-2020→present
-     on the free IEX feed until SIP is enabled — DECISIONS D21):
-     - Run factors.py → optimize.py
-     - Simulate execution: apply half-spread transaction cost on each trade
-     - Apply T+1 settlement on equity sells
-     - Track weights, returns, turnover, factor attribution
-   - Output: annualized return, Sharpe, max drawdown, turnover rate,
-     Calmar ratio, factor contribution breakdown
+1. `engine/covariance.py` — FF5 factor-model covariance (D23a). Download the
+   daily 5-factor file from the Ken French library directly (`requests` + zip,
+   cached — `pandas_datareader` is dead under pandas 3.0), OLS each asset's
+   excess returns on the 5 factors over `covariance.estimation_window_days` →
+   Σ = B·cov(F)·Bᵀ + diag(resid var). Test: recovers known betas on synthetic
+   returns; Σ is PSD.
 
-3. `notebooks/backtest_analysis.ipynb`:
+2. `engine/optimize.py` — convex max-Sharpe optimizer (D23b, no MIQP solver
+   available):
+   - μ from `rank(composite)/N × target_return_scale` (new setting; calibrate
+     λ + scale together to 20–30 names — D20)
+   - Pre-select top-K (≈50) by composite, solve convex QP
+     `max μᵀw − λ·wᵀΣw` s.t. `sum(w)=base_equity_allocation`, `0≤w≤
+     max_single_name_pct`, `sum(w[sector])≤max_sector_pct` (CLARABEL/OSQP)
+   - Min-position cleanup: zero names < `min_position_usd/NAV`, renormalize,
+     re-solve on survivors
+   - Infeasibility ladder: sector cap +5/+10/+15%, min position −$250/−$500,
+     max 3 retries, then hold previous weights + alert
+   - Cash normalized to invested capital; test in isolation on synthetic μ/Σ
+
+3. `scripts/backtest.py` — walk-forward monthly backtest:
+   - For each month, mid-2020 → present (⚠️ free-IEX floor, DECISIONS D21):
+     factors.py → covariance.py → optimize.py
+   - Transaction costs: tiered fixed bps by ADV (D23d) — retires the `spread`
+     placeholder; T+1 settlement on equity sells
+   - Track weights, returns, turnover, factor attribution
+   - Output: annualized return, Sharpe, max drawdown, turnover, Calmar,
+     factor-contribution breakdown
+
+4. `notebooks/backtest_analysis.ipynb`:
    - Cumulative returns vs SPY benchmark
    - Rolling 12-month Sharpe
    - Factor score contribution over time
