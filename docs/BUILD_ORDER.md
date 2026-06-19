@@ -4,7 +4,7 @@ Phase-by-phase build plan. Do not proceed to the next phase until the
 gate criteria are met. Claude Code should always know which phase is
 active and never build ahead of it.
 
-**Active phase: 0** (data backfill finalizing). Status legend:
+**Active phase: 1** (factor scoring). Status legend:
 ✅ done · 🔄 in progress · ⬜ not started.
 
 ---
@@ -13,8 +13,8 @@ active and never build ahead of it.
 
 | Phase | Scope | Gate | Status |
 |---|---|---|---|
-| 0 | Scaffold + data pipeline + backfill | Clean data in Parquet and PostgreSQL | 🔄 |
-| 1 | Factor scoring | Factor scores look reasonable on historical data | ⬜ |
+| 0 | Scaffold + data pipeline + backfill | Clean data in Parquet and PostgreSQL | ✅ |
+| 1 | Factor scoring | Factor scores look reasonable on historical data | 🔄 |
 | 2 | Optimizer + equity-only backtest | Backtest Sharpe > 1.0 after transaction costs | ⬜ |
 | 2b | Full strategy backtest including covered calls | Combined strategy Sharpe validated | ⬜ |
 | 3 | Execution engine + risk gate | Orders submit and fill correctly in paper account | ⬜ |
@@ -31,9 +31,10 @@ active and never build ahead of it.
 **Goal:** Working data pipeline with clean historical data ready for
 factor computation.
 
-**Status (2026-06-18):** Build ✅ complete. Data backfill in progress —
-equities done (mid-2020→present; see gate note), fundamentals running
-(scoped to the liquid universe). Postgres schema created. Unit tests 22/22.
+**Status (2026-06-18):** ✅ Complete. Equities backfilled (mid-2020→present;
+see gate note), fundamentals backfilled (scoped to the liquid universe;
+~2,083 names with statement-derived fundamentals). Postgres schema created.
+Unit tests 22/22.
 
 **Build:**
 
@@ -77,8 +78,10 @@ equities done (mid-2020→present; see gate note), fundamentals running
 - ⚠️ `data/raw/equities/` contains Parquet files — **mid-2020 → present**,
   not 2016: the free Alpaca IEX feed only serves history back to
   ~2020-07-27 (DECISIONS D21). Full 2016+ history needs the paid SIP feed.
-- 🔄 `data/raw/fundamentals/` contains quarterly fundamental snapshots —
-  scoped backfill to the liquid universe (~2,700 names) in progress
+- ✅ `data/raw/fundamentals/` contains quarterly fundamental snapshots —
+  scoped backfill to the liquid universe complete (~2,083 names with
+  statement-derived fundamentals; the rest are ETFs/ADRs/funds/recent
+  listings yfinance cannot derive quarterly fundamentals for)
 - ✅ `python -m engine.ingest` runs correctly for today's date
 - ✅ Backfill and daily ingest produce identical Parquet schema
 - ✅ Re-running either for the same date overwrites cleanly
