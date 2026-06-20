@@ -733,3 +733,36 @@ The residual uncertainty (the zero-premium floor is a loss) is best resolved by 
 paper-trading on real chains** (Phase 7), not by buying historical options data now.
 *Deferred:* Polygon.io single-name options integration if a firmer historical verdict is
 ever needed.
+
+---
+
+## D28 — Trade only US-GAAP (SEC EDGAR) filers; exclude yfinance-ADR junk data
+
+**Decision:** restrict the tradable universe to names with **SEC EDGAR (US-GAAP)**
+fundamentals — excluding foreign filers / ADRs whose only data is the yfinance
+fallback. Setting ``universe.require_edgar_fundamentals: true``. Confirmed with Diego
+(2026-06-19) after the dashboard exposed the problem.
+
+**Why — the value factor was eating junk data.** The analytics dashboard showed the
+book had rotated to **65% foreign ADRs** recently. Root cause: ADR fundamentals from
+the yfinance fallback are corrupt — P/E of **0.01–0.08** (currency / share-ratio
+errors). Value = earnings-yield = 1/PE, so PE=0.01 ⇒ a 10,000% earnings yield ⇒ an
+absurd value score ⇒ the optimizer piled into ADRs. EDGAR is US-GAAP only, so foreign
+20-F/IFRS filers never had trustworthy fundamentals (the D22 caveat, far larger than
+"winsorized minority"). The held ADRs were also **thin-option** names, making the
+covered-call premium model optimistic. Both problems are the same fix.
+
+**Implementation:** ``factors.load_all_fundamentals(source="sec_edgar")`` drops the
+yfinance rows; ``factors.load_scored_fundamentals(dir, settings)`` returns the EDGAR
+frame + the eligible-symbol set; ``compute_factor_scores`` / ``score_date`` take
+``eligible_symbols`` and restrict the universe to it. All backtest callers updated.
+
+**Effect (re-run on the clean universe, 2021-09→2026-05):** equity-only net
+**+14.0%→+10.9%/yr** (≈3%/yr was the ADR data artifact — fake), Sharpe **0.75→0.62**
+(now below SPY's 0.76 — the junk ADRs were inflating it), but **all four factor sleeves
+turn healthily positive** (low-vol −1.5%→+6.7%, momentum +3%→+21.2%) and the held names
+are domestic with **liquid options** (premium model now trustworthy). Overlay at
+market-implied IV still **Sharpe 1.18** (beats SPY, clears 1.0), vol 20%→17%, maxDD
+−26%→−18.5%. Honest, lower, and far more defensible. *Open:* the EDGAR filter still
+admits a few commodity ETFs (IAU/SLV — SEC-registered trusts) picked on momentum —
+decide separately whether to exclude ETFs.

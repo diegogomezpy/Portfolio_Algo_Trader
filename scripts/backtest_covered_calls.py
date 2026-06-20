@@ -113,7 +113,7 @@ def run_overlay(start: date, end: date, *, settings=None, iv_mode: str = "vix_sc
     win = settings.covariance.estimation_window_days
 
     panel = factors.load_close_panel(eq.PRICES_DIR, end=end, lookback=10**9)
-    allf = factors.load_all_fundamentals(eq.FUNDAMENTALS_DIR)
+    allf, eligible = factors.load_scored_fundamentals(eq.FUNDAMENTALS_DIR, settings)
     ff5 = covariance.load_ff5_daily()
     sector_map = sectors.load_sector_map()["sector"]
     vix = load_vix()
@@ -127,7 +127,7 @@ def run_overlay(start: date, end: date, *, settings=None, iv_mode: str = "vix_sc
     rows = []
     for d0, d1 in zip(rebal[:-1], rebal[1:]):
         sc = factors.score_date(d0.date(), settings=settings, price_panel=panel,
-                                all_fundamentals=allf).set_index("symbol")
+                                all_fundamentals=allf, eligible_symbols=eligible).set_index("symbol")
         comp = sc["composite_score"].dropna()
         if comp.empty:
             continue

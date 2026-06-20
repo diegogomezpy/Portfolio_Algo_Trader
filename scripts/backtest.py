@@ -163,7 +163,7 @@ def run_walkforward(start: date, end: date, *, settings=None) -> pd.DataFrame:
 
     log.info("loading panel / fundamentals / FF5 / sectors")
     panel = factors.load_close_panel(PRICES_DIR, end=end, lookback=10**9)
-    allf = factors.load_all_fundamentals(FUNDAMENTALS_DIR)
+    allf, eligible = factors.load_scored_fundamentals(FUNDAMENTALS_DIR, settings)
     ff5 = covariance.load_ff5_daily()
     sector_map = sectors.load_sector_map()["sector"]
     adv = _latest_adv(panel.index[-1])
@@ -178,7 +178,7 @@ def run_walkforward(start: date, end: date, *, settings=None) -> pd.DataFrame:
     rows = []
     for d0, d1 in zip(rebal[:-1], rebal[1:]):
         sc = factors.score_date(d0.date(), settings=settings, price_panel=panel,
-                                all_fundamentals=allf).set_index("symbol")
+                                all_fundamentals=allf, eligible_symbols=eligible).set_index("symbol")
         composite = sc["composite_score"].dropna()
         if composite.empty:
             continue

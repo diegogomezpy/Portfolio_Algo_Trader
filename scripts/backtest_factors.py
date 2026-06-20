@@ -84,7 +84,7 @@ def run_backtest(
 
     log.info("loading price panel + fundamentals", extra={"start": str(start), "end": str(end)})
     panel = factors.load_close_panel(PRICES_DIR, end=end, lookback=10**9)
-    all_fundamentals = factors.load_all_fundamentals(FUNDAMENTALS_DIR)
+    all_fundamentals, eligible = factors.load_scored_fundamentals(FUNDAMENTALS_DIR, settings)
 
     rebal = [d for d in month_start_dates(panel.index)
              if start <= d.date() <= end and panel.index.get_loc(d) >= burn]
@@ -97,7 +97,8 @@ def run_backtest(
     rows = []
     for d, d_next in zip(rebal[:-1], rebal[1:]):
         scores = factors.score_date(
-            d.date(), settings=settings, price_panel=panel, all_fundamentals=all_fundamentals
+            d.date(), settings=settings, price_panel=panel, all_fundamentals=all_fundamentals,
+            eligible_symbols=eligible,
         ).set_index("symbol")
         fwd = (panel.loc[d_next] / panel.loc[d] - 1.0).reindex(scores.index)
         scores["fwd"] = fwd

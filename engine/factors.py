@@ -131,6 +131,7 @@ def compute_factor_scores(
     price_panel: pd.DataFrame,
     fundamentals_pit: pd.DataFrame,
     universe_snapshot: pd.DataFrame,
+    eligible_symbols: set | None = None,
 ) -> pd.DataFrame:
     """Compute composite factor scores for the filtered universe on ``as_of``.
 
@@ -155,6 +156,8 @@ def compute_factor_scores(
     snap = universe_snapshot
     keep = snap[(snap["close"] > settings.universe.min_price)
                 & (snap["adv_20d"] > settings.universe.min_adv_usd)]
+    if eligible_symbols is not None:  # e.g. only US-GAAP filers with reliable data (D28)
+        keep = keep[keep.index.isin(eligible_symbols)]
     symbols = keep.index
     if len(symbols) == 0:
         return _empty_scores()
@@ -226,12 +229,15 @@ def load_close_panel(prices_dir: Path | str, end: _date, lookback: int) -> pd.Da
     return pd.DataFrame(closes).T.sort_index()
 
 
-def load_all_fundamentals(fundamentals_dir: Path | str) -> pd.DataFrame:
+def load_all_fundamentals(fundamentals_dir: Path | str, *, source: str | None = None) -> pd.DataFrame:
     """Load every quarterly fundamentals file into one long frame.
 
     Returns columns ``symbol, pe_ratio, pb_ratio, roe, gross_margin, report_date``
     with ``report_date`` parsed to datetime. Cheap enough to load once and reuse
     across an entire backtest.
+
+    ``source`` filters to one data source (e.g. ``"sec_edgar"`` to trade only US-GAAP
+    filers and drop the unreliable yfinance ADR fallback — DECISIONS D28).
     """
     frames = []
     for p in sorted(Path(fundamentals_dir).glob("*.parquet")):
@@ -240,12 +246,29 @@ def load_all_fundamentals(fundamentals_dir: Path | str) -> pd.DataFrame:
     if not frames:
         return pd.DataFrame(columns=["symbol", *FUNDAMENTAL_FIELDS, "report_date"])
     allf = pd.concat(frames, ignore_index=True)
+    if source is not None and "source" in allf.columns:
+        allf = allf[allf["source"] == source].reset_index(drop=True)
     allf["report_date"] = pd.to_datetime(allf["report_date"])
     # Per-quarter files can disagree on dtype (a stray None makes a column object);
     # concat then poisons it. Coerce the numeric fields so downstream math is float.
     for col in FUNDAMENTAL_FIELDS:
         allf[col] = pd.to_numeric(allf[col], errors="coerce")
     return allf
+
+
+def load_scored_fundamentals(fundamentals_dir: Path | str, settings):
+    """Load fundamentals and the eligible-symbol set per the universe policy (D28).
+
+    When ``settings.universe.require_edgar_fundamentals`` is set, only US-GAAP
+    (``sec_edgar``) fundamentals are loaded and the tradable universe is restricted
+    to those names — excluding the foreign/ADR names whose only data is the
+    unreliable yfinance fallback. Returns ``(all_fundamentals, eligible_symbols)``;
+    ``eligible_symbols`` is ``None`` when the policy is off (no restriction).
+    """
+    if getattr(settings.universe, "require_edgar_fundamentals", False):
+        allf = load_all_fundamentals(fundamentals_dir, source="sec_edgar")
+        return allf, set(allf["symbol"])
+    return load_all_fundamentals(fundamentals_dir), None
 
 
 def point_in_time_fundamentals(all_fundamentals: pd.DataFrame, as_of: _date, lag_days: int) -> pd.DataFrame:
@@ -274,11 +297,13 @@ def score_date(
     fundamentals_dir: Path | str = DEFAULT_FUNDAMENTALS_DIR,
     price_panel: Optional[pd.DataFrame] = None,
     all_fundamentals: Optional[pd.DataFrame] = None,
+    eligible_symbols: set | None = None,
 ) -> pd.DataFrame:
     """Load inputs for ``as_of`` from disk and compute factor scores.
 
     ``price_panel`` and ``all_fundamentals`` may be passed pre-loaded (the backtest
     loads them once and reuses across every month); otherwise they are read here.
+    ``eligible_symbols`` further restricts the tradable universe (e.g. US-GAAP filers).
     """
     if settings is None:
         from engine.config import load_settings
@@ -306,6 +331,7 @@ def score_date(
         price_panel=price_panel,
         fundamentals_pit=pit,
         universe_snapshot=universe_snapshot,
+        eligible_symbols=eligible_symbols,
     )
     log.info(
         "factor scores computed",

@@ -4,6 +4,11 @@
 universe:
   min_price: 5.0
   min_adv_usd: 1_000_000
+  require_edgar_fundamentals: true   # only trade US-GAAP (SEC EDGAR) filers (DECISIONS
+                                     # D28): the yfinance ADR-fallback fundamentals are
+                                     # junk (P/E ~0.01) and corrupted the value factor,
+                                     # piling the book into foreign ADRs. EDGAR filers
+                                     # also have liquid US options for the overlay.
 
 portfolio:
   nav: 100_000

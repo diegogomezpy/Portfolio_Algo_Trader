@@ -174,3 +174,30 @@ def test_compute_applies_universe_filter_and_stale_flag():
     assert bool(scores.loc["NOFUND", "stale"]) is True     # missing fundamentals
     assert bool(scores.loc["KEEP", "stale"]) is False
     assert scores["composite_score"].notna().all()         # neutral-filled, never NaN
+
+
+def test_compute_restricts_to_eligible_symbols():
+    # D28: only US-GAAP filers tradable; the ADR is excluded even though it's liquid.
+    symbols = ["USGAAP", "ADR"]
+    snap = pd.DataFrame({"close": [100.0, 100.0], "adv_20d": [5e6, 5e6]}, index=symbols)
+    fpit = pd.DataFrame({"pe_ratio": [10.0, 0.02], "pb_ratio": [1.0, 0.01],
+                         "roe": [0.1, 0.02], "gross_margin": [0.3, 0.6]}, index=symbols)
+    panel = flat_panel(symbols)
+    scores = factors.compute_factor_scores(
+        panel.index[-1].date(), settings=make_settings(),
+        price_panel=panel, fundamentals_pit=fpit, universe_snapshot=snap,
+        eligible_symbols={"USGAAP"},
+    ).set_index("symbol")
+    assert set(scores.index) == {"USGAAP"}                 # ADR excluded from the universe
+
+
+def test_load_all_fundamentals_filters_by_source(tmp_path):
+    df = pd.DataFrame({
+        "pe_ratio": [10.0, 0.02], "pb_ratio": [1.0, 0.01], "roe": [0.1, 0.02],
+        "gross_margin": [0.3, 0.6], "report_date": ["2024-01-15", "2024-01-15"],
+        "source": ["sec_edgar", "yfinance"],
+    }, index=pd.Index(["USGAAP", "ADR"], name="symbol"))
+    df.to_parquet(tmp_path / "2024-Q1.parquet")
+    edgar = factors.load_all_fundamentals(tmp_path, source="sec_edgar")
+    assert list(edgar["symbol"]) == ["USGAAP"]             # yfinance row dropped
+    assert set(factors.load_all_fundamentals(tmp_path)["symbol"]) == {"USGAAP", "ADR"}
