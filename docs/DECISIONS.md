@@ -766,3 +766,20 @@ market-implied IV still **Sharpe 1.18** (beats SPY, clears 1.0), vol 20%→17%, 
 −26%→−18.5%. Honest, lower, and far more defensible. *Open:* the EDGAR filter still
 admits a few commodity ETFs (IAU/SLV — SEC-registered trusts) picked on momentum —
 decide separately whether to exclude ETFs.
+---
+
+## D29 — Covered-call delta raised 0.25 → 0.30 from the delta sweep
+
+**Decision:** set `covered_calls.target_delta` to **0.30** (was 0.25). Confirmed with
+Diego (2026-06-19) after the dashboard delta-optimization sweep.
+
+**Why.** Sweeping the call delta at both the realized-vol floor and market-implied IV:
+at the floor, Sharpe is flat (~0.55) across delta — delta only pays if implied vol
+exceeds realized, which is the whole premise of selling calls. At market IV, Sharpe
+climbs with delta (0.25→1.18, 0.30→1.31, 0.35→1.43, 0.40→1.52) as more premium is
+harvested, but the assignment rate crosses the 30% cap near delta 0.35 (0.35=30%,
+0.40=36%). 0.30 is the balanced step up: market Sharpe 1.31, assignment a comfortable
+22%, realized-floor Sharpe essentially unchanged (0.54), ~26%/yr premium. 0.35 (max
+feasible) and keeping 0.25 (conservative) were the considered alternatives. Revisit
+once live paper-trading reveals real single-name premiums (the IV assumption is the
+load-bearing uncertainty, D27).

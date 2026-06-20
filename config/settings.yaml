@@ -58,7 +58,9 @@ rebalancing:
                                  # turnover. 0 = off; calibrated by backtest sweep below.
 
 covered_calls:
-  target_delta: 0.25
+  target_delta: 0.30             # raised from 0.25 (DECISIONS D29): the delta sweep showed
+                                 # 0.25 left premium on the table — 0.30 lifts the market-IV
+                                 # Sharpe (1.18→1.31) with assignment a safe 22% (<30% cap).
   min_dte_entry: 30
   max_dte_entry: 45
   roll_dte_trigger: 21
