@@ -21,3 +21,4 @@ venv/
 
 # OS / editor
 .DS_Store
+reports/_dashboard_widget.html
