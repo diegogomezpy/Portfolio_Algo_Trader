@@ -435,6 +435,107 @@ def options_daily_check(client, broker, db_engine, *, settings, as_of: date,
         rewritten, _ = write_calls(client, broker, db_engine, to_rewrite, settings=settings,
                                    as_of=as_of, price_panel=price_panel, alert=alert)
 
-    out = {"expiry_closed": len(expiry), "earnings_closed": len(facing), "rewritten": len(rewritten)}
+    asg = process_assignments(client, broker, db_engine, settings=settings, as_of=as_of, alert=alert)
+    out = {"expiry_closed": len(expiry), "earnings_closed": len(facing),
+           "rewritten": len(rewritten), "reentered": asg["reentered"]}
     log.info("options daily check", extra=out)
     return out
+
+
+# ====================================================================== #
+# Assignment re-entry (4.6) — detect via Alpaca activities, re-buy if scored
+# ====================================================================== #
+def latest_scores(db_engine) -> dict[str, float]:
+    """``{symbol: composite_score}`` for the most recent ``factor_scores`` date (or ``{}``)."""
+    if db_engine is None:
+        return {}
+    from sqlalchemy import func, select
+    from engine.db import factor_scores
+    with db_engine.connect() as conn:
+        d = conn.execute(select(func.max(factor_scores.c.date))).scalar()
+        if d is None:
+            return {}
+        rows = conn.execute(select(factor_scores.c.symbol, factor_scores.c.composite_score)
+                            .where(factor_scores.c.date == d)).all()
+    return {r[0]: float(r[1]) for r in rows if r[1] is not None}
+
+
+def assignment_reentry_plan(assignments: Sequence[Mapping], scores: Mapping[str, float],
+                            *, reentry_threshold: float) -> list[dict]:
+    """Which called-away names to re-buy: those still scoring > ``reentry_threshold`` (pure).
+
+    ``assignments`` = ``[{underlying, shares}]``; returns ``[{symbol, shares}]`` to buy back.
+    """
+    plan = []
+    for a in assignments:
+        shares = int(a.get("shares") or 0)
+        sym = a["underlying"]
+        if shares > 0 and scores.get(sym, float("-inf")) > reentry_threshold:
+            plan.append({"symbol": sym, "shares": shares})
+    return plan
+
+
+def _assignments_from_activities(activities: Sequence[Mapping]) -> list[dict]:
+    """Map OPASN activity records to ``[{underlying, shares, option_symbol}]``."""
+    out = []
+    for a in activities:
+        if str(a.get("activity_type") or "").upper() != "OPASN":
+            continue
+        sym = str(a.get("symbol") or "")
+        underlying = _occ_underlying(sym) if _OCC_RE.match(sym) else sym
+        shares = int(abs(a.get("qty") or 0))
+        if underlying and shares:
+            out.append({"underlying": underlying, "shares": shares, "option_symbol": sym})
+    return out
+
+
+def process_assignments(client, broker, db_engine, *, settings, as_of: date, alert=None) -> dict:
+    """Detect option assignments (Alpaca OPASN) and conditionally re-buy the called-away stock.
+
+    For each assigned name still scoring above ``covered_calls.reentry_threshold``, buy back
+    the called-away shares at market (idempotent per name/day via ``client_order_id``); logs
+    ``assignment`` + ``reentry`` events. Resilient: an activities-read failure is logged and
+    skipped (assignment is rare under the monthly close-before-expiry cadence).
+    """
+    try:
+        activities = client.account_activities(["OPASN"], date=as_of.isoformat())
+    except Exception as exc:  # noqa: BLE001
+        log.warning("assignment check skipped; activities read failed", extra={"error": str(exc)})
+        return {"assignments": 0, "reentered": 0}
+
+    assignments = _assignments_from_activities(activities)
+    for a in assignments:
+        _log_simple(db_engine, "assignment", a["underlying"],
+                    contracts=a["shares"] // _CONTRACT_SHARES, option_symbol=a.get("option_symbol"))
+
+    plan = assignment_reentry_plan(assignments, latest_scores(db_engine),
+                                   reentry_threshold=settings.covered_calls.reentry_threshold)
+    reentered = 0
+    for p in plan:
+        coid = f"reentry:{as_of.isoformat()}:{p['symbol']}"
+        try:
+            broker.submit_order(p["symbol"], p["shares"], "buy", order_type="market",
+                                client_order_id=coid)
+        except AlpacaAPIError as exc:
+            log.error("re-entry buy rejected", extra={"symbol": p["symbol"], "error": str(exc)})
+            if alert:
+                alert(f"assignment re-entry rejected {p['symbol']}: {exc}")
+            continue
+        _log_simple(db_engine, "reentry", p["symbol"])
+        reentered += 1
+    if assignments and alert:
+        alert(f"assignment: {len(assignments)} name(s) called away, {reentered} re-entered")
+    log.info("assignment check", extra={"assignments": len(assignments), "reentered": reentered})
+    return {"assignments": len(assignments), "reentered": reentered}
+
+
+def _log_simple(db_engine, event_type: str, underlying: str, *, contracts=None,
+                premium: float = 0.0, option_symbol=None) -> None:
+    if db_engine is None:
+        return
+    from sqlalchemy import insert
+    from engine.db import options_lifecycle
+    with db_engine.begin() as conn:
+        conn.execute(insert(options_lifecycle).values(
+            ts=datetime.now(timezone.utc), event_type=event_type, underlying=underlying,
+            option_symbol=option_symbol, contracts=contracts, premium=round(premium, 2)))

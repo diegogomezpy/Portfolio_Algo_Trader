@@ -18,10 +18,10 @@ from engine import covered_calls as cc
 from engine import db, options
 
 
-def _settings(target_delta=0.30, min_dte=30, max_dte=45, cov_window=60):
+def _settings(target_delta=0.30, min_dte=30, max_dte=45, cov_window=60, reentry_threshold=0.0):
     return SimpleNamespace(
         covered_calls=SimpleNamespace(target_delta=target_delta, min_dte_entry=min_dte,
-                                      max_dte_entry=max_dte),
+                                      max_dte_entry=max_dte, reentry_threshold=reentry_threshold),
         covariance=SimpleNamespace(estimation_window_days=cov_window))
 
 
@@ -114,9 +114,10 @@ def test_build_close_plan_buys_to_close_each_short_call():
 # I/O (4.3) — fake client/broker + in-memory sqlite
 # ====================================================================== #
 class _FakeClient:
-    def __init__(self, positions=None, chains=None):
+    def __init__(self, positions=None, chains=None, activities=None):
         self._positions = positions or []
         self._chains = chains or {}
+        self._activities = activities or []
 
     def all_positions(self):
         return list(self._positions)
@@ -128,11 +129,22 @@ class _FakeClient:
             raise val
         return val
 
+    def account_activities(self, activity_types=None, date=None):
+        return list(self._activities)
+
 
 class _FakeBroker:
     def __init__(self, reject=()):
         self.reject = set(reject)
         self.option_orders = []
+        self.equity_orders = []
+
+    def submit_order(self, symbol, qty, side, *, order_type="market", limit_price=None,
+                     client_order_id=None):
+        rec = dict(symbol=symbol, qty=qty, side=side, order_type=order_type,
+                   client_order_id=client_order_id, id=f"eq-{len(self.equity_orders) + 1}")
+        self.equity_orders.append(rec)
+        return rec
 
     def submit_option_order(self, option_symbol, contracts, side, *, position_intent,
                             order_type="limit", limit_price=None, client_order_id=None):
@@ -281,8 +293,57 @@ def test_options_daily_check_closes_into_earnings_and_rewrites():
     broker = _FakeBroker()
     out = cc.options_daily_check(client, broker, eng, settings=_settings(), as_of=as_of,
                                  price_panel=panel, earnings_fetch=lambda s: earn.get(s, []))
-    assert out == {"expiry_closed": 0, "earnings_closed": 1, "rewritten": 1}
+    assert out == {"expiry_closed": 0, "earnings_closed": 1, "rewritten": 1, "reentered": 0}
     sides = {(o["side"], o["position_intent"]) for o in broker.option_orders}
     assert ("buy", "buy_to_close") in sides and ("sell", "sell_to_open") in sides
     events = {r["event_type"] for r in _lifecycle(eng)}
     assert events == {"earnings_close", "write"}
+
+
+# ====================================================================== #
+# Assignment re-entry (4.6)
+# ====================================================================== #
+def test_assignment_reentry_plan_gates_on_score():
+    assignments = [{"underlying": "AAA", "shares": 100}, {"underlying": "BBB", "shares": 200}]
+    scores = {"AAA": 1.5, "BBB": -0.5}                  # only AAA clears the 0.0 threshold
+    plan = cc.assignment_reentry_plan(assignments, scores, reentry_threshold=0.0)
+    assert plan == [{"symbol": "AAA", "shares": 100}]
+
+
+def test_assignments_from_opasn_activities():
+    acts = [
+        {"activity_type": "OPASN", "symbol": "AAA260821C00100000", "qty": 100},
+        {"activity_type": "DIV", "symbol": "BBB", "qty": 5},        # ignored (not OPASN)
+    ]
+    out = cc._assignments_from_activities(acts)
+    assert out == [{"underlying": "AAA", "shares": 100, "option_symbol": "AAA260821C00100000"}]
+
+
+def test_process_assignments_rebuys_scored_name_and_logs():
+    eng = _engine()
+    from sqlalchemy import insert
+    with eng.begin() as c:
+        c.execute(insert(db.factor_scores).values(date=date(2026, 7, 1), symbol="AAA",
+                                                  composite_score=1.2))
+    client = _FakeClient(activities=[
+        {"activity_type": "OPASN", "symbol": "AAA260821C00100000", "qty": 100}])
+    broker = _FakeBroker()
+    out = cc.process_assignments(client, broker, eng, settings=_settings(),
+                                 as_of=date(2026, 7, 2))
+    assert out == {"assignments": 1, "reentered": 1}
+    assert broker.equity_orders[0]["symbol"] == "AAA" and broker.equity_orders[0]["side"] == "buy"
+    assert broker.equity_orders[0]["qty"] == 100
+    events = [r["event_type"] for r in _lifecycle(eng)]
+    assert "assignment" in events and "reentry" in events
+
+
+def test_process_assignments_resilient_to_activities_error():
+    eng = _engine()
+
+    class _Boom:
+        def account_activities(self, *a, **k):
+            raise RuntimeError("activities endpoint down")
+
+    out = cc.process_assignments(_Boom(), _FakeBroker(), eng, settings=_settings(),
+                                 as_of=date(2026, 7, 2))
+    assert out == {"assignments": 0, "reentered": 0}     # logged + skipped, no raise

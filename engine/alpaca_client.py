@@ -39,6 +39,7 @@ are validated at the top level and returned as lightly-normalized structures.
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from typing import Any, Iterable
 
@@ -200,6 +201,11 @@ class AlpacaClient:
         self._corp = CorporateActionsClient(api_key, secret_key)
         # Option chain/quote reads for the D3/D4 covered call overlay.
         self._option_data = OptionHistoricalDataClient(api_key, secret_key)
+        # Kept for the direct-REST account-activities read (the SDK 0.43 has no
+        # account-activities surface, so :meth:`account_activities` calls the REST API).
+        self._api_key, self._secret_key = api_key, secret_key
+        self._base_url = os.environ.get(
+            "ALPACA_BASE_URL", "https://paper-api.alpaca.markets").rstrip("/")
 
     # ================================================================== #
     # Live market data
@@ -608,6 +614,53 @@ class AlpacaClient:
             "profit_loss_pct": [self._opt_float(v) for v in (getattr(history, "profit_loss_pct", []) or [])],
             "base_value": self._opt_float(getattr(history, "base_value", None)),
             "timeframe": self._enum_str(getattr(history, "timeframe", None)),
+        }
+
+    def account_activities(self, activity_types: list[str] | None = None,
+                           date: str | None = None) -> list[dict]:
+        """Return account activities (e.g. ``["OPASN"]`` for option assignments).
+
+        The installed alpaca-py has no account-activities surface, so this calls the REST
+        endpoint ``/v2/account/activities`` directly with the API-key headers. Each activity
+        is lightly normalized to ``{id, activity_type, symbol, qty, side, price, date, raw}``
+        (schemas vary by type, so ``raw`` keeps the full record). ``date`` filters to one day.
+
+        Raises:
+            AlpacaAPIError: If the request fails.
+        """
+        import json
+        import urllib.parse
+        import urllib.request
+
+        params = {}
+        if activity_types:
+            params["activity_types"] = ",".join(activity_types)
+        if date:
+            params["date"] = str(date)
+        url = f"{self._base_url}/v2/account/activities"
+        if params:
+            url += "?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(url, headers={
+            "APCA-API-KEY-ID": self._api_key, "APCA-API-SECRET-KEY": self._secret_key})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read())
+        except Exception as exc:  # noqa: BLE001 — network / HTTP error
+            raise AlpacaAPIError(_NO_SYMBOL, "account_activities", str(exc)) from exc
+        return [self._parse_activity(a) for a in (data or [])]
+
+    @staticmethod
+    def _parse_activity(a: dict) -> dict:
+        """Normalize one REST activity record (dict) to common fields; keep the raw."""
+        return {
+            "id": a.get("id"),
+            "activity_type": a.get("activity_type"),
+            "symbol": a.get("symbol"),
+            "qty": None if a.get("qty") is None else float(a.get("qty")),
+            "side": a.get("side"),
+            "price": None if a.get("price") is None else float(a.get("price")),
+            "date": a.get("date") or a.get("transaction_time"),
+            "raw": a,
         }
 
     # ================================================================== #
