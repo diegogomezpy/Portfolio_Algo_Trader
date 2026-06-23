@@ -154,8 +154,7 @@ def run_cycle(
     report = submit_and_track(orders, broker=broker, db_engine=db_engine,
                               cycle_key=as_of.isoformat(), pending=pending, alert=alert)
 
-    mon = monitor.monitor_once(client, db_engine, target_weights=weights.to_dict(),
-                               drift_threshold=settings.rebalancing.drift_threshold_l1, alert=alert)
+    mon = monitor.monitor_once(client, db_engine, target_weights=weights.to_dict())
     log.info("cycle executed", extra={"date": as_of.isoformat(), **vars(report)})
     return CycleResult("executed", weights, rc, report, mon)
 

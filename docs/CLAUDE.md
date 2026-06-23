@@ -87,8 +87,8 @@ sharpe-engine/
 | Factor weights | Equal weight initially, adjust after backtesting |
 | Objective | Max Sharpe, capital preservation mandate |
 | Constraints | Long-only, sector cap, min position size, no direct leverage |
-| Rebalancing | Monthly primary, L1 drift threshold secondary |
-| Covered calls | Delta = 0.25, 30-45 DTE, roll at 21 DTE |
+| Rebalancing | Monthly only — first trading day; equities + covered calls together (DECISIONS D31). Drift is telemetry, not a trigger |
+| Covered calls | Delta = 0.30 (D29), 30-45 DTE, rewritten monthly — no mid-cycle roll (D31) |
 | Covered call rebalance | Close all calls before monthly rebalance, rewrite fresh after new weights set |
 | Earnings policy | Close calls before earnings date, rewrite after announcement |
 | Contract sizing | Mini options (10 shares) where available, standard (100 shares) otherwise |
@@ -125,7 +125,7 @@ sharpe-engine/
 ## Open / TBD
 
 - Crypto allocation size (address after equities phase validated)
-- L1 drift threshold for secondary rebalance (calibrate in backtest)
+- (resolved D31) No secondary/drift-triggered rebalance — single monthly cadence
 - Sector cap level (start at 30%, adjust in backtest)
 - Factor weight adjustment (equal weight now, refine after backtest)
 - Fundamental data upgrade — resolved to **SEC EDGAR** for deep point-in-time

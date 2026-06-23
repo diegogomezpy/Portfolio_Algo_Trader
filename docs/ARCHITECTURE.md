@@ -234,7 +234,7 @@ deployed at the next rebalance.
 Manages the covered call overlay on held equity positions.
 
 **Runs after optimize.py, before execute.py, on rebalance days.**
-**Also runs daily to check for roll triggers, expiry, and earnings.**
+**Also runs daily to check for expiry (DTE = 0) and earnings — no DTE-based roll (DECISIONS D31).**
 
 **Monthly rebalance sequence:**
 1. Close ALL existing covered calls (before optimizer runs)
@@ -259,10 +259,10 @@ For each held call position:
 - If yes and not already flagged: close call before announcement date
 - After announcement: rewrite call at delta 0.25, 30-45 DTE
 
-**Roll logic (daily check):**
-For each held call position:
-- If DTE ≤ 21: close existing call, write new call at delta 0.25, 30-45 DTE
-- If DTE = 0: force-close at market open (runs before any other orders)
+**Roll logic:** there is no mid-cycle DTE roll (DECISIONS D31). Calls are written at the
+monthly rebalance and closed + rewritten at the next one; 30-45 DTE covers the ~1-month
+hold. The only daily safety check is force-close at DTE = 0 (at market open, before any
+other orders) should a call ever reach expiry between monthly rebalances.
 
 **Assignment handling:**
 When Alpaca reports a call was exercised:
@@ -299,10 +299,10 @@ Translates approved order list into Alpaca API calls.
 
 **Order sequencing:**
 1. Force-close expiring options (DTE = 0) first
-2. Equity sells (descending by size)
-3. Equity buys (descending by size)
-4. New covered call writes
-5. Covered call rolls (close + open)
+2. Close existing covered calls (monthly rewrite — DECISIONS D31)
+3. Equity sells (descending by size)
+4. Equity buys (descending by size)
+5. New covered call writes (after equity trades settle)
 
 **Order types:**
 - Equities: market order if ADV > $50M and spread < 0.1%, else limit at mid
@@ -347,9 +347,10 @@ days, or at scheduler start on non-rebalance days for monitoring).
 Runs continuously every 60 seconds between rebalances.
 
 - Computes live NAV from Alpaca positions + cash
-- Computes L1 drift between current weights and last target weights
-- If drift > threshold: log warning, flag for out-of-cycle rebalance
-- Checks DTE of all held calls: if any ≤ 21, flags for roll
+- Computes L1 drift between current weights and last target weights — recorded in the
+  snapshot as telemetry only; it does NOT trigger a rebalance (DECISIONS D31)
+- (Phase 4) reports held-call DTE for the dashboard; calls are rewritten at the monthly
+  rebalance, not on a DTE trigger (DECISIONS D31)
 - Writes portfolio snapshot to PostgreSQL `snapshots` table
 - Feeds data to dashboard via PostgreSQL
 
@@ -408,8 +409,8 @@ All times in America/New_York via pytz.
 - 4:12 PM — `holiday_check_job`
 - 4:15 PM — `ingest_job` (prices only, not fundamentals)
 - 4:20 PM — `factors_job` (price factors: momentum + vol refreshed from today's prices)
-- 4:25 PM — `drift_check_job` (check L1 drift using fresh price factors + cached fundamentals)
-- 4:30 PM — `options_check_job` (check DTE, earnings dates, trigger rolls/force-closes)
+- 4:30 PM — `earnings_check_job` (close calls before an upcoming earnings date, rewrite
+  after — DECISIONS D31; no drift-rebalance check and no DTE-based roll)
 
 **Continuous:**
 - Every 60s — `monitor_job`
@@ -455,14 +456,12 @@ factors:
   exclude_missing_fundamentals: false
 
 rebalancing:
-  primary: monthly               # first trading day of month
-  drift_threshold_l1: 0.08      # TBD — calibrate in backtest
+  primary: monthly               # first trading day of month — the ONE cadence (D31)
 
 covered_calls:
-  target_delta: 0.25
-  min_dte_entry: 30
+  target_delta: 0.30             # DECISIONS D29
+  min_dte_entry: 30              # written monthly, no mid-cycle roll (D31)
   max_dte_entry: 45
-  roll_dte_trigger: 21
   min_holding_days: 10           # don't write calls on positions about to be exited (Phase 4)
   reentry_threshold: 0.0         # reenter if composite score > 0 after assignment
   prefer_mini_contracts: true    # use 10-share mini contracts where available

@@ -348,10 +348,10 @@ rolls them correctly, and handles assignment.
      equity trades settle
    - Contract sizing: prefer mini contracts (10 shares), fall back to
      standard (100 shares); skip if position too small for one mini
-   - Strike selection: delta = 0.25, 30-45 DTE
+   - Strike selection: delta = 0.30 (DECISIONS D29), 30-45 DTE
    - Earnings check: close calls before earnings, rewrite after
      (earnings dates from Alpaca corporate actions or yfinance)
-   - Roll logic: DTE ≤ 21 → close + rewrite at delta 0.25, 30-45 DTE
+   - No mid-cycle roll (DECISIONS D31): calls are rewritten at the monthly rebalance only
    - Force-close: DTE = 0 → close at market open before all other orders
    - Assignment: conditional re-entry if composite score > threshold
    - All events written to `options_lifecycle` table

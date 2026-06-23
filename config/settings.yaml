@@ -51,8 +51,11 @@ factors:
                                  # So no extra lag is needed here.
 
 rebalancing:
-  primary: monthly               # first trading day of month
-  drift_threshold_l1: 0.08       # TBD — calibrate in backtest
+  primary: monthly               # first trading day of month — the ONE rebalance cadence
+                                 # (DECISIONS D31): equities AND covered calls both rebalance
+                                 # here and nowhere else. No drift-triggered out-of-cycle
+                                 # rebalance; L1 drift is still computed each monitor pass as
+                                 # telemetry (snapshots.drift) but never triggers a trade.
   incumbent_bonus: 0.0           # hysteresis (DECISIONS D26): composite-score (z) premium
                                  # for currently-held names, to cut membership churn /
                                  # turnover. 0 = off; calibrated by backtest sweep below.
@@ -61,13 +64,17 @@ covered_calls:
   target_delta: 0.30             # raised from 0.25 (DECISIONS D29): the delta sweep showed
                                  # 0.25 left premium on the table — 0.30 lifts the market-IV
                                  # Sharpe (1.18→1.31) with assignment a safe 22% (<30% cap).
+  # Cadence (DECISIONS D31): calls are written at the monthly rebalance and closed +
+  # rewritten at the next one — there is NO mid-cycle DTE roll. Matches the Phase 2b
+  # backtest (one monthly write per option life); 30-45 DTE covers the ~1-month hold.
   min_dte_entry: 30
   max_dte_entry: 45
-  roll_dte_trigger: 21
   min_holding_days: 10           # don't write calls on positions about to be exited (consumed in Phase 4)
   reentry_threshold: 0.0         # re-enter if composite score > 0 after assignment
   prefer_mini_contracts: true    # use 10-share mini contracts where available
-  close_before_earnings: true    # always close calls before earnings announcement
+  close_before_earnings: true    # close calls before an earnings announcement, rewrite after —
+                                 # kept as a risk control (DECISIONS D31): the one event-driven
+                                 # action outside the monthly cadence.
 
 execution:
   min_trade_usd: 500

@@ -4,9 +4,9 @@ Runs continuously (every 60s) between rebalances. Each pass:
 
 * computes live NAV and cash from the Alpaca account, and current weights from position
   market values;
-* computes L1 drift between current weights and the last target weights — if it exceeds
-  ``rebalancing.drift_threshold_l1`` it logs a warning and flags an out-of-cycle
-  rebalance (the daily ``drift_check_job`` acts on the flag);
+* computes L1 drift between current weights and the last target weights and records it in
+  the snapshot — **telemetry only**: there is no drift-triggered rebalance (DECISIONS D31,
+  monthly is the only cadence), so drift never fires a trade;
 * writes a portfolio snapshot to the ``snapshots`` table (dashboard + reconciliation).
 
 The DTE check on held covered calls is a Phase 4 concern (no options are written until
@@ -32,13 +32,12 @@ log = get_logger(__name__)
 
 @dataclass
 class MonitorResult:
-    """One monitor pass: NAV/cash, current weights/positions, drift, and the flag."""
+    """One monitor pass: NAV/cash, current weights/positions, and L1 drift (telemetry)."""
     nav: Optional[float]
     cash: Optional[float]
     weights: pd.Series
     positions: dict[str, float]
     drift: Optional[float]
-    drift_breach: bool
 
 
 # ====================================================================== #
@@ -82,14 +81,13 @@ def monitor_once(
     db_engine=None,
     *,
     target_weights: Mapping[str, float] | None = None,
-    drift_threshold: float | None = None,
-    alert=None,
 ) -> MonitorResult:
-    """Read live state, compute NAV/weights/drift, write a snapshot, flag drift breach.
+    """Read live state, compute NAV/weights/drift, write a snapshot.
 
     ``target_weights`` is the book to measure drift against (e.g.
     :func:`last_target_weights`); when ``None`` (before the first rebalance) drift is
-    ``None``. A breach logs a warning and alerts; acting on it is the scheduler's job.
+    ``None``. Drift is recorded for the dashboard only — it never triggers a rebalance
+    (DECISIONS D31; monthly is the sole cadence).
     """
     acct = client.account()
     nav, cash = acct.get("equity"), acct.get("cash")
@@ -97,21 +95,12 @@ def monitor_once(
     weights = compute_weights(positions, nav or 0.0)
     pos_qty = {p["symbol"]: float(p["qty"]) for p in positions}
 
-    drift: Optional[float] = None
-    breach = False
-    if target_weights is not None:
-        drift = l1_drift(weights, target_weights)
-        if drift_threshold is not None and drift > drift_threshold:
-            breach = True
-            log.warning("drift breach — flag out-of-cycle rebalance",
-                        extra={"drift": drift, "threshold": drift_threshold})
-            if alert:
-                alert(f"L1 drift {drift:.3f} > {drift_threshold:.3f}; flag rebalance")
+    drift: Optional[float] = l1_drift(weights, target_weights) if target_weights is not None else None
 
     if db_engine is not None:
         _write_snapshot(db_engine, nav, cash, weights, pos_qty, drift)
     log.info("monitor pass", extra={"nav": nav, "n_positions": len(pos_qty), "drift": drift})
-    return MonitorResult(nav, cash, weights, pos_qty, drift, breach)
+    return MonitorResult(nav, cash, weights, pos_qty, drift)
 
 
 def _write_snapshot(db_engine, nav, cash, weights: pd.Series, positions: dict, drift) -> None:

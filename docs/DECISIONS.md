@@ -804,3 +804,30 @@ unconditionally" was wrong — only vol / drawdown / premium do; Sharpe and assi
 both move with the IV assumption. The floor's 31% is still printed alongside for
 honesty. **No strategy parameter changed** (delta stays 0.30) — this corrects the gate
 criterion only. Overlay now PASSes: market Sharpe 1.31, assignment 22%.
+---
+
+## D31 — One monthly cadence: drop the drift-triggered rebalance and the mid-cycle option roll
+
+**Decision (2026-06-23, Diego):** the strategy has exactly ONE rebalance cadence — the
+monthly rebalance on the first trading day, at which **both equities and covered calls**
+are rebalanced. Removed: (a) the secondary drift-triggered out-of-cycle equity rebalance
+(`rebalancing.drift_threshold_l1`), and (b) the mid-cycle DTE-based option roll
+(`covered_calls.roll_dte_trigger`). Kept: `close_before_earnings` (close a call before an
+earnings date, rewrite after) as the one event-driven action outside the monthly cadence;
+and L1 drift is still computed every monitor pass as dashboard telemetry
+(`snapshots.drift`) — it just never triggers a trade.
+
+**Why.** Simplicity and fidelity to what was validated. The Phase 2b backtest modeled
+exactly one monthly write per option life — no intra-month rolls, no drift trigger — so
+collapsing to a single monthly cadence makes the **live design identical to the
+backtested model**: nothing runs live that wasn't measured. The drift trigger added
+operational complexity (out-of-cycle runs, a threshold to calibrate) for a book already
+rebalanced monthly; the 21-DTE roll added intra-month option churn (transaction cost) the
+backtest never credited. 30-45 DTE still covers the ~1-month hold, so a written call is
+closed/rewritten at the next rebalance before it expires.
+
+**Code.** Removed `drift_threshold_l1` and `roll_dte_trigger` from settings; `monitor.py`
+drops the breach/flag/alert (drift is telemetry only; `MonitorResult.drift_breach` gone);
+`run_eod.run_cycle` no longer passes a drift threshold. **Supersedes** the `drift_check_job`
+/ DTE-roll references in ARCHITECTURE.md (future-phase scheduler / Phase 4 prose) and the
+"roll at 21 DTE" line in BUILD_ORDER Phase 4, which are updated to match.

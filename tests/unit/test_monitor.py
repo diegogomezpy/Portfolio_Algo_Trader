@@ -71,21 +71,14 @@ def test_monitor_once_writes_snapshot():
     assert snaps[0]["drift"] is None                     # no target supplied
 
 
-def test_monitor_once_flags_drift_breach():
+def test_monitor_once_computes_drift_as_telemetry():
+    # Drift is computed against the target and stored, but it triggers nothing (D31).
     eng = _engine()
-    client = _FakeClient({"AAPL": (100, 80_000.0)})      # 0.8 weight vs 0.5 target
-    alerts = []
-    res = monitor.monitor_once(client, eng, target_weights={"AAPL": 0.5},
-                               drift_threshold=0.08, alert=alerts.append)
-    assert res.drift_breach is True and res.drift == pytest.approx(0.3)
-    assert len(alerts) == 1
-
-
-def test_monitor_once_no_breach_within_threshold():
-    eng = _engine()
-    client = _FakeClient({"AAPL": (100, 51_000.0)})      # 0.51 vs 0.50 → drift 0.01
-    res = monitor.monitor_once(client, eng, target_weights={"AAPL": 0.50}, drift_threshold=0.08)
-    assert res.drift_breach is False
+    client = _FakeClient({"AAPL": (100, 80_000.0)})      # 0.8 weight vs 0.5 target → drift 0.3
+    res = monitor.monitor_once(client, eng, target_weights={"AAPL": 0.5})
+    assert res.drift == pytest.approx(0.3)
+    assert _snapshots(eng)[0]["drift"] == pytest.approx(0.3)
+    assert not hasattr(res, "drift_breach")              # no breach/trigger concept anymore
 
 
 def test_last_target_weights_reads_latest():
