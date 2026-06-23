@@ -549,9 +549,10 @@ class AlpacaClient:
         ``None`` (not an error) when no position exists. Normalised to::
 
             {"symbol": str, "qty": float, "avg_entry_px": float,
-             "market_value": float, "unrealized_pl": float}
+             "market_value": float, "unrealized_pl": float, "asset_class": str | None}
 
-        ``qty`` is signed: positive for long, negative for short.
+        ``qty`` is signed: positive for long, negative for short. ``asset_class`` (e.g.
+        ``"us_equity"`` / ``"us_option"``) lets callers split equity vs option positions.
 
         Raises:
             AlpacaAPIError: On any error other than "no position".
@@ -909,6 +910,7 @@ class AlpacaClient:
             "avg_entry_px": float(position.avg_entry_price),
             "market_value": self._float_or_zero(getattr(position, "market_value", None)),
             "unrealized_pl": self._float_or_zero(getattr(position, "unrealized_pl", None)),
+            "asset_class": self._enum_str(getattr(position, "asset_class", None)),
         }
 
     def _parse_asset(self, asset: Any) -> dict:

@@ -12,7 +12,7 @@ from datetime import datetime
 
 import pytest
 from alpaca.common.exceptions import APIError
-from alpaca.trading.enums import OrderSide
+from alpaca.trading.enums import OrderSide, PositionIntent
 
 from engine.alpaca_client import AlpacaAPIError
 from engine.broker import Broker
@@ -123,6 +123,35 @@ def test_get_cancel_and_cancel_all():
     b.cancel_order(out["id"])
     assert fake.cancelled == [out["id"]]
     assert b.cancel_all_orders() == 2 and fake.cancel_all_calls == 1
+
+
+def test_submit_option_order_sell_to_open_limit():
+    fake = _FakeTrading()
+    out = Broker(client=fake).submit_option_order(
+        "AAPL260821C00215000", 2, "sell", position_intent="sell_to_open",
+        order_type="limit", limit_price=3.10, client_order_id="cyc-AAPL-call")
+    req = fake.submitted[0]
+    assert req.symbol == "AAPL260821C00215000" and float(req.qty) == 2
+    assert req.side == OrderSide.SELL and req.position_intent == PositionIntent.SELL_TO_OPEN
+    assert float(req.limit_price) == 3.10 and req.client_order_id == "cyc-AAPL-call"
+    assert out["id"] == "oid-1"
+
+
+def test_submit_option_order_buy_to_close_market():
+    fake = _FakeTrading()
+    Broker(client=fake).submit_option_order(
+        "AAPL260821C00215000", 1, "buy", position_intent="buy_to_close", order_type="market")
+    req = fake.submitted[0]
+    assert req.side == OrderSide.BUY and req.position_intent == PositionIntent.BUY_TO_CLOSE
+
+
+def test_submit_option_order_validates_intent_and_price():
+    b = Broker(client=_FakeTrading())
+    with pytest.raises(ValueError):
+        b.submit_option_order("X260821C00100000", 1, "sell", position_intent="bogus")
+    with pytest.raises(ValueError):
+        b.submit_option_order("X260821C00100000", 1, "sell",
+                              position_intent="sell_to_open", order_type="limit")  # no price
 
 
 def test_api_errors_become_alpaca_api_error():
