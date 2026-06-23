@@ -1,0 +1,191 @@
+"""Alpaca write client — order placement, cancellation, and status read-back.
+
+The only module besides the execution layer that touches the alpaca-py *write* API.
+``engine/alpaca_client.py`` is deliberately read-only so the data stages (ingest,
+reconcile, monitor, the dashboard) physically cannot submit an order; this module is
+its write-side counterpart and is used by ``engine/execute.py`` alone.
+
+Surface — everything normalized to the ``engine.db.orders`` shape, so an order looks the
+same whether it came back from a write here or a read in :class:`AlpacaClient`:
+
+* :meth:`submit_order` — place one equity order (market or limit)
+* :meth:`get_order`    — read one order's status / fills back (the execute.py fill poll)
+* :meth:`cancel_order` — cancel one working order
+* :meth:`cancel_all_orders` — cancel every open order (session end / SIGTERM)
+
+``paper=True`` is hardcoded until go-live (Phase 7), matching :class:`AlpacaClient`. The
+SDK ``TradingClient`` is injectable (``client=``) so execution tests run against a fake
+with no network or credentials. Errors are raised as :class:`AlpacaAPIError` — the same
+taxonomy the read client uses.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from alpaca.common.exceptions import APIError
+from alpaca.trading.client import TradingClient
+from alpaca.trading.enums import OrderSide, TimeInForce
+from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest
+
+from engine.alpaca_client import AlpacaAPIError
+from engine.logger import get_logger
+
+log = get_logger(__name__)
+
+_NO_SYMBOL = "*"
+
+
+class Broker:
+    """Write client for the Alpaca **paper** trading API (orders only)."""
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        secret_key: str | None = None,
+        *,
+        client: Any | None = None,
+    ) -> None:
+        """Build the write client.
+
+        Args:
+            api_key / secret_key: Alpaca **paper** credentials (required unless
+                ``client`` is injected).
+            client: a pre-built trading client (or test fake). When given, the
+                credentials are not needed and no real client is constructed.
+
+        Raises:
+            ValueError: if no ``client`` is injected and a credential is missing.
+        """
+        if client is not None:
+            self._trading = client
+            return
+        if not api_key or not str(api_key).strip():
+            raise ValueError("api_key is required and must be a non-empty string")
+        if not secret_key or not str(secret_key).strip():
+            raise ValueError("secret_key is required and must be a non-empty string")
+        # paper=True hardcoded until Phase 7 go-live (see module docstring).
+        self._trading = TradingClient(api_key, secret_key, paper=True)
+
+    def submit_order(
+        self,
+        symbol: str,
+        qty: float,
+        side: str,
+        *,
+        order_type: str = "market",
+        limit_price: float | None = None,
+        client_order_id: str | None = None,
+    ) -> dict:
+        """Submit one equity order; return the normalized order dict.
+
+        ``side`` is ``"buy"`` / ``"sell"``; ``order_type`` is ``"market"`` or
+        ``"limit"`` (limit requires ``limit_price``). ``client_order_id`` is the
+        idempotency key the execution layer sets per rebalance cycle. Time-in-force
+        is DAY, so anything unfilled lapses at session close (and is also cancelled
+        explicitly by the fill poll).
+
+        Raises:
+            ValueError: bad ``side`` / ``order_type``, or limit without a price.
+            AlpacaAPIError: if Alpaca rejects the request.
+        """
+        side_enum = self._side(side)
+        if order_type == "market":
+            req = MarketOrderRequest(symbol=symbol, qty=qty, side=side_enum,
+                                     time_in_force=TimeInForce.DAY,
+                                     client_order_id=client_order_id)
+        elif order_type == "limit":
+            if limit_price is None:
+                raise ValueError("limit order requires limit_price")
+            req = LimitOrderRequest(symbol=symbol, qty=qty, side=side_enum,
+                                    time_in_force=TimeInForce.DAY,
+                                    limit_price=float(limit_price),
+                                    client_order_id=client_order_id)
+        else:
+            raise ValueError(f"unknown order_type {order_type!r} (want 'market' or 'limit')")
+
+        try:
+            order = self._trading.submit_order(order_data=req)
+        except APIError as exc:
+            raise AlpacaAPIError(symbol, "submit_order", str(exc)) from exc
+        out = _normalize_order(order)
+        log.info("order submitted", extra={"symbol": symbol, "side": str(side).lower(),
+                                           "qty": float(qty), "type": order_type,
+                                           "id": out["id"], "status": out["status"]})
+        return out
+
+    def get_order(self, order_id: str) -> dict:
+        """Read one order back by id (status + fills), normalized.
+
+        Raises:
+            AlpacaAPIError: if the request fails.
+        """
+        try:
+            order = self._trading.get_order_by_id(order_id)
+        except APIError as exc:
+            raise AlpacaAPIError(_NO_SYMBOL, "get_order", str(exc)) from exc
+        return _normalize_order(order)
+
+    def cancel_order(self, order_id: str) -> None:
+        """Cancel one working order.
+
+        Raises:
+            AlpacaAPIError: if the request fails.
+        """
+        try:
+            self._trading.cancel_order_by_id(order_id)
+        except APIError as exc:
+            raise AlpacaAPIError(_NO_SYMBOL, "cancel_order", str(exc)) from exc
+        log.info("order cancelled", extra={"id": order_id})
+
+    def cancel_all_orders(self) -> int:
+        """Cancel every open order; return how many cancels Alpaca acknowledged.
+
+        Used at session end and on SIGTERM so nothing is left working overnight.
+
+        Raises:
+            AlpacaAPIError: if the request fails.
+        """
+        try:
+            result = self._trading.cancel_orders()
+        except APIError as exc:
+            raise AlpacaAPIError(_NO_SYMBOL, "cancel_all_orders", str(exc)) from exc
+        n = len(result or [])
+        log.info("cancelled all open orders", extra={"count": n})
+        return n
+
+    @staticmethod
+    def _side(side: str) -> OrderSide:
+        s = str(side).lower()
+        if s not in ("buy", "sell"):
+            raise ValueError(f"side must be 'buy' or 'sell', got {side!r}")
+        return OrderSide.BUY if s == "buy" else OrderSide.SELL
+
+
+def _normalize_order(order: Any) -> dict:
+    """Normalize an SDK order object to the ``engine.db.orders`` field shape."""
+    def _f(v: Any) -> float | None:
+        return None if v is None else float(v)
+
+    def _s(v: Any) -> str | None:
+        return None if v is None else str(getattr(v, "value", v))
+
+    def _iso(v: Any) -> str | None:
+        if v is None:
+            return None
+        return v.isoformat() if hasattr(v, "isoformat") else str(v)
+
+    return {
+        "id": str(getattr(order, "id", "")),
+        "client_order_id": getattr(order, "client_order_id", None),
+        "symbol": getattr(order, "symbol", None),
+        "side": _s(getattr(order, "side", None)),
+        "qty": _f(getattr(order, "qty", None)),
+        "order_type": _s(getattr(order, "order_type", None)),
+        "status": _s(getattr(order, "status", None)),
+        "limit_price": _f(getattr(order, "limit_price", None)),
+        "filled_qty": _f(getattr(order, "filled_qty", None)),
+        "filled_avg_price": _f(getattr(order, "filled_avg_price", None)),
+        "submitted_at": _iso(getattr(order, "submitted_at", None)),
+        "filled_at": _iso(getattr(order, "filled_at", None)),
+    }
