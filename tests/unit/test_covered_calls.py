@@ -7,16 +7,22 @@ skips), and the buy-to-close plan.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from types import SimpleNamespace
 
+import numpy as np
+import pandas as pd
+from sqlalchemy import create_engine, select
+
 from engine import covered_calls as cc
-from engine import options
+from engine import db, options
 
 
-def _settings(target_delta=0.30, min_dte=30, max_dte=45):
-    return SimpleNamespace(covered_calls=SimpleNamespace(
-        target_delta=target_delta, min_dte_entry=min_dte, max_dte_entry=max_dte))
+def _settings(target_delta=0.30, min_dte=30, max_dte=45, cov_window=60):
+    return SimpleNamespace(
+        covered_calls=SimpleNamespace(target_delta=target_delta, min_dte_entry=min_dte,
+                                      max_dte_entry=max_dte),
+        covariance=SimpleNamespace(estimation_window_days=cov_window))
 
 
 AS_OF = date(2026, 7, 1)
@@ -102,3 +108,116 @@ def test_build_close_plan_buys_to_close_each_short_call():
     assert by_u["AAPL"].action == "buy_to_close" and by_u["AAPL"].contracts == 2
     assert by_u["AAPL"].limit_price == 3.10
     assert by_u["MSFT"].contracts == 1 and by_u["MSFT"].limit_price is None  # filled by I/O later
+
+
+# ====================================================================== #
+# I/O (4.3) — fake client/broker + in-memory sqlite
+# ====================================================================== #
+class _FakeClient:
+    def __init__(self, positions=None, chains=None):
+        self._positions = positions or []
+        self._chains = chains or {}
+
+    def all_positions(self):
+        return list(self._positions)
+
+    def option_chain(self, underlying, *, option_type="call", expiration_gte=None,
+                     expiration_lte=None, **kw):
+        val = self._chains.get(underlying, [])
+        if isinstance(val, Exception):
+            raise val
+        return val
+
+
+class _FakeBroker:
+    def __init__(self, reject=()):
+        self.reject = set(reject)
+        self.option_orders = []
+
+    def submit_option_order(self, option_symbol, contracts, side, *, position_intent,
+                            order_type="limit", limit_price=None, client_order_id=None):
+        if option_symbol in self.reject:
+            from engine.alpaca_client import AlpacaAPIError
+            raise AlpacaAPIError(option_symbol, "submit_option_order", "422")
+        rec = dict(option_symbol=option_symbol, contracts=contracts, side=side,
+                   position_intent=position_intent, order_type=order_type,
+                   limit_price=limit_price, client_order_id=client_order_id,
+                   id=f"oid-{len(self.option_orders) + 1}", status="accepted")
+        self.option_orders.append(rec)
+        return rec
+
+
+def _engine():
+    eng = create_engine("sqlite://")
+    db.create_all(eng)
+    return eng
+
+
+def _panel(symbols, n=70, seed=0):
+    rng = np.random.default_rng(seed)
+    idx = pd.bdate_range("2026-03-02", periods=n)
+    data = {s: 100 * np.cumprod(1 + rng.normal(0, 0.02, n)) for s in symbols}
+    return pd.DataFrame(data, index=idx)
+
+
+def _lifecycle(eng):
+    with eng.connect() as c:
+        return [dict(r) for r in c.execute(select(db.options_lifecycle)).mappings()]
+
+
+def test_estimate_ivs_annualizes_realized_vol():
+    panel = _panel(["AAA"])
+    as_of = panel.index[-1].date()
+    ivs = cc.estimate_ivs(panel, ["AAA"], as_of, window=60)
+    assert "AAA" in ivs and ivs["AAA"] > 0
+
+
+def test_fetch_chains_degrades_on_error():
+    as_of = date(2026, 7, 1)
+    client = _FakeClient(chains={"AAA": [_call("AAA_C", 105)], "BAD": ValueError("boom")})
+    chains = cc.fetch_chains(client, ["AAA", "BAD"], as_of, min_dte=30, max_dte=45)
+    assert len(chains["AAA"]) == 1 and chains["BAD"] == []
+
+
+def test_open_call_positions_filters_short_calls_and_estimates_mid():
+    positions = [
+        {"symbol": "AAA260821C00105000", "qty": -2, "market_value": -620.0, "asset_class": "us_option"},
+        {"symbol": "AAPL", "qty": 100, "market_value": 20000.0, "asset_class": "us_equity"},
+        {"symbol": "BBB260821P00090000", "qty": -1, "market_value": -300.0, "asset_class": "us_option"},  # put
+        {"symbol": "CCC260821C00100000", "qty": 1, "market_value": 200.0, "asset_class": "us_option"},     # long call
+    ]
+    out = cc.open_call_positions(_FakeClient(positions=positions))
+    assert len(out) == 1
+    assert out[0]["underlying"] == "AAA" and out[0]["mid"] == 3.10        # 620 / (2 × 100)
+
+
+def test_write_calls_submits_sell_to_open_and_logs_lifecycle():
+    eng = _engine()
+    panel = _panel(["AAA"])
+    as_of = panel.index[-1].date()
+    exp = (as_of + timedelta(days=35)).isoformat()
+    chains = {"AAA": [{"symbol": "AAA_C105", "strike": 105.0, "expiration": exp, "mid": 2.0}]}
+    broker = _FakeBroker()
+    submitted, skipped = cc.write_calls(
+        _FakeClient(chains=chains), broker, eng, {"AAA": 250},
+        settings=_settings(), as_of=as_of, price_panel=panel)
+    assert len(submitted) == 1 and skipped == []
+    o = broker.option_orders[0]
+    assert o["side"] == "sell" and o["position_intent"] == "sell_to_open"
+    assert o["contracts"] == 2 and o["limit_price"] == 2.0
+    rows = _lifecycle(eng)
+    assert len(rows) == 1 and rows[0]["event_type"] == "write"
+    assert rows[0]["premium"] == 400.0 and rows[0]["contracts"] == 2     # 2 × 100 × 2.0
+
+
+def test_close_calls_submits_buy_to_close_and_logs_lifecycle():
+    eng = _engine()
+    positions = [{"symbol": "AAA260821C00105000", "qty": -2, "market_value": -620.0,
+                  "asset_class": "us_option"}]
+    broker = _FakeBroker()
+    submitted = cc.close_calls(_FakeClient(positions=positions), broker, eng, as_of=date(2026, 7, 1))
+    assert len(submitted) == 1
+    o = broker.option_orders[0]
+    assert o["side"] == "buy" and o["position_intent"] == "buy_to_close" and o["contracts"] == 2
+    rows = _lifecycle(eng)
+    assert rows[0]["event_type"] == "close" and rows[0]["premium"] == -620.0   # -(3.10 × 2 × 100)

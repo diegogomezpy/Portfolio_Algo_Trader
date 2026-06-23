@@ -25,16 +25,22 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from typing import Mapping, Optional, Sequence
 
-from engine import options
+import numpy as np
+import pandas as pd
+
+from engine import factors, options
+from engine.alpaca_client import AlpacaAPIError
 from engine.logger import get_logger
 
 log = get_logger(__name__)
 
 _CONTRACT_SHARES = 100                     # standard equity-option multiplier
-_OCC_RE = re.compile(r"^([A-Z0-9]+?)\d{6}[CP]\d{8}$")
+_TRADING_DAYS = 252
+# OCC: ROOT + YYMMDD + (C|P) + strike(×1000, 8 digits).
+_OCC_RE = re.compile(r"^([A-Z0-9]+?)(\d{6})([CP])(\d{8})$")
 
 
 @dataclass
@@ -64,6 +70,12 @@ def _occ_underlying(symbol: str) -> str:
     """Root (underlying) of an OCC option symbol, or the symbol itself if unparseable."""
     m = _OCC_RE.match(str(symbol))
     return m.group(1) if m else str(symbol)
+
+
+def _occ_is_call(symbol: str) -> bool:
+    """Whether an OCC symbol is a call (``C`` in the type position)."""
+    m = _OCC_RE.match(str(symbol))
+    return bool(m) and m.group(3) == "C"
 
 
 def contracts_for(shares: float, contract_size: int = _CONTRACT_SHARES) -> int:
@@ -169,3 +181,132 @@ def build_close_plan(open_call_positions: Sequence[Mapping]) -> list[CoveredCall
             contracts=contracts, limit_price=round(float(mid), 2) if mid else None))
     log.info("covered-call close plan", extra={"closes": len(closes)})
     return closes
+
+
+# ====================================================================== #
+# I/O — chains, IV, positions, submission, lifecycle (increment 4.3)
+# ====================================================================== #
+def fetch_chains(client, underlyings: Sequence[str], as_of: date, *, min_dte: int,
+                 max_dte: int) -> dict[str, list]:
+    """Fetch each name's call chain within the DTE window. Failures degrade to ``[]``."""
+    gte = (as_of + timedelta(days=min_dte)).isoformat()
+    lte = (as_of + timedelta(days=max_dte)).isoformat()
+    chains: dict[str, list] = {}
+    for u in underlyings:
+        try:
+            chains[u] = client.option_chain(u, option_type="call",
+                                             expiration_gte=gte, expiration_lte=lte)
+        except Exception as exc:  # noqa: BLE001 — one bad name shouldn't sink the batch
+            log.warning("option chain fetch failed", extra={"underlying": u, "error": str(exc)})
+            chains[u] = []
+    return chains
+
+
+def estimate_ivs(price_panel: pd.DataFrame, underlyings: Sequence[str], as_of: date,
+                 *, window: int) -> dict[str, float]:
+    """Per-name IV estimate = annualized trailing realized vol (the D27 basis)."""
+    ann = factors.realized_vol(price_panel, as_of, window) * np.sqrt(_TRADING_DAYS)
+    out: dict[str, float] = {}
+    for s in underlyings:
+        v = ann.get(s)
+        if v is not None and np.isfinite(v):
+            out[s] = float(v)
+    return out
+
+
+def _spots_from_panel(price_panel: pd.DataFrame, names: Sequence[str], as_of: date) -> dict[str, float]:
+    row = price_panel.loc[: pd.Timestamp(as_of)].iloc[-1]
+    return {s: float(row[s]) for s in names if s in row.index and np.isfinite(row.get(s, np.nan))}
+
+
+def open_call_positions(client) -> list[dict]:
+    """Currently-open short call positions from Alpaca, each with an estimated ``mid``.
+
+    Filters to option positions that are calls held short (``qty < 0``). ``mid`` is derived
+    from the position's market value (``|market_value| / (contracts × 100)``) so the close
+    plan has a limit price without a separate quote call.
+    """
+    out = []
+    for p in client.all_positions():
+        sym = str(p.get("symbol", ""))
+        is_option = str(p.get("asset_class") or "").endswith("option") or _OCC_RE.match(sym)
+        if not (is_option and _occ_is_call(sym) and float(p.get("qty", 0)) < 0):
+            continue
+        qty = abs(float(p["qty"]))
+        mv = p.get("market_value")
+        mid = abs(float(mv)) / (qty * _CONTRACT_SHARES) if mv else None
+        out.append({**p, "underlying": _occ_underlying(sym), "type": "call", "mid": mid})
+    return out
+
+
+def write_calls(client, broker, db_engine, holdings_shares: Mapping[str, float], *,
+                settings, as_of: date, price_panel: pd.DataFrame, alert=None):
+    """Write covered calls on the held book: chains → IV → plan → sell-to-open → lifecycle.
+
+    Returns ``(submitted, skipped)``. A per-name rejection is logged + alerted and skipped;
+    it does not abort the batch.
+    """
+    cc = settings.covered_calls
+    names = list(holdings_shares)
+    chains = fetch_chains(client, names, as_of, min_dte=cc.min_dte_entry, max_dte=cc.max_dte_entry)
+    spots = _spots_from_panel(price_panel, names, as_of)
+    ivs = estimate_ivs(price_panel, names, as_of, window=settings.covariance.estimation_window_days)
+    writes, skipped = build_write_plan(holdings_shares, chains, spots, ivs, settings=settings, as_of=as_of)
+
+    submitted = []
+    for w in writes:
+        coid = f"cc:{as_of.isoformat()}:{w.underlying}:open"
+        try:
+            resp = broker.submit_option_order(w.option_symbol, w.contracts, "sell",
+                                              position_intent="sell_to_open", order_type="limit",
+                                              limit_price=w.limit_price, client_order_id=coid)
+        except AlpacaAPIError as exc:
+            log.error("covered-call write rejected", extra={"underlying": w.underlying, "error": str(exc)})
+            if alert:
+                alert(f"covered-call write rejected {w.underlying}: {exc}")
+            continue
+        _log_lifecycle(db_engine, "write", w)
+        submitted.append(w)
+    log.info("covered calls written", extra={"written": len(submitted), "skipped": len(skipped)})
+    return submitted, skipped
+
+
+def close_calls(client, broker, db_engine, *, as_of: date | None = None, alert=None):
+    """Close every open short call (monthly close-all): buy-to-close → lifecycle."""
+    closes = build_close_plan(open_call_positions(client))
+    submitted = []
+    stamp = (as_of.isoformat() if as_of else "now")
+    for o in closes:
+        coid = f"cc:{stamp}:{o.underlying}:close"
+        try:
+            resp = broker.submit_option_order(
+                o.option_symbol, o.contracts, "buy", position_intent="buy_to_close",
+                order_type=("limit" if o.limit_price else "market"),
+                limit_price=o.limit_price, client_order_id=coid)
+        except AlpacaAPIError as exc:
+            log.error("covered-call close rejected", extra={"underlying": o.underlying, "error": str(exc)})
+            if alert:
+                alert(f"covered-call close rejected {o.underlying}: {exc}")
+            continue
+        _log_lifecycle(db_engine, "close", o)
+        submitted.append(o)
+    log.info("covered calls closed", extra={"closed": len(submitted)})
+    return submitted
+
+
+def _log_lifecycle(db_engine, event_type: str, order: CoveredCallOrder) -> None:
+    """Append a row to ``options_lifecycle`` (premium +collected on write, −paid on close)."""
+    if db_engine is None:
+        return
+    from sqlalchemy import insert
+    from engine.db import options_lifecycle
+    if event_type == "write":
+        premium = order.premium
+    else:  # close — modeled cost from the limit (the audit log; real fill refines)
+        premium = -((order.limit_price or 0.0) * order.contracts * _CONTRACT_SHARES)
+    with db_engine.begin() as conn:
+        conn.execute(insert(options_lifecycle).values(
+            ts=datetime.now(timezone.utc), event_type=event_type, underlying=order.underlying,
+            option_symbol=order.option_symbol, strike=order.strike,
+            expiration=_to_date(order.expiration) if order.expiration else None,
+            delta=order.delta, contracts=order.contracts, premium=round(premium, 2)))
