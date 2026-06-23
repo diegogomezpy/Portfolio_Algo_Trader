@@ -111,6 +111,51 @@ def test_run_cycle_executes_and_persists():
     assert len(_rows(eng, db.snapshots)) == 1               # monitor wrote one
 
 
+def test_run_cycle_overlay_closes_then_writes_around_equity():
+    eng = _engine()
+    broker = _FakeBroker()
+    # Fake client reports a held equity position post-trade (what calls will cover).
+    client = _FakeClient(positions={"AAPL": (100, 10_000.0)})
+    seq = []
+
+    def _close(client, broker, db_engine, *, as_of=None, alert=None):
+        seq.append("close")
+        return ["closed-1"]
+
+    def _write(client, broker, db_engine, holdings_shares, *, settings, as_of, price_panel, alert=None):
+        seq.append(("write", dict(holdings_shares)))
+        return (["wrote-1"], [])
+
+    # AAPL is already at target (held 100), so MSFT (unheld) is what actually trades.
+    res = run_eod.run_cycle(
+        client=client, broker=broker, db_engine=eng, settings=load_settings(),
+        as_of=date(2026, 7, 1), force=True, overlay=True,
+        targets_fn=_targets({"AAPL": 0.05, "MSFT": 0.04},
+                            {"AAPL": "Information Technology", "MSFT": "Information Technology"},
+                            {"AAPL": 100.0, "MSFT": 200.0}),
+        close_calls_fn=_close, write_calls_fn=_write)
+
+    assert res.status == "executed"
+    assert res.calls_closed == 1 and res.calls_written == 1
+    # close ran first, write ran last, with the post-trade equity holdings (the held AAPL).
+    assert seq[0] == "close" and seq[-1][0] == "write"
+    assert seq[-1][1] == {"AAPL": 100.0}
+    assert any(o["symbol"] == "MSFT" for o in _rows(eng, db.orders))  # equity ran in between
+
+
+def test_run_cycle_no_overlay_skips_call_legs():
+    eng = _engine()
+    called = []
+    res = run_eod.run_cycle(
+        client=_FakeClient(), broker=_FakeBroker(), db_engine=eng, settings=load_settings(),
+        as_of=date(2026, 7, 1), force=True, overlay=False,
+        targets_fn=_targets({"AAPL": 0.05}, {"AAPL": "Information Technology"}, {"AAPL": 100.0}),
+        close_calls_fn=lambda *a, **k: called.append("close") or [],
+        write_calls_fn=lambda *a, **k: called.append("write") or ([], []))
+    assert res.status == "executed" and res.calls_closed == 0 and res.calls_written == 0
+    assert called == []                                       # overlay legs not invoked
+
+
 def test_run_cycle_blocked_by_risk_gate_submits_nothing():
     eng = _engine()
     broker = _FakeBroker()

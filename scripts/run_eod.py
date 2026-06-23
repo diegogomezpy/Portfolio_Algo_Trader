@@ -41,7 +41,9 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from engine import covariance, factors, ingest, monitor, optimize, reconcile, risk, sectors  # noqa: E402
+from engine import (  # noqa: E402
+    covariance, covered_calls, factors, ingest, monitor, optimize, reconcile, risk, sectors,
+)
 from engine.config import load_settings  # noqa: E402
 from engine.execute import ExecReport, plan_orders, submit_and_track  # noqa: E402
 from engine.logger import get_logger  # noqa: E402
@@ -63,6 +65,7 @@ class TargetPlan:
     spread: dict[str, float] = field(default_factory=dict)
     universe: set = field(default_factory=set)
     sector_map: pd.Series = field(default_factory=lambda: pd.Series(dtype=object))
+    panel: Optional[pd.DataFrame] = None        # close panel, for the overlay's spot/IV
 
 
 @dataclass
@@ -73,6 +76,8 @@ class CycleResult:
     risk: Optional[RiskCheckResult] = None
     exec_report: Optional[ExecReport] = None
     monitor: Optional[monitor.MonitorResult] = None
+    calls_closed: int = 0
+    calls_written: int = 0
 
 
 # ====================================================================== #
@@ -95,7 +100,7 @@ def compute_targets(settings, as_of: date, *, db_engine=None,
                             all_fundamentals=allf, eligible_symbols=eligible).set_index("symbol")
     composite = sc["composite_score"].dropna()
     if composite.empty:
-        return TargetPlan(pd.Series(dtype=float), {}, universe=set(), sector_map=sector_map)
+        return TargetPlan(pd.Series(dtype=float), {}, universe=set(), sector_map=sector_map, panel=panel)
 
     top = composite.sort_values(ascending=False).head(settings.optimizer.preselect_top_k).index
     sigma = bt.safe_covariance(panel[top], ff5, as_of=as_of,
@@ -110,7 +115,7 @@ def compute_targets(settings, as_of: date, *, db_engine=None,
     adv = snap["adv_20d"].to_dict() if "adv_20d" in snap else {}
     spread = snap["spread"].to_dict() if "spread" in snap else {}
     universe = set(eligible) if eligible is not None else set(composite.index)
-    return TargetPlan(res.weights, prices, adv, spread, universe, sector_map)
+    return TargetPlan(res.weights, prices, adv, spread, universe, sector_map, panel=panel)
 
 
 # ====================================================================== #
@@ -127,13 +132,22 @@ def run_cycle(
     trigger: str = "monthly",
     targets_fn: Callable[..., TargetPlan] = compute_targets,
     trading_day_fn: Callable[[object, str], bool] = ingest.is_trading_day,
+    overlay: bool = False,
+    close_calls_fn: Callable[..., object] = covered_calls.close_calls,
+    write_calls_fn: Callable[..., object] = covered_calls.write_calls,
     alert: Callable[[str], None] | None = None,
 ) -> CycleResult:
-    """Run one equity rebalance cycle. Returns a :class:`CycleResult`.
+    """Run one rebalance cycle. Returns a :class:`CycleResult`.
 
     Order: reconcile (block if Alpaca down) → holiday gate (unless ``force``) → compute
-    targets → pre-trade risk gate (logged to ``rebalance_log``; blocks submission on
-    failure) → plan + submit + track orders → monitor snapshot.
+    targets → pre-trade risk gate (logged to ``rebalance_log``; blocks on failure) →
+    [overlay: close existing calls] → plan + submit + track equity orders → [overlay:
+    write fresh calls on the post-trade ≥100-share holdings] → monitor snapshot.
+
+    ``overlay`` (Phase 4) turns on the covered-call legs (close-all before equity, rewrite
+    after — DECISIONS D31); the writes are coverage-safe by construction (``covered_calls``
+    only writes ``floor(shares/100)`` contracts on shares actually held). ``close_calls_fn``
+    / ``write_calls_fn`` are injectable for testing the sequencing.
     """
     rec = reconcile.reconcile(client, db_engine, alert=alert)            # raises if Alpaca down
 
@@ -158,6 +172,12 @@ def run_cycle(
             alert(f"risk gate blocked rebalance: {rc.reason}")
         return CycleResult("blocked_risk", weights, rc)
 
+    # Overlay (D31): close all existing calls BEFORE equity trades.
+    n_closed = 0
+    if overlay:
+        closed = close_calls_fn(client, broker, db_engine, as_of=as_of, alert=alert)
+        n_closed = len(closed or [])
+
     # Deployable base = leverage × account equity (DECISIONS D32). Weights are fractions of
     # this base, so the optimizer/caps are unchanged; only the dollar base scales.
     equity = float(client.account().get("equity") or settings.portfolio.nav)
@@ -167,9 +187,29 @@ def run_cycle(
     report = submit_and_track(orders, broker=broker, db_engine=db_engine,
                               cycle_key=as_of.isoformat(), pending=pending, alert=alert)
 
+    # Overlay (D31): write fresh calls AFTER equity settles, on the shares actually held.
+    n_written = 0
+    if overlay:
+        held = _equity_shares(client)
+        written, _skipped = write_calls_fn(client, broker, db_engine, held,
+                                           settings=settings, as_of=as_of,
+                                           price_panel=plan.panel, alert=alert)
+        n_written = len(written or [])
+
     mon = monitor.monitor_once(client, db_engine, target_weights=weights.to_dict())
-    log.info("cycle executed", extra={"date": as_of.isoformat(), **vars(report)})
-    return CycleResult("executed", weights, rc, report, mon)
+    log.info("cycle executed", extra={"date": as_of.isoformat(), "closed": n_closed,
+                                      "written": n_written, **vars(report)})
+    return CycleResult("executed", weights, rc, report, mon,
+                       calls_closed=n_closed, calls_written=n_written)
+
+
+def _equity_shares(client) -> dict[str, float]:
+    """Current equity positions ``{symbol: qty}`` (excludes options) — what calls cover."""
+    out = {}
+    for p in client.all_positions():
+        if str(p.get("asset_class") or "us_equity").endswith("equity"):
+            out[str(p["symbol"])] = float(p["qty"])
+    return out
 
 
 def _write_rebalance_log(db_engine, as_of: date, weights: pd.Series, rc: RiskCheckResult,
@@ -215,14 +255,16 @@ def daily_job(
     targets_fn: Callable[..., TargetPlan] = compute_targets,
     trading_day_fn: Callable[[object, str], bool] = ingest.is_trading_day,
     first_trading_day_fn: Callable[[object, date], bool] | None = None,
+    overlay: bool = False,
     alert: Callable[[str], None] | None = None,
 ) -> DailyResult:
     """The once-a-day scheduled job: gate on the calendar, ingest, then branch.
 
     On the **first trading day of the month** it runs the full rebalance cycle
-    (:func:`run_cycle`); on any other trading day it does a lightweight reconcile +
-    monitor pass (no trading). Non-trading days are skipped. ``ingest_fn`` (default
-    ``None`` = skip, so tests never hit the network) refreshes the day's data first.
+    (:func:`run_cycle`, with the covered-call ``overlay`` when enabled); on any other
+    trading day it does a lightweight reconcile + monitor pass (no trading). Non-trading
+    days are skipped. ``ingest_fn`` (default ``None`` = skip, so tests never hit the
+    network) refreshes the day's data first.
     """
     if not trading_day_fn(client, as_of.isoformat()):
         log.info("not a trading day; daily job skipped", extra={"date": as_of.isoformat()})
@@ -235,7 +277,7 @@ def daily_job(
     if first_of_month(client, as_of):
         cyc = run_cycle(client=client, broker=broker, db_engine=db_engine, settings=settings,
                         as_of=as_of, force=True, trigger="monthly", targets_fn=targets_fn,
-                        trading_day_fn=trading_day_fn, alert=alert)
+                        trading_day_fn=trading_day_fn, overlay=overlay, alert=alert)
         return DailyResult("rebalanced", cycle=cyc)
 
     # Non-rebalance trading day: keep the DB honest and snapshot, but don't trade.
@@ -288,7 +330,7 @@ def serve(*, env: str, settings, client, broker, db_engine, hour: int = 16, minu
     sched = BlockingScheduler(timezone=pytz.timezone("America/New_York"))
     sched.add_job(
         lambda: daily_job(client=client, broker=broker, db_engine=db_engine, settings=settings,
-                          as_of=date.today(),
+                          as_of=date.today(), overlay=True,
                           ingest_fn=lambda d: ingest.run_daily_ingest(env=env, as_of=d)),
         "cron", day_of_week="mon-fri", hour=hour, minute=minute, id="eod")
     sched.add_job(lambda: continuous_monitor_job(client, db_engine),
@@ -330,6 +372,7 @@ def main() -> None:
     ap.add_argument("--date", type=lambda s: date.fromisoformat(s), default=date.today())
     ap.add_argument("--force", action="store_true", help="run even if not a trading day (--once)")
     ap.add_argument("--skip-ingest", action="store_true", help="reuse existing snapshot data (--once)")
+    ap.add_argument("--no-overlay", action="store_true", help="equity only; skip the covered-call legs")
     args = ap.parse_args()
 
     config.load_env(args.env)
@@ -348,12 +391,15 @@ def main() -> None:
         ingest.run_daily_ingest(env=args.env, as_of=args.date.isoformat())
 
     result = run_cycle(client=client, broker=broker, db_engine=db_engine,
-                       settings=settings, as_of=args.date, force=args.force)
+                       settings=settings, as_of=args.date, force=args.force,
+                       overlay=not args.no_overlay)
     print(f"\nCycle {args.date} → {result.status}")
     if result.exec_report:
         r = result.exec_report
-        print(f"  submitted {r.submitted}  filled {r.filled}  partial {r.partial}  "
+        print(f"  equity: submitted {r.submitted}  filled {r.filled}  partial {r.partial}  "
               f"rejected {r.rejected}  deferred {r.deferred}")
+    if not args.no_overlay:
+        print(f"  calls: closed {result.calls_closed}  written {result.calls_written}")
     if result.monitor and result.monitor.drift is not None:
         print(f"  NAV {result.monitor.nav}  drift {result.monitor.drift:.3f}")
 
