@@ -18,7 +18,7 @@ active and never build ahead of it.
 | 2 | Optimizer + equity-only backtest | Equity book validated: net +14%/yr, beats SPY on return, Sharpe 0.75 ≈ SPY (Sharpe>1.0 met combined in 2b) | ✅ |
 | 2b | Full strategy backtest including covered calls | Combined beats SPY Sharpe under realistic premium; vol/DD cut unconditionally (D27) | ✅ |
 | 3 | Execution engine + risk gate | Orders submit and fill correctly in paper account | 🔄 (3.1–3.7 built + tested; live-paper gate pending Diego) |
-| 4 | Covered call overlay | Calls written, rolled, and assigned correctly in paper | ⬜ |
+| 4 | Covered call overlay | Calls written, rolled, and assigned correctly in paper | 🔄 (4.0–4.5 built + tested; assignment re-entry = 4.6; paper verify pending) |
 | 5 | Dashboard + alerting | Live dashboard shows portfolio state, alerts deliver | ⬜ |
 | 6 | Crypto allocation | Crypto positions added to paper portfolio | ⬜ |
 | 7 | Go-live | User-defined gate criteria met | ⬜ |
@@ -390,6 +390,17 @@ rolls them correctly, and handles assignment.
 - Assignment: manually exercise a call, confirm conditional re-entry logic
 - Premium income tracked separately in options_lifecycle table
 - `pytest tests/unit/test_covered_calls.py` passes
+
+**Build status (2026-06-23) — 🔄 code complete except assignment re-entry (4.6).**
+Increments: 4.0 leverage wiring (D32, target_leverage 2:1); 4.1 `covered_calls.py` pure
+planner (delta-0.30 strike over real chains via realized-vol IV, ≥100-share partial
+coverage D32, write/close plans); 4.2 `broker.submit_option_order` + position asset_class;
+4.3 I/O (fetch_chains, estimate_ivs, write_calls/close_calls, options_lifecycle); 4.4
+`run_cycle` overlay (close → equity → write, coverage-safe); 4.5 daily safety checks
+(earnings-close via yfinance, expiry force-close, rewrite-after-earnings). **No mid-cycle
+DTE roll** (D31 — superseded "roll at 21 DTE" above). **Deferred:** 4.6 assignment re-entry
+(needs Alpaca activities-feed detection); the per-name "manual inject earnings / exercise"
+paper checks (live verification). 219 tests; the overlay logic is unit/integration-tested.
 
 ---
 

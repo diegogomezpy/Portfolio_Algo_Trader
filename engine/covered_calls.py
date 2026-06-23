@@ -78,6 +78,15 @@ def _occ_is_call(symbol: str) -> bool:
     return bool(m) and m.group(3) == "C"
 
 
+def _occ_expiration(symbol: str) -> Optional[date]:
+    """Expiration date parsed from an OCC symbol's YYMMDD field (``None`` if unparseable)."""
+    m = _OCC_RE.match(str(symbol))
+    if not m:
+        return None
+    ymd = m.group(2)
+    return date(2000 + int(ymd[:2]), int(ymd[2:4]), int(ymd[4:6]))
+
+
 def contracts_for(shares: float, contract_size: int = _CONTRACT_SHARES) -> int:
     """Whole writable contracts for a holding: ``floor(shares / 100)`` (0 if < 1 contract)."""
     return int(shares) // int(contract_size)
@@ -271,25 +280,32 @@ def write_calls(client, broker, db_engine, holdings_shares: Mapping[str, float],
     return submitted, skipped
 
 
-def close_calls(client, broker, db_engine, *, as_of: date | None = None, alert=None):
-    """Close every open short call (monthly close-all): buy-to-close → lifecycle."""
-    closes = build_close_plan(open_call_positions(client))
+def _submit_closes(broker, db_engine, closes, *, as_of, event, alert=None):
+    """Submit a batch of buy-to-close orders under one lifecycle ``event`` label."""
     submitted = []
-    stamp = (as_of.isoformat() if as_of else "now")
+    stamp = as_of.isoformat() if as_of else "now"
     for o in closes:
-        coid = f"cc:{stamp}:{o.underlying}:close"
+        coid = f"cc:{stamp}:{o.underlying}:{event}"
         try:
-            resp = broker.submit_option_order(
+            broker.submit_option_order(
                 o.option_symbol, o.contracts, "buy", position_intent="buy_to_close",
                 order_type=("limit" if o.limit_price else "market"),
                 limit_price=o.limit_price, client_order_id=coid)
         except AlpacaAPIError as exc:
-            log.error("covered-call close rejected", extra={"underlying": o.underlying, "error": str(exc)})
+            log.error("covered-call close rejected",
+                      extra={"event": event, "underlying": o.underlying, "error": str(exc)})
             if alert:
-                alert(f"covered-call close rejected {o.underlying}: {exc}")
+                alert(f"covered-call {event} rejected {o.underlying}: {exc}")
             continue
-        _log_lifecycle(db_engine, "close", o)
+        _log_lifecycle(db_engine, event, o)
         submitted.append(o)
+    return submitted
+
+
+def close_calls(client, broker, db_engine, *, as_of: date | None = None, alert=None):
+    """Close every open short call (monthly close-all): buy-to-close → lifecycle."""
+    submitted = _submit_closes(broker, db_engine, build_close_plan(open_call_positions(client)),
+                               as_of=as_of, event="close", alert=alert)
     log.info("covered calls closed", extra={"closed": len(submitted)})
     return submitted
 
@@ -310,3 +326,115 @@ def _log_lifecycle(db_engine, event_type: str, order: CoveredCallOrder) -> None:
             option_symbol=order.option_symbol, strike=order.strike,
             expiration=_to_date(order.expiration) if order.expiration else None,
             delta=order.delta, contracts=order.contracts, premium=round(premium, 2)))
+
+
+# ====================================================================== #
+# Daily safety checks — earnings-close, expiry force-close, rewrite (4.5)
+# ====================================================================== #
+_REWRITE_AFTER_DAYS = 5      # rewrite a call within this many days of the underlying's report
+
+
+def needs_earnings_close(expiration: Optional[date], earnings_date: Optional[date],
+                         as_of: date) -> bool:
+    """True if an upcoming earnings date falls within the call's remaining life.
+
+    Close the call *before* the announcement (DECISIONS D31, the one mid-cycle action):
+    the earnings date is on/after ``as_of`` and on/before the call's ``expiration``.
+    """
+    if expiration is None or earnings_date is None:
+        return False
+    return as_of <= earnings_date <= expiration
+
+
+def is_expiring(expiration: Optional[date], as_of: date, *, within_days: int = 0) -> bool:
+    """True if the contract expires on/before ``as_of + within_days`` (force-close at DTE 0)."""
+    return expiration is not None and expiration <= as_of + timedelta(days=within_days)
+
+
+def next_earnings(dates: Sequence[date], as_of: date) -> Optional[date]:
+    """The soonest earnings date on/after ``as_of`` (``None`` if none known)."""
+    fut = sorted(d for d in dates if d >= as_of)
+    return fut[0] if fut else None
+
+
+def last_earnings(dates: Sequence[date], as_of: date) -> Optional[date]:
+    """The most recent earnings date before ``as_of`` (``None`` if none known)."""
+    past = sorted(d for d in dates if d < as_of)
+    return past[-1] if past else None
+
+
+def earnings_close_plan(open_calls: Sequence[Mapping], earnings_by_underlying: Mapping[str, date],
+                        as_of: date) -> list[CoveredCallOrder]:
+    """Buy-to-close orders for open calls whose underlying reports within the call's life."""
+    facing = [c for c in open_calls
+              if needs_earnings_close(_occ_expiration(str(c["symbol"])),
+                                      earnings_by_underlying.get(c.get("underlying")
+                                                                 or _occ_underlying(str(c["symbol"]))),
+                                      as_of)]
+    return build_close_plan(facing)
+
+
+def expiry_close_plan(open_calls: Sequence[Mapping], as_of: date, *, within_days: int = 0) -> list[CoveredCallOrder]:
+    """Buy-to-close orders for open calls at/under ``within_days`` to expiry (force-close)."""
+    expiring = [c for c in open_calls if is_expiring(_occ_expiration(str(c["symbol"])), as_of,
+                                                     within_days=within_days)]
+    return build_close_plan(expiring)
+
+
+def fetch_earnings_dates(underlyings: Sequence[str], *, fetch=None) -> dict[str, list]:
+    """``{symbol: [earnings dates]}`` (past + upcoming). ``fetch(sym) -> list[date]`` is
+    injectable; the default uses yfinance (Alpaca's feed has no forward earnings dates)."""
+    if fetch is None:
+        import yfinance as yf
+
+        def fetch(sym):                                   # noqa: E306
+            try:
+                df = yf.Ticker(sym).get_earnings_dates(limit=12)
+                return [d.date() for d in df.index]
+            except Exception:                             # noqa: BLE001
+                return []
+    return {s: list(fetch(s) or []) for s in underlyings}
+
+
+def _is_equity(position: Mapping) -> bool:
+    sym = str(position.get("symbol", ""))
+    return str(position.get("asset_class") or "us_equity").endswith("equity") and not _OCC_RE.match(sym)
+
+
+def options_daily_check(client, broker, db_engine, *, settings, as_of: date,
+                        price_panel: pd.DataFrame, earnings_fetch=None, alert=None) -> dict:
+    """Daily overlay safety pass: force-close expiring calls, close calls into earnings,
+    and rewrite calls on names whose earnings just passed (DECISIONS D31).
+
+    Returns counts ``{expiry_closed, earnings_closed, rewritten}``. Non-rebalance days only;
+    the monthly rebalance handles the full close-all + rewrite.
+    """
+    open_calls = open_call_positions(client)
+    held = {str(p["symbol"]): float(p["qty"]) for p in client.all_positions() if _is_equity(p)}
+    universe = sorted({c["underlying"] for c in open_calls} | set(held))
+    earnings = fetch_earnings_dates(universe, fetch=earnings_fetch)
+
+    expiry = expiry_close_plan(open_calls, as_of)
+    _submit_closes(broker, db_engine, expiry, as_of=as_of, event="force_close", alert=alert)
+
+    nxt = {u: next_earnings(earnings.get(u, []), as_of) for u in universe}
+    facing = earnings_close_plan(open_calls, nxt, as_of)
+    _submit_closes(broker, db_engine, facing, as_of=as_of, event="earnings_close", alert=alert)
+
+    # Rewrite names that are held (≥1 contract), now uncovered, and reported very recently.
+    closed_now = {o.underlying for o in expiry + facing}
+    covered = {c["underlying"] for c in open_calls} - closed_now
+    to_rewrite = {
+        s: q for s, q in held.items()
+        if contracts_for(q) >= 1 and s not in covered
+        and last_earnings(earnings.get(s, []), as_of) is not None
+        and (as_of - last_earnings(earnings.get(s, []), as_of)).days <= _REWRITE_AFTER_DAYS
+    }
+    rewritten = []
+    if to_rewrite:
+        rewritten, _ = write_calls(client, broker, db_engine, to_rewrite, settings=settings,
+                                   as_of=as_of, price_panel=price_panel, alert=alert)
+
+    out = {"expiry_closed": len(expiry), "earnings_closed": len(facing), "rewritten": len(rewritten)}
+    log.info("options daily check", extra=out)
+    return out

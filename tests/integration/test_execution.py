@@ -233,6 +233,17 @@ def test_daily_job_monitors_on_non_rebalance_day():
     assert len(_rows(eng, db.snapshots)) == 1                       # monitor still snapshots
 
 
+def test_daily_job_runs_overlay_check_on_non_rebalance_day():
+    eng = _engine()
+    calls = []
+    res = run_eod.daily_job(
+        client=_FakeClient(), broker=_FakeBroker(), db_engine=eng, settings=load_settings(),
+        as_of=date(2026, 6, 18), overlay=True,
+        trading_day_fn=lambda c, d: True, first_trading_day_fn=lambda c, d: False,
+        options_check_fn=lambda *a, **k: calls.append("opts"))
+    assert res.status == "monitored" and calls == ["opts"]   # overlay safety pass ran
+
+
 def test_daily_job_skips_non_trading_day():
     eng = _engine()
     broker = _FakeBroker()

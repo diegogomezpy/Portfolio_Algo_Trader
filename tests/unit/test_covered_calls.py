@@ -221,3 +221,68 @@ def test_close_calls_submits_buy_to_close_and_logs_lifecycle():
     assert o["side"] == "buy" and o["position_intent"] == "buy_to_close" and o["contracts"] == 2
     rows = _lifecycle(eng)
     assert rows[0]["event_type"] == "close" and rows[0]["premium"] == -620.0   # -(3.10 × 2 × 100)
+
+
+# ====================================================================== #
+# Daily safety checks (4.5)
+# ====================================================================== #
+def test_occ_expiration_parsing():
+    assert cc._occ_expiration("AAPL260821C00215000") == date(2026, 8, 21)
+    assert cc._occ_expiration("not-occ") is None
+
+
+def test_needs_earnings_close():
+    exp = date(2026, 8, 21)
+    assert cc.needs_earnings_close(exp, date(2026, 8, 10), date(2026, 7, 1)) is True   # within life
+    assert cc.needs_earnings_close(exp, date(2026, 9, 1), date(2026, 7, 1)) is False   # after expiry
+    assert cc.needs_earnings_close(exp, date(2026, 6, 15), date(2026, 7, 1)) is False  # already past
+    assert cc.needs_earnings_close(exp, None, date(2026, 7, 1)) is False
+
+
+def test_is_expiring():
+    assert cc.is_expiring(date(2026, 7, 1), date(2026, 7, 1)) is True            # DTE 0
+    assert cc.is_expiring(date(2026, 8, 21), date(2026, 7, 1)) is False
+    assert cc.is_expiring(date(2026, 7, 15), date(2026, 7, 1), within_days=30) is True
+
+
+def test_next_and_last_earnings():
+    dates = [date(2026, 1, 10), date(2026, 6, 28), date(2026, 9, 5)]
+    assert cc.next_earnings(dates, date(2026, 7, 1)) == date(2026, 9, 5)
+    assert cc.last_earnings(dates, date(2026, 7, 1)) == date(2026, 6, 28)
+
+
+def test_earnings_and_expiry_close_plans():
+    open_calls = [
+        {"symbol": "AAA260821C00100000", "qty": -1, "underlying": "AAA", "mid": 2.0},  # earnings
+        {"symbol": "BBB260701C00100000", "qty": -1, "underlying": "BBB", "mid": 1.0},  # expiring
+        {"symbol": "CCC260821C00100000", "qty": -1, "underlying": "CCC", "mid": 1.0},  # neither
+    ]
+    as_of = date(2026, 7, 1)
+    earn = cc.earnings_close_plan(open_calls, {"AAA": date(2026, 8, 10)}, as_of)
+    assert {o.underlying for o in earn} == {"AAA"}
+    exp = cc.expiry_close_plan(open_calls, as_of)
+    assert {o.underlying for o in exp} == {"BBB"}
+
+
+def test_options_daily_check_closes_into_earnings_and_rewrites():
+    eng = _engine()
+    as_of = date(2026, 7, 1)
+    exp = (as_of + timedelta(days=35)).isoformat()
+    panel = _panel(["MSFT"])
+    # AAPL: open short call reporting within its life → earnings-close.
+    # MSFT: held equity, just reported (within 5d), uncovered → rewrite.
+    client = _FakeClient(
+        positions=[
+            {"symbol": "AAPL260821C00215000", "qty": -1, "market_value": -300.0, "asset_class": "us_option"},
+            {"symbol": "MSFT", "qty": 100, "market_value": 20000.0, "asset_class": "us_equity"},
+        ],
+        chains={"MSFT": [{"symbol": "MSFT_C", "strike": 105.0, "expiration": exp, "mid": 2.0}]})
+    earn = {"AAPL": [date(2026, 7, 10)], "MSFT": [date(2026, 6, 28)]}
+    broker = _FakeBroker()
+    out = cc.options_daily_check(client, broker, eng, settings=_settings(), as_of=as_of,
+                                 price_panel=panel, earnings_fetch=lambda s: earn.get(s, []))
+    assert out == {"expiry_closed": 0, "earnings_closed": 1, "rewritten": 1}
+    sides = {(o["side"], o["position_intent"]) for o in broker.option_orders}
+    assert ("buy", "buy_to_close") in sides and ("sell", "sell_to_open") in sides
+    events = {r["event_type"] for r in _lifecycle(eng)}
+    assert events == {"earnings_close", "write"}

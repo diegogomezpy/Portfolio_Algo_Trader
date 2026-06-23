@@ -53,8 +53,8 @@ sharpe-engine/
 │   ├── covariance.py          ← FF5 factor-model covariance (Phase 2 ✅, D23a)
 │   ├── optimize.py            ← alpha-driven weighting + constraints (Phase 2 ✅, D24/D25)
 │   ├── options.py             ← Black-Scholes for the covered-call overlay (Phase 2b ✅)
-│   ├── broker.py              ← Alpaca write client: orders (Phase 3 ✅)
-│   ├── covered_calls.py       ← ⏳ covered call selection (Phase 4)
+│   ├── broker.py              ← Alpaca write client: equity + option orders (Phase 3/4 ✅)
+│   ├── covered_calls.py       ← covered-call overlay: strike/write/close/earnings (Phase 4 ✅)
 │   ├── execute.py             ← order routing + execution (Phase 3 ✅)
 │   ├── risk.py                ← pre-trade risk gate (Phase 3 ✅)
 │   └── monitor.py             ← NAV tracking + drift telemetry (Phase 3 ✅)
@@ -170,4 +170,7 @@ See docs/BUILD_ORDER.md. Phases 0-1 and **2 + 2b** are ✅ gate-passed (factor m
 covered-call overlay validated in backtest — D27). **Phase 3 (execution engine + risk
 gate) is code-complete (3.1–3.7, equity-only) and tested**; its live-paper gate criteria
 (orders filling in the Alpaca dashboard, no duplicate orders on re-run, SIGTERM shutdown)
-are pending a run against the paper account. **Phase 4 (covered-call overlay) is next.**
+are pending a run against the paper account. **Phase 4 (covered-call overlay) is
+code-complete (4.0–4.5: leverage, strike selection, broker option orders, write/close,
+earnings-close + expiry + rewrite; assignment re-entry deferred to 4.6) and tested.**
+**Phase 5 (live dashboard) is next** — Diego wants it set up before paper-trading.

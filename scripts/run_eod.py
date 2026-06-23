@@ -256,6 +256,7 @@ def daily_job(
     trading_day_fn: Callable[[object, str], bool] = ingest.is_trading_day,
     first_trading_day_fn: Callable[[object, date], bool] | None = None,
     overlay: bool = False,
+    options_check_fn: Callable[..., object] = covered_calls.options_daily_check,
     alert: Callable[[str], None] | None = None,
 ) -> DailyResult:
     """The once-a-day scheduled job: gate on the calendar, ingest, then branch.
@@ -280,8 +281,12 @@ def daily_job(
                         trading_day_fn=trading_day_fn, overlay=overlay, alert=alert)
         return DailyResult("rebalanced", cycle=cyc)
 
-    # Non-rebalance trading day: keep the DB honest and snapshot, but don't trade.
+    # Non-rebalance trading day: keep the DB honest, run the overlay safety pass, snapshot.
     reconcile.reconcile(client, db_engine, alert=alert)
+    if overlay:
+        panel = factors.load_close_panel(PRICES_DIR, end=as_of, lookback=10**9)
+        options_check_fn(client, broker, db_engine, settings=settings,
+                         as_of=as_of, price_panel=panel, alert=alert)
     tgt = monitor.last_target_weights(db_engine)
     mon = monitor.monitor_once(client, db_engine, target_weights=tgt)
     log.info("daily monitor pass (no rebalance)", extra={"date": as_of.isoformat()})
