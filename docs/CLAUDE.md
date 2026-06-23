@@ -57,16 +57,18 @@ sharpe-engine/
 │   ├── covered_calls.py       ← covered-call overlay: strike/write/close/earnings (Phase 4 ✅)
 │   ├── execute.py             ← order routing + execution (Phase 3 ✅)
 │   ├── risk.py                ← pre-trade risk gate (Phase 3 ✅)
-│   └── monitor.py             ← NAV tracking + drift telemetry (Phase 3 ✅)
-├── dashboard/                 ← ⏳ Phase 5
-│   ├── app.py                 ← FastAPI backend
-│   └── static/index.html      ← single-page dashboard
+│   ├── monitor.py             ← NAV tracking + drift telemetry (Phase 3 ✅)
+│   └── alerts.py              ← DB-recorded, dry-run-capable email alerts (Phase 5 ✅)
+├── dashboard/                 ← live dashboard (Phase 5 ✅)
+│   ├── app.py                 ← FastAPI backend (Postgres-only)
+│   ├── data.py                ← dashboard read queries
+│   └── static/index.html      ← single-page dashboard (polls /api/*)
 ├── scripts/
 │   ├── init_db.py             ← create the PostgreSQL schema
 │   ├── backfill.py            ← one-time historical data pull
 │   ├── backtest.py            ← ⏳ walk-forward backtest
 │   ├── run_eod.py             ← rebalance driver: --once / --serve (Phase 3 ✅)
-│   └── run_dashboard.py       ← ⏳ dashboard entry point (terminal 2)
+│   └── run_dashboard.py       ← dashboard entry point, terminal 2 (Phase 5 ✅)
 ├── tests/
 │   ├── unit/                  ← one file per engine module
 │   └── integration/           ← full pipeline tests on synthetic data
@@ -173,4 +175,8 @@ gate) is code-complete (3.1–3.7, equity-only) and tested**; its live-paper gat
 are pending a run against the paper account. **Phase 4 (covered-call overlay) is
 code-complete (4.0–4.5: leverage, strike selection, broker option orders, write/close,
 earnings-close + expiry + rewrite; assignment re-entry deferred to 4.6) and tested.**
-**Phase 5 (live dashboard) is next** — Diego wants it set up before paper-trading.
+**Phase 5 (alerting + live dashboard) is code-complete (5.0–5.2) and tested** — alerts.py
+records/dry-run-emails the 6 SPEC alert types; dashboard/app.py + static/index.html serve
+the live state from Postgres (verified end-to-end over HTTP). Remaining before paper: the
+SMTP host for live email (alerts run dry-run until then), and the live-paper verification of
+the full strategy. **Phase 6 (crypto) and Phase 7 (go-live) follow.**

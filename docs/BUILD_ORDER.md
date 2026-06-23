@@ -19,7 +19,7 @@ active and never build ahead of it.
 | 2b | Full strategy backtest including covered calls | Combined beats SPY Sharpe under realistic premium; vol/DD cut unconditionally (D27) | ✅ |
 | 3 | Execution engine + risk gate | Orders submit and fill correctly in paper account | 🔄 (3.1–3.7 built + tested; live-paper gate pending Diego) |
 | 4 | Covered call overlay | Calls written, rolled, and assigned correctly in paper | 🔄 (4.0–4.5 built + tested; assignment re-entry = 4.6; paper verify pending) |
-| 5 | Dashboard + alerting | Live dashboard shows portfolio state, alerts deliver | ⬜ |
+| 5 | Dashboard + alerting | Live dashboard shows portfolio state, alerts deliver | 🔄 (5.0–5.2 built + tested; SMTP host + live view pending) |
 | 6 | Crypto allocation | Crypto positions added to paper portfolio | ⬜ |
 | 7 | Go-live | User-defined gate criteria met | ⬜ |
 | 8 | Leverage (TBD) | Live track record validated, CADIEM approval | ⬜ |
@@ -440,6 +440,16 @@ email alerts on all trigger events.
 - Dashboard updates without page refresh
 - All six alert types fire and deliver email in dry-run test
 - Covered call P&L tracked separately from equity P&L
+
+**Build status (2026-06-23) — 🔄 code complete, dry-run until SMTP set.** 5.0 `engine/
+alerts.py` (make_alerter: classify → record to `alerts` table → email unless dry-run; the 6
+SPEC types, drift-rebalance dropped per D31; wired through run_eod). 5.1 `dashboard/data.py`
+(Postgres-only reads: state/orders/calls/factors/alerts). 5.2 `dashboard/app.py` (FastAPI) +
+`scripts/run_dashboard.py` + `dashboard/static/index.html` (self-contained, polls /api/* every
+30s; the six SPEC panels). Verified end-to-end over HTTP (urllib against a live uvicorn). 231
+tests. **Pending (yours):** set `settings.alerts.smtp_host`/`email_to` to send real email
+(until then alerts record + log, satisfying the dry-run gate); view the dashboard against the
+live paper book. Dashboard is Postgres-only (no Alpaca creds in that process).
 
 ---
 

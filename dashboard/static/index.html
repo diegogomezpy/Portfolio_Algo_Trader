@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sharpe-engine</title>
+<style>
+  :root {
+    --bg:#0e1117; --panel:#161b22; --line:#272e39; --fg:#e6edf3; --muted:#8b949e;
+    --green:#3fb950; --red:#f85149; --accent:#58a6ff; --warn:#d29922;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  header { display:flex; align-items:baseline; gap:14px; padding:16px 20px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:16px; margin:0; font-weight:600; letter-spacing:.3px; }
+  header .upd { color:var(--muted); font-size:12px; margin-left:auto; }
+  .kpis { display:flex; flex-wrap:wrap; gap:12px; padding:16px 20px; }
+  .kpi { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+         padding:12px 16px; min-width:140px; }
+  .kpi .label { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
+  .kpi .val { font-size:20px; font-weight:600; margin-top:4px; font-variant-numeric:tabular-nums; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:0 20px 24px; }
+  @media (max-width:900px){ .grid { grid-template-columns:1fr; } }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .panel h2 { font-size:12px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted);
+              margin:0; padding:10px 14px; border-bottom:1px solid var(--line); }
+  .panel .body { max-height:340px; overflow:auto; }
+  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+  th,td { text-align:right; padding:6px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th:first-child, td:first-child { text-align:left; }
+  th { position:sticky; top:0; background:var(--panel); color:var(--muted); font-weight:500; font-size:11px; }
+  .pos { color:var(--green); } .neg { color:var(--red); } .mut { color:var(--muted); }
+  .pill { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+  .pill.ok { background:rgba(63,185,80,.15); color:var(--green); }
+  .pill.bad { background:rgba(248,81,73,.15); color:var(--red); }
+  .empty { color:var(--muted); padding:14px; font-style:italic; }
+</style>
+</head>
+<body>
+<header>
+  <h1>sharpe-engine</h1><span class="mut" id="gate"></span>
+  <span class="upd" id="upd">connecting…</span>
+</header>
+<div class="kpis" id="kpis"></div>
+<div class="grid">
+  <div class="panel"><h2>Positions vs target</h2><div class="body" id="positions"></div></div>
+  <div class="panel"><h2>Covered calls</h2><div class="body" id="calls"></div></div>
+  <div class="panel"><h2>Factor scores (held)</h2><div class="body" id="factors"></div></div>
+  <div class="panel"><h2>Recent orders</h2><div class="body" id="orders"></div></div>
+  <div class="panel" style="grid-column:1/-1"><h2>Alerts</h2><div class="body" id="alerts"></div></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const num = (v,d=0) => v==null ? "–" : Number(v).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
+const usd = v => v==null ? "–" : "$"+num(v,0);
+const pct = v => v==null ? "–" : (100*v).toFixed(1)+"%";
+const sign = v => v==null ? "mut" : v>0 ? "pos" : v<0 ? "neg" : "mut";
+
+async function get(p){ try { const r = await fetch(p); return r.ok ? await r.json() : null; } catch { return null; } }
+
+function table(rows, cols){
+  if(!rows || !rows.length) return '<div class="empty">none</div>';
+  const head = "<tr>"+cols.map(c=>`<th>${c.h}</th>`).join("")+"</tr>";
+  const body = rows.map(r=>"<tr>"+cols.map(c=>`<td class="${c.cls?c.cls(r):''}">${c.f(r)}</td>`).join("")+"</tr>").join("");
+  return `<table>${head}${body}</table>`;
+}
+
+function kpis(s){
+  const items = [
+    ["NAV", usd(s.nav)],
+    ["Day P&L", `<span class="${sign(s.day_pnl)}">${s.day_pnl==null?"–":(s.day_pnl>=0?"+":"")+usd(s.day_pnl)}</span>`],
+    ["Premium collected", usd(s.premium_collected)],
+    ["Cash", usd(s.cash)],
+    ["Drift (L1)", s.drift==null?"–":pct(s.drift)],
+  ];
+  $("kpis").innerHTML = items.map(([l,v])=>`<div class="kpi"><div class="label">${l}</div><div class="val">${v}</div></div>`).join("");
+  const g = s.risk_gate_passed;
+  $("gate").innerHTML = g==null ? "" : `risk gate <span class="pill ${g?'ok':'bad'}">${g?'PASS':'BLOCK'}</span>` +
+      (g ? "" : ` <span class="mut">${s.risk_gate_reason||''}</span>`);
+}
+
+async function refresh(){
+  const [s, orders, calls, factors, alerts] = await Promise.all(
+    ["/api/state","/api/orders","/api/calls","/api/factors","/api/alerts"].map(get));
+  if(!s){ $("upd").textContent = "backend unreachable"; return; }
+  kpis(s);
+  $("positions").innerHTML = table(s.positions, [
+    {h:"Symbol", f:r=>r.symbol},
+    {h:"Qty", f:r=>num(r.qty)},
+    {h:"Weight", f:r=>pct(r.weight)},
+    {h:"Target", f:r=>pct(r.target_weight)},
+    {h:"Δ", cls:r=>sign((r.weight||0)-(r.target_weight||0)), f:r=>pct((r.weight||0)-(r.target_weight||0))},
+  ]);
+  $("calls").innerHTML = table(calls, [
+    {h:"Underlying", f:r=>r.underlying},
+    {h:"Strike", f:r=>num(r.strike,2)},
+    {h:"Expiry", f:r=>r.expiration||"–"},
+    {h:"Δ", f:r=>r.delta==null?"–":r.delta.toFixed(2)},
+    {h:"Contracts", f:r=>num(r.contracts)},
+    {h:"Premium", cls:()=>"pos", f:r=>usd(r.premium)},
+  ]);
+  $("factors").innerHTML = table(factors, [
+    {h:"Symbol", f:r=>r.symbol},
+    {h:"Composite", cls:r=>sign(r.composite), f:r=>r.composite==null?"–":r.composite.toFixed(2)},
+    {h:"Qual", f:r=>r.quality==null?"–":r.quality.toFixed(2)},
+    {h:"Val", f:r=>r.value==null?"–":r.value.toFixed(2)},
+    {h:"Mom", f:r=>r.momentum==null?"–":r.momentum.toFixed(2)},
+    {h:"LowVol", f:r=>r.lowvol==null?"–":r.lowvol.toFixed(2)},
+  ]);
+  $("orders").innerHTML = table(orders, [
+    {h:"Symbol", f:r=>r.symbol},
+    {h:"Side", cls:r=>r.side==="buy"?"pos":"neg", f:r=>r.side},
+    {h:"Qty", f:r=>num(r.qty)},
+    {h:"Type", f:r=>r.type},
+    {h:"Status", f:r=>r.status},
+    {h:"Fill px", f:r=>r.filled_avg_price==null?"–":num(r.filled_avg_price,2)},
+  ]);
+  $("alerts").innerHTML = table(alerts, [
+    {h:"Time", f:r=>(r.ts||"").replace("T"," ").slice(0,19)},
+    {h:"Type", f:r=>r.type},
+    {h:"Message", cls:()=>"mut", f:r=>r.message},
+    {h:"Sent", f:r=>r.delivered?"✓":"–"},
+  ]);
+  $("upd").textContent = "updated " + new Date().toLocaleTimeString();
+}
+
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>
