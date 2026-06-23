@@ -391,8 +391,10 @@ def main() -> None:
     client = config.get_alpaca_client()
     broker = Broker(require_env("ALPACA_API_KEY"), require_env("ALPACA_SECRET_KEY"))
     db_engine = db.get_engine()
-    smtp = str(getattr(settings.alerts, "smtp_host", "") or "").strip()
-    alerter = alerts.make_alerter(db_engine, settings, dry_run=(smtp in ("", "TBD")))
+    _a = settings.alerts
+    _smtp = str(getattr(_a, "smtp_host", "") or "").strip()
+    _send_on = bool(getattr(_a, "send_enabled", False)) and _smtp not in ("", "TBD")
+    alerter = alerts.make_alerter(db_engine, settings, dry_run=not _send_on)
 
     if args.serve:
         serve(env=args.env, settings=settings, client=client, broker=broker,

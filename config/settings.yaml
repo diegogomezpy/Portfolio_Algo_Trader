@@ -128,9 +128,15 @@ data_retention:
   fundamentals: forever
 
 alerts:
-  smtp_host: TBD              # set this to enable email; until then alerts run dry-run
-                             # (recorded to the alerts table + logged, no email sent)
+  smtp_host: smtp.office365.com   # Microsoft 365 SMTP relay (STARTTLS on 587). Requires
+                             # SMTP AUTH enabled for the mailbox; basic auth is blocked on
+                             # MFA/Security-Defaults tenants (then need admin enable or OAuth).
   smtp_port: 587
   email_to: pasantemesa@cadiem.py   # alert recipient (test)
   email_from: pasantemesa@cadiem.py # sender (defaults to email_to); SMTP password from env SMTP_PASSWORD
+  send_enabled: false        # alerts stay dry-run (recorded to the alerts table, shown on the
+                             # dashboard, NOT emailed) until SMTP auth works. M365 rejected the
+                             # plain account password (535 5.7.3 basic-auth blocked) — needs IT
+                             # to enable Authenticated SMTP, or an app password, or a relay
+                             # (SendGrid/SES). Flip to true once SMTP_PASSWORD authenticates.
   staleness_threshold_pct: 0.10
