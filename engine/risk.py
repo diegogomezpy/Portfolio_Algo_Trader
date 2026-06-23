@@ -10,10 +10,13 @@ not sent to the market.
 Checks (all on the *proposed post-trade* book):
 
 * long-only — no negative target weights (SPEC: no short selling)
-* single-name cap — no weight > ``max_single_name_pct``
+* single-name cap — no weight > ``max_single_name_pct`` (of the deployable base)
 * sector cap — no sector's weight sum > ``max_sector_pct`` (``Unknown`` exempt, as in
   the optimizer)
-* no unintended leverage — total invested weight ≤ 1.0 (≤ NAV)
+* over-deployment — total invested weight ≤ 1.0 of the deployable base (no accidental
+  over-allocation of the base)
+* leverage cap — gross/equity (``leverage``, passed by the caller) ≤ ``max_leverage``
+  (DECISIONS D32): the hard bound on how levered the book may run
 * universe — every name is in the approved tradable universe
 * no naked calls — every covered call is backed by enough held shares of its underlying
 * valid option expiry — no covered call already expired
@@ -69,8 +72,15 @@ def _check_sector(weights: pd.Series, sector_map: pd.Series, cap: float) -> list
 
 
 def _check_leverage(weights: pd.Series, max_total: float = 1.0) -> list[str]:
+    """Guard against over-deploying the base: invested weight ≤ ``max_total`` (of base)."""
     total = float(weights.clip(lower=0).sum())
-    return [f"leverage: invested {total:.3f} > {max_total:.3f} of NAV"] if total > max_total + _TOL else []
+    return [f"over-deployed: invested {total:.3f} > {max_total:.3f} of base"] if total > max_total + _TOL else []
+
+
+def _check_leverage_cap(leverage: float, max_leverage: float) -> list[str]:
+    """Hard cap on gross/equity leverage (DECISIONS D32)."""
+    return ([f"leverage {leverage:.2f}x exceeds cap {max_leverage:.2f}x"]
+            if leverage > max_leverage + _TOL else [])
 
 
 def _check_universe(weights: pd.Series, universe: Iterable[str]) -> list[str]:
@@ -110,11 +120,14 @@ def check_pretrade(
     equity_positions: Mapping[str, float] | None = None,
     option_orders: Sequence[Mapping] | None = None,
     as_of: date | None = None,
+    leverage: float | None = None,
 ) -> RiskCheckResult:
     """Run every pre-trade check on the proposed post-trade book.
 
-    ``target_weights`` are fractions of NAV (the proposed equity holdings). Returns a
-    :class:`RiskCheckResult`; logs at ERROR with all reasons when it blocks.
+    ``target_weights`` are fractions of the deployable base (the proposed equity
+    holdings). ``leverage`` (gross/equity, supplied by the caller) is checked against
+    ``settings.portfolio.max_leverage`` when given. Returns a :class:`RiskCheckResult`;
+    logs at ERROR with all reasons when it blocks.
     """
     p = settings.portfolio
     w = target_weights.dropna()
@@ -123,6 +136,8 @@ def check_pretrade(
     failures += _check_single_name(w, p.max_single_name_pct)
     failures += _check_sector(w, sector_map, p.max_sector_pct)
     failures += _check_leverage(w)
+    if leverage is not None:
+        failures += _check_leverage_cap(leverage, float(getattr(p, "max_leverage", 1.0)))
     failures += _check_universe(w, universe)
     failures += _check_covered_calls(option_orders, equity_positions, as_of)
 

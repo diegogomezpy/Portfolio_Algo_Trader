@@ -831,3 +831,34 @@ drops the breach/flag/alert (drift is telemetry only; `MonitorResult.drift_breac
 `run_eod.run_cycle` no longer passes a drift threshold. **Supersedes** the `drift_check_job`
 / DTE-roll references in ARCHITECTURE.md (future-phase scheduler / Phase 4 prose) and the
 "roll at 21 DTE" line in BUILD_ORDER Phase 4, which are updated to match.
+---
+
+## D32 — Run the paper book at 2:1 leverage (pulls Phase 8 forward, on paper)
+
+**Decision (2026-06-23, Diego):** size the paper book to a **gross exposure of 2× account
+equity** (`portfolio.target_leverage: 2.0`, ~$200k on the $100k paper account), with a hard
+`portfolio.max_leverage: 2.0` cap enforced by the pre-trade risk gate. Paired with
+**accepting partial covered-call coverage** (write calls only where a position is ≥ 100
+shares — ~10/19 names at $200k vs ~6 at 1x; the high-priced tail stays bare).
+
+**Why.** Covered calls need ≥100 shares per standard contract, and single-name 10-share
+"mini" options were delisted ~2014 (confirmed live: an NVDA chain returns only standard
+root-`NVDA` contracts). At $100k / 19 names (~$5k each) only ~⅓ of the book clears 100
+shares; doubling the deployable base lifts that to ~½ so the overlay actually applies to a
+meaningful slice. The $100k was always a paper placeholder; 2:1 is the chosen way to make
+the overlay testable on the paper account.
+
+**Trade-off (stated plainly).** This is leverage, which the project had deferred to **Phase
+8** ("paper-trade unlevered first, 1.5x after validation") and which sits in tension with
+the **capital-preservation mandate**. Leverage doesn't change Sharpe but scales the path:
+the unlevered backtest's drawdowns (equity maxDD −26%, overlay −18.5%) become **~−50% /
+~−37%** at 2:1. Accepted because it's a **paper** account (reversible) and the goal is to
+exercise the full strategy + overlay before committing real capital. **Revisit the leverage
+level before any live go-live** — do not assume 2:1 carries to real CADIEM capital.
+
+**Code.** Added `portfolio.target_leverage` + `portfolio.max_leverage`. `run_eod.run_cycle`
+sizes against `nav = equity × target_leverage` (the deployable base) and passes the leverage
+to the gate; `risk._check_leverage_cap` hard-blocks `leverage > max_leverage`. The optimizer,
+weights, and box/sector caps are **unchanged** — they operate in fractions of the deployable
+base, so only the dollar base scales. The backtest stays 1x (it is return-based, not sized);
+the −50% figure is a manual extrapolation, not a backtested number.

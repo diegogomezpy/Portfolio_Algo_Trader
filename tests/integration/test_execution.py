@@ -103,7 +103,8 @@ def test_run_cycle_executes_and_persists():
     assert res.exec_report.submitted == 2 and res.exec_report.filled == 2
     orders = _rows(eng, db.orders)
     assert {o["symbol"] for o in orders} == {"AAPL", "MSFT"}
-    assert {o["qty"] for o in orders} == {50.0, 20.0}        # 5000/100, 4000/200
+    # Deployable base = 2.0× the $100k equity (target_leverage, D32): 10000/100, 8000/200.
+    assert {o["qty"] for o in orders} == {100.0, 40.0}
     assert len(_rows(eng, db.fills)) == 2
     rlog = _rows(eng, db.rebalance_log)
     assert len(rlog) == 1 and rlog[0]["risk_gate_passed"] is True

@@ -18,7 +18,15 @@ portfolio:
                                  # gives a diversified, ~equal-weight book for capital
                                  # preservation. Was 0.10 (gave ~11 concentrated names).
   max_sector_pct: 0.30
-  base_equity_allocation: 0.95   # 95% equity, 5% cash buffer (no regime filter)
+  base_equity_allocation: 0.95   # 95% of the deployable base; 5% cash buffer (no regime filter)
+  target_leverage: 2.0           # gross exposure = target_leverage × account equity (DECISIONS
+                                 # D32). 2:1 on the paper book to lift covered-call coverage
+                                 # (~10/19 names at $200k gross vs ~6 at 1x). The optimizer /
+                                 # weights / caps are unchanged — they work in fractions of the
+                                 # deployable base; leverage only scales that base. NOTE: leverage
+                                 # scales the backtested drawdown ~linearly (equity maxDD −26% →
+                                 # ~−50%); the backtest itself is 1x. Set 1.0 for unlevered.
+  max_leverage: 2.0              # hard cap the pre-trade risk gate enforces; target must be ≤ this.
   infeasibility_max_retries: 3
   risk_aversion_lambda: 0.0      # alpha-driven weighting (DECISIONS D25): the composite
                                  # score already prices risk (low-vol is 25% of it), so a

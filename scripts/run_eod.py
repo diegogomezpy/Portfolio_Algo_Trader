@@ -147,8 +147,10 @@ def run_cycle(
         log.warning("no target weights produced; nothing to do")
         return CycleResult("no_targets")
 
+    leverage = float(getattr(settings.portfolio, "target_leverage", 1.0))
     rc = risk.check_pretrade(weights, settings=settings, sector_map=plan.sector_map,
-                             universe=plan.universe, equity_positions=rec.live_positions, as_of=as_of)
+                             universe=plan.universe, equity_positions=rec.live_positions,
+                             as_of=as_of, leverage=leverage)
     _write_rebalance_log(db_engine, as_of, weights, rc, trigger)
     if not rc.approved:
         log.error("risk gate blocked the cycle; no orders submitted", extra={"reason": rc.reason})
@@ -156,7 +158,10 @@ def run_cycle(
             alert(f"risk gate blocked rebalance: {rc.reason}")
         return CycleResult("blocked_risk", weights, rc)
 
-    nav = float(client.account().get("equity") or settings.portfolio.nav)
+    # Deployable base = leverage × account equity (DECISIONS D32). Weights are fractions of
+    # this base, so the optimizer/caps are unchanged; only the dollar base scales.
+    equity = float(client.account().get("equity") or settings.portfolio.nav)
+    nav = equity * leverage
     orders, pending = plan_orders(weights, rec.live_positions, plan.prices, nav=nav,
                                   settings=settings, adv=plan.adv, spread=plan.spread)
     report = submit_and_track(orders, broker=broker, db_engine=db_engine,

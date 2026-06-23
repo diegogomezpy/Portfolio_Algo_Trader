@@ -16,9 +16,9 @@ import pandas as pd
 from engine import risk
 
 
-def _settings(max_name=0.05, max_sector=0.30):
+def _settings(max_name=0.05, max_sector=0.30, max_leverage=2.0):
     return SimpleNamespace(portfolio=SimpleNamespace(
-        max_single_name_pct=max_name, max_sector_pct=max_sector))
+        max_single_name_pct=max_name, max_sector_pct=max_sector, max_leverage=max_leverage))
 
 
 _SECTORS = pd.Series({
@@ -73,6 +73,29 @@ def test_off_universe_symbol_blocks():
     w = pd.Series({"AAPL": 0.05, "WXYZ": 0.04})
     bad = risk._check_universe(w, _UNIVERSE)
     assert len(bad) == 1 and "WXYZ" in bad[0]
+
+
+def test_leverage_cap_check():
+    assert risk._check_leverage_cap(2.0, 2.0) == []          # at the cap is fine
+    assert len(risk._check_leverage_cap(2.5, 2.0)) == 1      # over the cap blocks
+
+
+def test_check_pretrade_enforces_leverage_cap():
+    w = pd.Series({"AAPL": 0.05, "XOM": 0.04})
+    ok = risk.check_pretrade(w, settings=_settings(), sector_map=_SECTORS,
+                             universe=_UNIVERSE, leverage=2.0)
+    assert ok.approved is True
+    bad = risk.check_pretrade(w, settings=_settings(), sector_map=_SECTORS,
+                              universe=_UNIVERSE, leverage=2.5)
+    assert bad.approved is False and "leverage" in bad.reason
+
+
+def test_check_pretrade_skips_leverage_when_not_supplied():
+    # Back-compat: no leverage arg ⇒ cap not checked (equity-only callers unaffected).
+    w = pd.Series({"AAPL": 0.05})
+    res = risk.check_pretrade(w, settings=_settings(max_leverage=1.0),
+                              sector_map=_SECTORS, universe=_UNIVERSE)
+    assert res.approved is True
 
 
 # ----------------------------------------------------- covered calls (P4) ----

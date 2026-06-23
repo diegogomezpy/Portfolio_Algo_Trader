@@ -87,7 +87,7 @@ sharpe-engine/
 | Factors | Quality, value, momentum, low-vol — equal weight to start |
 | Factor weights | Equal weight initially, adjust after backtesting |
 | Objective | Max Sharpe, capital preservation mandate |
-| Constraints | Long-only, sector cap, min position size, no direct leverage |
+| Constraints | Long-only, sector cap, min position size, leverage capped at `max_leverage` (risk gate) |
 | Rebalancing | Monthly only — first trading day; equities + covered calls together (DECISIONS D31). Drift is telemetry, not a trigger |
 | Covered calls | Delta = 0.30 (D29), 30-45 DTE, rewritten monthly — no mid-cycle roll (D31) |
 | Covered call rebalance | Close all calls before monthly rebalance, rewrite fresh after new weights set |
@@ -97,7 +97,7 @@ sharpe-engine/
 | Assignment policy | Conditional re-entry if stock still scores above threshold |
 | Regime filter | None — quality and low-vol factors handle defensiveness naturally |
 | Crypto | Small allocation, size TBD after equities validated |
-| Leverage | TBD — paper trade unlevered first, 1.5x margin after validation |
+| Leverage | 2:1 on the paper book now (DECISIONS D32, `target_leverage=2.0`, risk-gate capped) to make the covered-call overlay testable; revisit before live |
 | Covariance | Fama-French 5 factor model via pandas-datareader |
 | Price data | Alpaca Data API, adjustment='all' |
 | Fundamental data | SEC EDGAR for deep point-in-time history (DECISIONS D22); yfinance current-quarter fallback |
