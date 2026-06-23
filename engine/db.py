@@ -175,7 +175,15 @@ def get_engine(database_url: str | None = None) -> Engine:
             "DATABASE_URL is not set (load .env.paper / .env.live first) "
             "and no database_url was passed"
         )
-    return create_engine(url, future=True)
+    connect_args: dict = {}
+    if url.startswith("postgresql"):
+        # Pin the session to UTC. Every writer uses datetime.now(timezone.utc); without this,
+        # Postgres converts those aware-UTC values to the server's local timezone when storing
+        # them in the naive TIMESTAMP columns, so they come back shifted. Readers (the dashboard
+        # age/staleness math, reconciliation against Alpaca's UTC timestamps) treat stored values
+        # as UTC, so the session must be UTC for stored == UTC wall-clock.
+        connect_args["options"] = "-c timezone=utc"
+    return create_engine(url, future=True, connect_args=connect_args)
 
 
 def create_all(engine: Engine) -> list[str]:

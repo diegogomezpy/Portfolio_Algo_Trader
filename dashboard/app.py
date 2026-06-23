@@ -1,18 +1,26 @@
-"""FastAPI app for the live dashboard (Phase 5.2).
+"""FastAPI app for the live dashboard (Phase 5.2 / 5.5).
 
-A thin wrapper over :mod:`dashboard.data` — every route just returns a Postgres read, and
-``/`` serves the self-contained ``static/index.html`` which polls the ``/api/*`` endpoints.
-``create_app`` takes an injectable ``db_engine`` (so it builds against in-memory sqlite in
-tests); in production it builds from ``DATABASE_URL``. No Alpaca access — Postgres only.
+Routes are thin wrappers over :mod:`dashboard.data` (Postgres reads) plus, when an Alpaca
+client is available, a **self-updating** layer so the dashboard stays live on its own —
+without ``run_eod`` running:
 
-The ``static/`` directory (shared ``theme.css`` + assets) is mounted at ``/static`` so both
-the live page and the generated backtest page reference one design system. ``/api/meta``
-surfaces config (environment, leverage cap, target delta) so the UI is config-driven, not
-hardcoded — read once from ``settings.yaml`` at startup.
+* a background **monitor loop** (default every 60s) reads the Alpaca account + positions and
+  writes a fresh snapshot to Postgres, so NAV / cash / positions / leverage keep updating and
+  the NAV sparkline keeps accumulating history; and
+* ``/api/orders`` reads **live** Alpaca orders (open + recent), so an order placed directly on
+  Alpaca — even a still-pending one — shows up immediately, not just orders the engine placed.
+
+If no Alpaca credentials are present (or ``live=False``), the app degrades cleanly to the
+original Postgres-only behaviour. ``create_app`` takes an injectable ``db_engine`` and
+``client`` so it builds against in-memory sqlite + fakes in tests. ``/api/meta`` surfaces
+config (env, leverage cap, target delta) read once from ``settings.yaml`` at startup.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -20,6 +28,8 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from dashboard import data
+
+log = logging.getLogger("dashboard")
 
 _STATIC = Path(__file__).parent / "static"
 _INDEX = _STATIC / "index.html"
@@ -54,13 +64,74 @@ def _load_meta(env: str, settings) -> dict:
     }
 
 
-def create_app(db_engine=None, *, env: str = "paper", settings=None) -> FastAPI:
+def _build_client():
+    """Build the read-only Alpaca client from the loaded environment, or None if unavailable.
+
+    Credentials are already loaded into the environment by ``run_dashboard`` (``load_env``);
+    this never raises — a missing key just disables the live layer (Postgres-only fallback).
+    """
+    try:
+        from engine import config
+        return config.get_alpaca_client()
+    except Exception as exc:  # noqa: BLE001 — any creds/SDK issue → degrade, don't crash
+        log.warning("live layer disabled (no Alpaca client): %s", exc)
+        return None
+
+
+async def _monitor_loop(client, db_engine, interval: int) -> None:
+    """Every ``interval`` seconds: read Alpaca → write a snapshot (the Alpaca→Postgres bridge).
+
+    Runs the synchronous monitor in a worker thread so the event loop stays responsive; a
+    failed pass is logged and the loop continues (alerting/monitoring must never crash the UI).
+    """
+    from engine import monitor
+    log.info("dashboard monitor loop started (every %ss)", interval)
+    while True:
+        try:
+            tw = await asyncio.to_thread(monitor.last_target_weights, db_engine)
+            await asyncio.to_thread(monitor.monitor_once, client, db_engine, target_weights=tw)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("dashboard monitor pass failed: %s", exc)
+        await asyncio.sleep(interval)
+
+
+def _live_orders(client, limit: int) -> list[dict]:
+    """Live Alpaca orders (open + recent), shaped like :func:`dashboard.data.api_orders`."""
+    orders = client.get_orders(status="all", limit=limit)
+    return [{"symbol": o.get("symbol"), "side": o.get("side"), "qty": o.get("qty"),
+             "type": o.get("type"), "status": o.get("status"), "filled_qty": o.get("filled_qty"),
+             "filled_avg_price": o.get("filled_avg_price"),
+             "submitted_at": o.get("submitted_at")} for o in orders]
+
+
+def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None,
+               live: bool = True, monitor_interval: int = 60) -> FastAPI:
     if db_engine is None:
         from engine import db
         db_engine = db.get_engine()
 
     meta = _load_meta(env, settings)
-    app = FastAPI(title="sharpe-engine dashboard")
+    # The live layer (background monitor + live Alpaca orders) is on by default; pass live=False
+    # for the original Postgres-only behaviour. A client may be injected (tests); else built.
+    if live and client is None:
+        client = _build_client()
+    if not live:
+        client = None
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app: FastAPI):
+        task = None
+        if client is not None:
+            task = asyncio.create_task(_monitor_loop(client, db_engine, monitor_interval))
+        try:
+            yield
+        finally:
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+    app = FastAPI(title="sharpe-engine dashboard", lifespan=lifespan)
     if _STATIC.exists():
         app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
 
@@ -82,7 +153,7 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None) -> FastAPI:
 
     @app.get("/api/meta")
     def api_meta() -> dict:
-        return meta
+        return {**meta, "live": client is not None, "monitor_interval": monitor_interval}
 
     @app.get("/api/state")
     def state() -> dict:
@@ -94,6 +165,13 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None) -> FastAPI:
 
     @app.get("/api/orders")
     def orders(limit: int = 50) -> list:
+        # Live Alpaca orders when available (reflects orders placed directly on Alpaca,
+        # incl. still-pending ones); fall back to the engine's Postgres orders otherwise.
+        if client is not None:
+            try:
+                return _live_orders(client, limit)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("live orders read failed, falling back to Postgres: %s", exc)
         return data.api_orders(db_engine, limit)
 
     @app.get("/api/calls")

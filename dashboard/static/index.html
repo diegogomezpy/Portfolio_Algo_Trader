@@ -339,12 +339,15 @@ async function refresh(){
   lastFetch = Date.now();
   tickFreshness();
   const stale = snapTs!=null && (Date.now()-snapTs)/1000 > 360;
+  const feed = META.live
+    ? `<span class="se-pill ok" style="font-size:10px"><span class="dot"></span>live · Alpaca every ${META.monitor_interval||60}s</span>`
+    : `<span class="se-pill warn" style="font-size:10px"><span class="dot"></span>Postgres-only · run the monitor to refresh</span>`;
   $("footstrip").innerHTML =
-    `<span class="se-pill ok" style="font-size:10px"><span class="dot"></span>Postgres connected</span>` +
+    `<span class="se-pill ok" style="font-size:10px"><span class="dot"></span>Postgres connected</span>` + feed +
     `<span>Snapshot: <span class="hi">${(s.ts||"–").replace("T"," ").slice(0,19)} UTC</span>${stale?' <span class="warn">(stale)</span>':''}</span>` +
     `<span>Environment: <span class="hi">${(META.env||"paper").toUpperCase()}</span></span>` +
     `<span>Target Δ: <span class="hi">${(META.target_delta||0.30).toFixed(2)}</span></span>` +
-    `<span class="mut" style="margin-left:auto">Postgres-only · monitor bridges Alpaca → snapshots every 60s</span>`;
+    `<span class="mut" style="margin-left:auto">${META.live?'dashboard self-updates from Alpaca (no run_eod needed)':'monitor bridges Alpaca → snapshots'}</span>`;
 }
 function humanAge(s){ s=Math.round(s); return s<60?s+"s":s<3600?Math.round(s/60)+"m":Math.round(s/3600)+"h"; }
 
