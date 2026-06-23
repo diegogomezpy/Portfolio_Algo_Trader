@@ -4,65 +4,142 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>sharpe-engine</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/theme.css">
 <style>
-  :root {
-    --bg:#0e1117; --panel:#161b22; --line:#272e39; --fg:#e6edf3; --muted:#8b949e;
-    --green:#3fb950; --red:#f85149; --accent:#58a6ff; --warn:#d29922;
+  /* ---- live-tab layout (components live in /static/theme.css) -------------- */
+  .wrap { max-width: 1320px; margin: 0 auto; padding: 0 22px; }
+
+  header.topbar {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; gap: 18px;
+    padding: 11px 22px; background: rgba(10,14,21,.82); backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
   }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg);
-         font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
-  header { display:flex; align-items:center; gap:16px; padding:12px 20px; border-bottom:1px solid var(--line); }
-  header h1 { font-size:16px; margin:0; font-weight:600; letter-spacing:.3px; }
-  nav.tabs { display:flex; gap:4px; }
-  .tab { background:transparent; color:var(--muted); border:1px solid transparent; border-radius:6px;
-         padding:5px 14px; font-size:13px; cursor:pointer; font-weight:500; }
-  .tab:hover { color:var(--fg); }
-  .tab.active { color:var(--fg); background:var(--panel); border-color:var(--line); }
-  header .gate { font-size:12px; }
-  header .upd { color:var(--muted); font-size:12px; margin-left:auto; }
-  .kpis { display:flex; flex-wrap:wrap; gap:12px; padding:16px 20px; }
-  .kpi { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 16px; min-width:140px; }
-  .kpi .label { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
-  .kpi .val { font-size:20px; font-weight:600; margin-top:4px; font-variant-numeric:tabular-nums; }
-  .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:0 20px 24px; }
-  @media (max-width:900px){ .grid { grid-template-columns:1fr; } }
-  .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
-  .panel h2 { font-size:12px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted);
-              margin:0; padding:10px 14px; border-bottom:1px solid var(--line); }
-  .panel .body { max-height:340px; overflow:auto; }
-  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
-  th,td { text-align:right; padding:6px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
-  th:first-child, td:first-child { text-align:left; }
-  th { position:sticky; top:0; background:var(--panel); color:var(--muted); font-weight:500; font-size:11px; }
-  .pos { color:var(--green); } .neg { color:var(--red); } .mut { color:var(--muted); }
-  .pill { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; font-weight:600; }
-  .pill.ok { background:rgba(63,185,80,.15); color:var(--green); }
-  .pill.bad { background:rgba(248,81,73,.15); color:var(--red); }
-  .empty { color:var(--muted); padding:14px; font-style:italic; }
-  #backtest-view { display:none; }
-  #bt { width:100%; height:calc(100vh - 58px); border:0; display:block; background:var(--bg); }
+  .brand { display: flex; align-items: center; gap: 10px; flex: none; }
+  .brand svg { width: 26px; height: 26px; display: block; flex: none; }
+  .brand .name { font-size: 15px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
+  .brand .tag  { font-size: 11px; color: var(--muted); margin-left: 2px; white-space: nowrap; }
+  @media (max-width: 1120px) { .brand .tag { display: none; } }
+  nav.tabs { display: flex; gap: 4px; margin-left: 6px; }
+  .tab { background: transparent; color: var(--muted); border: 1px solid transparent;
+         border-radius: 8px; padding: 6px 15px; font: inherit; font-size: 13px; font-weight: 600;
+         cursor: pointer; transition: all .15s var(--ease); }
+  .tab:hover { color: var(--fg); background: var(--panel-2); }
+  .tab.active { color: var(--fg); background: var(--panel-2); border-color: var(--line); }
+  .topbar .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .refresh { background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
+             border-radius: 8px; width: 30px; height: 30px; cursor: pointer; display: grid;
+             place-items: center; transition: all .15s var(--ease); }
+  .refresh:hover { color: var(--fg); border-color: var(--accent); }
+  .refresh.spin svg { animation: spin .7s linear; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .upd { color: var(--muted); font-size: 11.5px; display: inline-flex; align-items: center; gap: 6px; }
+  .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green);
+              box-shadow: 0 0 0 0 rgba(61,220,151,.55); animation: pulse 2.4s infinite; }
+  .live-dot.stale { background: var(--amber); animation: none; }
+  .live-dot.down  { background: var(--red); animation: none; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(61,220,151,.5);} 70%{box-shadow:0 0 0 6px rgba(61,220,151,0);} 100%{box-shadow:0 0 0 0 rgba(61,220,151,0);} }
+
+  /* risk-gate banner */
+  .gatebar { display: none; margin: 16px 0 0; padding: 10px 15px; border-radius: var(--r);
+             font-size: 13px; font-weight: 600; align-items: center; gap: 10px; border: 1px solid; }
+  .gatebar.ok   { background: var(--green-dim); color: var(--green); border-color: rgba(61,220,151,.28); }
+  .gatebar.bad  { background: var(--red-dim);   color: var(--red);   border-color: rgba(255,93,108,.30); }
+  .gatebar .reason { color: var(--fg-dim); font-weight: 500; }
+
+  /* KPI strip */
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(176px, 1fr)); gap: 13px; margin: 16px 0; }
+  .kpi-lev .gauge { margin-top: 9px; height: 6px; border-radius: 3px; background: var(--panel-3); overflow: hidden; position: relative; }
+  .kpi-lev .gauge i { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--accent), var(--green)); transition: width .5s var(--ease); }
+  .kpi-lev .gauge.over i { background: linear-gradient(90deg, var(--amber), var(--red)); }
+
+  /* main grid */
+  .grid { display: grid; grid-template-columns: 1.25fr 1fr; gap: 16px; padding-bottom: 32px; }
+  .grid .span2 { grid-column: 1 / -1; }
+  @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+
+  .panel-sub { font-size: 11px; color: var(--muted); font-weight: 500; text-transform: none; letter-spacing: 0; margin-left: auto; }
+
+  /* NAV sparkline panel */
+  #navspark svg { display: block; width: 100%; }
+  .spark-meta { display: flex; gap: 22px; padding: 12px 15px 4px; }
+  .spark-meta .m .l { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .spark-meta .m .v { font-size: 17px; font-weight: 650; margin-top: 2px; font-variant-numeric: tabular-nums; }
+
+  /* skeleton loading shimmer */
+  .skel { background: linear-gradient(90deg, var(--panel-2) 25%, var(--panel-3) 37%, var(--panel-2) 63%);
+          background-size: 400% 100%; animation: shimmer 1.4s infinite; border-radius: 6px; height: 13px; }
+  @keyframes shimmer { 0%{background-position:100% 0;} 100%{background-position:-100% 0;} }
+  .skel-rows { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .skel-rows .skel:nth-child(odd) { width: 78%; } .skel-rows .skel:nth-child(even){ width: 92%; }
+
+  .errbox { margin: 40px auto; max-width: 460px; text-align: center; color: var(--muted); }
+  .errbox .big { font-size: 15px; color: var(--fg); margin-bottom: 6px; }
+
+  .footstrip { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center;
+               padding: 14px 0 30px; color: var(--muted); font-size: 11.5px; border-top: 1px solid var(--line); margin-top: 8px; }
+  .footstrip .hi { color: var(--fg-dim); }
+
+  /* backtest iframe view */
+  #backtest-view { display: none; }
+  #bt { width: 100%; height: calc(100vh - 54px); border: 0; display: block; background: var(--bg); }
 </style>
 </head>
 <body>
-<header>
-  <h1>sharpe-engine</h1>
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#121925"/>
+      <path d="M5 21 L13 13 L18 18 L27 7" fill="none" stroke="#3ddc97" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="27" cy="7" r="2.4" fill="#3ddc97"/></svg>
+    <span class="name">sharpe-engine</span>
+    <span class="tag">factor equity + covered-call overlay</span>
+  </div>
   <nav class="tabs">
     <button class="tab active" data-view="live">Live</button>
     <button class="tab" data-view="backtest">Backtest</button>
   </nav>
-  <span class="gate mut" id="gate"></span>
-  <span class="upd" id="upd">connecting…</span>
+  <div class="right">
+    <span class="se-pill neutral" id="envbadge" title="trading environment">— </span>
+    <span class="upd"><span class="live-dot down" id="dot"></span><span id="upd">connecting…</span></span>
+    <button class="refresh" id="refreshbtn" title="refresh now" aria-label="refresh">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+    </button>
+  </div>
 </header>
 
 <div id="live-view">
-  <div class="kpis" id="kpis"></div>
-  <div class="grid">
-    <div class="panel"><h2>Positions vs target</h2><div class="body" id="positions"></div></div>
-    <div class="panel"><h2>Covered calls</h2><div class="body" id="calls"></div></div>
-    <div class="panel"><h2>Factor scores (held)</h2><div class="body" id="factors"></div></div>
-    <div class="panel"><h2>Recent orders</h2><div class="body" id="orders"></div></div>
-    <div class="panel" style="grid-column:1/-1"><h2>Alerts</h2><div class="body" id="alerts"></div></div>
+  <div class="wrap">
+    <div class="gatebar" id="gatebar"></div>
+    <div class="kpis" id="kpis"></div>
+    <div class="grid">
+      <div class="se-panel span2">
+        <h2>Net asset value <span class="panel-sub" id="navrange"></span></h2>
+        <div class="spark-meta" id="sparkmeta"></div>
+        <div id="navspark"></div>
+      </div>
+      <div class="se-panel">
+        <h2>Positions vs target <span class="panel-sub" id="possub"></span></h2>
+        <div class="body" id="positions"></div>
+      </div>
+      <div class="se-panel">
+        <h2>Covered calls <span class="panel-sub" id="callssub"></span></h2>
+        <div class="body" id="calls"></div>
+      </div>
+      <div class="se-panel">
+        <h2>Factor scores <span class="panel-sub">held names</span></h2>
+        <div class="body" id="factors"></div>
+      </div>
+      <div class="se-panel">
+        <h2>Recent orders</h2>
+        <div class="body" id="orders"></div>
+      </div>
+      <div class="se-panel span2">
+        <h2>Alerts <span class="panel-sub" id="alertssub"></span></h2>
+        <div class="body" id="alerts"></div>
+      </div>
+    </div>
+    <div class="footstrip" id="footstrip"></div>
   </div>
 </div>
 
@@ -70,12 +147,18 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const num = (v,d=0) => v==null ? "–" : Number(v).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
-const usd = v => v==null ? "–" : "$"+num(v,0);
-const pct = v => v==null ? "–" : (100*v).toFixed(1)+"%";
-const sign = v => v==null ? "mut" : v>0 ? "pos" : v<0 ? "neg" : "mut";
+const fmt = (v,d=0) => v==null||isNaN(v) ? "–" : Number(v).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
+const usd  = v => v==null ? "–" : (v<0?"-$":"$")+fmt(Math.abs(v),0);
+const susd = v => v==null ? "–" : (v>=0?"+$":"-$")+fmt(Math.abs(v),0);
+const usd2 = v => v==null ? "–" : (v<0?"-$":"$")+fmt(Math.abs(v),2);
+const pct  = (v,d=1) => v==null ? "–" : (100*v).toFixed(d)+"%";
+const spct = (v,d=1) => v==null ? "–" : (v>=0?"+":"")+(100*v).toFixed(d)+"%";
+const sgn  = v => v==null ? "mut" : v>0 ? "pos" : v<0 ? "neg" : "mut";
+const SKEL = '<div class="skel-rows"><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>';
 
-// ---- tabs -------------------------------------------------------------
+let META = {env:"paper", leverage_cap:2.0, target_delta:0.30};
+
+// ---- tabs -----------------------------------------------------------------
 let activeView = "live";
 document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   activeView = t.dataset.view;
@@ -87,77 +170,192 @@ document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   if (activeView === "live") refresh();
 });
 
-// ---- live view --------------------------------------------------------
 async function get(p){ try { const r = await fetch(p); return r.ok ? await r.json() : null; } catch { return null; } }
 
 function table(rows, cols){
-  if(!rows || !rows.length) return '<div class="empty">none</div>';
-  const head = "<tr>"+cols.map(c=>`<th>${c.h}</th>`).join("")+"</tr>";
-  const body = rows.map(r=>"<tr>"+cols.map(c=>`<td class="${c.cls?c.cls(r):''}">${c.f(r)}</td>`).join("")+"</tr>").join("");
-  return `<table>${head}${body}</table>`;
+  if(!rows || !rows.length) return '<div class="se-empty">none</div>';
+  const head = "<thead><tr>"+cols.map(c=>`<th>${c.h}</th>`).join("")+"</tr></thead>";
+  const body = "<tbody>"+rows.map(r=>"<tr>"+cols.map(c=>`<td class="${c.cls?c.cls(r):''}">${c.f(r)}</td>`).join("")+"</tr>").join("")+"</tbody>";
+  return `<table class="se-table">${head}${body}</table>`;
+}
+function bar(frac, color){   // 0..1 micro-bar
+  const w = Math.max(0, Math.min(1, frac||0))*100;
+  return `<span class="se-bartrack"><span class="se-bar" style="width:${w.toFixed(0)}%;background:${color||'var(--accent)'}"></span></span>`;
 }
 
+// ---- KPI strip ------------------------------------------------------------
 function kpis(s){
-  const items = [
-    ["NAV", usd(s.nav)],
-    ["Day P&L", `<span class="${sign(s.day_pnl)}">${s.day_pnl==null?"–":(s.day_pnl>=0?"+":"")+usd(s.day_pnl)}</span>`],
-    ["Premium collected", usd(s.premium_collected)],
-    ["Cash", usd(s.cash)],
-    ["Drift (L1)", s.drift==null?"–":pct(s.drift)],
-  ];
-  $("kpis").innerHTML = items.map(([l,v])=>`<div class="kpi"><div class="label">${l}</div><div class="val">${v}</div></div>`).join("");
-  const g = s.risk_gate_passed;
-  $("gate").innerHTML = g==null ? "" : `risk gate <span class="pill ${g?'ok':'bad'}">${g?'PASS':'BLOCK'}</span>` +
-      (g ? "" : ` ${s.risk_gate_reason||''}`);
+  const lev = s.leverage, cap = META.leverage_cap||2.0, over = lev!=null && lev>cap+1e-9;
+  const cards = [];
+  cards.push(kpi("Net asset value", usd(s.nav),
+    s.day_pnl_pct==null ? "" : `<span class="${sgn(s.day_pnl_pct)}">${spct(s.day_pnl_pct)} today</span>`));
+  cards.push(kpi("Day P&amp;L",
+    `<span class="${sgn(s.day_pnl)}">${susd(s.day_pnl)}</span>`,
+    s.day_pnl_pct==null ? "" : `<span class="${sgn(s.day_pnl_pct)}">${spct(s.day_pnl_pct)} vs prior</span>`));
+  cards.push(`<div class="se-kpi kpi-lev"><div class="label">Leverage</div>
+      <div class="val ${over?'neg':''}">${lev==null?"–":lev.toFixed(2)+"×"}</div>
+      <div class="gauge ${over?'over':''}"><i style="width:${lev==null?0:Math.min(100,lev/cap*100).toFixed(0)}%"></i></div>
+      <div class="sub">cap ${cap.toFixed(1)}× · gross ${usd(s.gross_exposure)}</div></div>`);
+  cards.push(kpi("Cash", usd(s.cash),
+    (s.cash!=null && s.nav) ? `${pct(s.cash/s.nav)} of NAV` : ""));
+  cards.push(kpi("Premium collected", usd(s.premium_collected),
+    (s.premium_collected && s.nav) ? `${pct(s.premium_collected/s.nav)} of NAV` : "lifetime"));
+  cards.push(kpi("Positions", fmt(s.n_positions),
+    `drift (L1) <span class="${s.drift>0.1?'warn':'mut'}">${s.drift==null?"–":pct(s.drift)}</span>`));
+  $("kpis").innerHTML = cards.join("");
+}
+function kpi(label, val, sub){
+  return `<div class="se-kpi"><div class="label">${label}</div><div class="val">${val}</div>${sub?`<div class="sub">${sub}</div>`:""}</div>`;
 }
 
+// ---- NAV sparkline (SVG) --------------------------------------------------
+function sparkline(hist){
+  const host = $("navspark");
+  if(!hist || hist.length < 2){ host.innerHTML = '<div class="se-empty">not enough history yet — one point so far</div>'; $("sparkmeta").innerHTML=""; $("navrange").textContent=""; return; }
+  const W=1000, H=190, padT=14, padB=22, padL=4, padR=4;
+  const navs = hist.map(p=>p.nav).filter(v=>v!=null);
+  let lo=Math.min(...navs), hi=Math.max(...navs); if(lo===hi){hi+=1;lo-=1;} const pad=(hi-lo)*0.12; lo-=pad; hi+=pad;
+  const n=hist.length, plotW=W-padL-padR, plotH=H-padT-padB;
+  const X=i=> padL + (n<=1?0:i/(n-1)*plotW);
+  const Y=v=> padT + (hi-v)/(hi-lo)*plotH;
+  const pts = hist.map((p,i)=>[X(i), Y(p.nav)]);
+  const d = pts.map((p,i)=>(i?"L":"M")+p[0].toFixed(1)+" "+p[1].toFixed(1)).join(" ");
+  const last=hist[hist.length-1].nav, first=hist[0].nav, up=last>=first;
+  const col = up ? "var(--green)" : "var(--red)";
+  const area = `${d} L${pts[pts.length-1][0].toFixed(1)} ${(H-padB).toFixed(1)} L${pts[0][0].toFixed(1)} ${(H-padB).toFixed(1)} Z`;
+  // baseline at first NAV
+  const yb = Y(first);
+  host.innerHTML =
+    `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="NAV over time">
+       <defs><linearGradient id="navg" x1="0" y1="0" x2="0" y2="1">
+         <stop offset="0" stop-color="${up?'#3ddc97':'#ff5d6c'}" stop-opacity=".22"/>
+         <stop offset="1" stop-color="${up?'#3ddc97':'#ff5d6c'}" stop-opacity="0"/></linearGradient></defs>
+       <line x1="0" y1="${yb.toFixed(1)}" x2="${W}" y2="${yb.toFixed(1)}" stroke="var(--line)" stroke-width="1" stroke-dasharray="4 5"/>
+       <path d="${area}" fill="url(#navg)"/>
+       <path d="${d}" fill="none" stroke="${col}" stroke-width="2.2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+       <circle cx="${pts[pts.length-1][0].toFixed(1)}" cy="${pts[pts.length-1][1].toFixed(1)}" r="3.4" fill="${col}"/>
+     </svg>`;
+  const chg=last-first, chgp=first? chg/first : null;
+  $("sparkmeta").innerHTML =
+    `<div class="m"><div class="l">Current</div><div class="v">${usd(last)}</div></div>
+     <div class="m"><div class="l">Change (window)</div><div class="v ${sgn(chg)}">${chg>=0?"+":""}${usd(chg).replace("-","")} <span style="font-size:12px">(${spct(chgp)})</span></div></div>
+     <div class="m"><div class="l">Window high / low</div><div class="v">${usd(Math.max(...navs))} <span class="mut" style="font-size:12px">/ ${usd(Math.min(...navs))}</span></div></div>`;
+  const t0=(hist[0].ts||"").slice(0,10), t1=(hist[hist.length-1].ts||"").slice(0,10);
+  $("navrange").textContent = `${hist.length} snapshots · ${t0} → ${t1}`;
+}
+
+// ---- covered-call helpers -------------------------------------------------
+function dte(exp){ if(!exp) return null; const d=Math.round((new Date(exp+"T00:00:00")-Date.now())/864e5); return d; }
+
+// ---- main refresh ---------------------------------------------------------
+let firstLoad = true;
 async function refresh(){
   if (activeView !== "live") return;
-  const [s, orders, calls, factors, alerts] = await Promise.all(
-    ["/api/state","/api/orders","/api/calls","/api/factors","/api/alerts"].map(get));
-  if(!s){ $("upd").textContent = "backend unreachable"; return; }
+  if (firstLoad){ ["positions","calls","factors","orders","alerts"].forEach(id=>$(id).innerHTML=SKEL); }
+  const [s, hist, orders, calls, factors, alerts] = await Promise.all(
+    ["/api/state","/api/nav_history","/api/orders","/api/calls","/api/factors","/api/alerts"].map(get));
+  firstLoad = false;
+
+  if(!s){
+    $("dot").className = "live-dot down"; $("upd").textContent = "backend unreachable";
+    ["positions","calls","factors","orders","alerts"].forEach(id=>$(id).innerHTML =
+      '<div class="errbox"><div class="big">Backend unreachable</div>Postgres or the dashboard API is not responding.</div>');
+    return;
+  }
+
+  // risk-gate banner
+  const g = s.risk_gate_passed, gb = $("gatebar");
+  if(g==null){ gb.style.display="none"; }
+  else { gb.style.display="flex"; gb.className = "gatebar "+(g?"ok":"bad");
+    gb.innerHTML = g ? `<span>●</span> Risk gate passed — pre-trade checks clear`
+                     : `<span>●</span> Risk gate BLOCKED <span class="reason">${s.risk_gate_reason||""}</span>`; }
+
   kpis(s);
+  sparkline(hist);
+
+  // positions
+  $("possub").textContent = s.gross_exposure!=null ? `gross ${usd(s.gross_exposure)}` : "";
   $("positions").innerHTML = table(s.positions, [
-    {h:"Symbol", f:r=>r.symbol},
-    {h:"Qty", f:r=>num(r.qty)},
+    {h:"Symbol", cls:()=>"sym", f:r=>r.symbol},
+    {h:"Qty", f:r=>fmt(r.qty)},
+    {h:"Mkt value", f:r=>usd(r.market_value)},
     {h:"Weight", f:r=>pct(r.weight)},
     {h:"Target", f:r=>pct(r.target_weight)},
-    {h:"Δ", cls:r=>sign((r.weight||0)-(r.target_weight||0)), f:r=>pct((r.weight||0)-(r.target_weight||0))},
+    {h:"Δ vs tgt", cls:r=>sgn((r.weight||0)-(r.target_weight||0)), f:r=>spct((r.weight||0)-(r.target_weight||0))},
   ]);
+
+  // covered calls + coverage summary
+  const totShares = (s.positions||[]).reduce((a,r)=>a+(r.qty||0),0);
+  const coveredShares = (calls||[]).reduce((a,r)=>a+(r.contracts||0)*100,0);
+  const coverable = (s.positions||[]).filter(r=>(r.qty||0)>=100).length;
+  $("callssub").innerHTML = (calls&&calls.length)
+    ? `${calls.length} open · ${fmt(coveredShares)} sh covered${totShares?` (${pct(coveredShares/totShares)})`:""}`
+    : (coverable?`0 open · ${coverable} names coverable`:"");
   $("calls").innerHTML = table(calls, [
-    {h:"Underlying", f:r=>r.underlying},
-    {h:"Strike", f:r=>num(r.strike,2)},
+    {h:"Under.", cls:()=>"sym", f:r=>r.underlying},
+    {h:"Contr.", f:r=>fmt(r.contracts)},
+    {h:"Strike", f:r=>usd2(r.strike)},
     {h:"Expiry", f:r=>r.expiration||"–"},
-    {h:"Δ", f:r=>r.delta==null?"–":r.delta.toFixed(2)},
-    {h:"Contracts", f:r=>num(r.contracts)},
+    {h:"DTE", cls:r=>{const d=dte(r.expiration); return d!=null&&d<=7?"warn":"";}, f:r=>{const d=dte(r.expiration); return d==null?"–":d+"d";}},
+    {h:"Δ / P(assign)", f:r=>r.delta==null?"–":r.delta.toFixed(2)},
     {h:"Premium", cls:()=>"pos", f:r=>usd(r.premium)},
   ]);
-  $("factors").innerHTML = table(factors, [
-    {h:"Symbol", f:r=>r.symbol},
-    {h:"Composite", cls:r=>sign(r.composite), f:r=>r.composite==null?"–":r.composite.toFixed(2)},
-    {h:"Qual", f:r=>r.quality==null?"–":r.quality.toFixed(2)},
-    {h:"Val", f:r=>r.value==null?"–":r.value.toFixed(2)},
-    {h:"Mom", f:r=>r.momentum==null?"–":r.momentum.toFixed(2)},
-    {h:"LowVol", f:r=>r.lowvol==null?"–":r.lowvol.toFixed(2)},
-  ]);
-  $("orders").innerHTML = table(orders, [
-    {h:"Symbol", f:r=>r.symbol},
-    {h:"Side", cls:r=>r.side==="buy"?"pos":"neg", f:r=>r.side},
-    {h:"Qty", f:r=>num(r.qty)},
-    {h:"Type", f:r=>r.type},
-    {h:"Status", f:r=>r.status},
-    {h:"Fill px", f:r=>r.filled_avg_price==null?"–":num(r.filled_avg_price,2)},
-  ]);
-  $("alerts").innerHTML = table(alerts, [
-    {h:"Time", f:r=>(r.ts||"").replace("T"," ").slice(0,19)},
-    {h:"Type", f:r=>r.type},
-    {h:"Message", cls:()=>"mut", f:r=>r.message},
-    {h:"Sent", f:r=>r.delivered?"✓":"–"},
-  ]);
-  $("upd").textContent = "updated " + new Date().toLocaleTimeString();
-}
 
-refresh();
+  // factors
+  $("factors").innerHTML = table(factors, [
+    {h:"Symbol", cls:()=>"sym", f:r=>r.symbol},
+    {h:"Composite", cls:r=>sgn(r.composite), f:r=>r.composite==null?"–":r.composite.toFixed(2)},
+    {h:"Qual", cls:r=>sgn(r.quality), f:r=>r.quality==null?"–":r.quality.toFixed(2)},
+    {h:"Val", cls:r=>sgn(r.value), f:r=>r.value==null?"–":r.value.toFixed(2)},
+    {h:"Mom", cls:r=>sgn(r.momentum), f:r=>r.momentum==null?"–":r.momentum.toFixed(2)},
+    {h:"LowVol", cls:r=>sgn(r.lowvol), f:r=>r.lowvol==null?"–":r.lowvol.toFixed(2)},
+  ]);
+
+  // orders
+  $("orders").innerHTML = table(orders, [
+    {h:"Symbol", cls:()=>"sym", f:r=>r.symbol},
+    {h:"Side", cls:r=>r.side==="buy"?"pos":"neg", f:r=>`<span class="se-pill ${r.side==='buy'?'ok':'bad'}" style="font-size:10px">${r.side}</span>`},
+    {h:"Qty", f:r=>fmt(r.qty)},
+    {h:"Type", cls:()=>"mut", f:r=>r.type},
+    {h:"Status", f:r=>r.status},
+    {h:"Fill px", f:r=>r.filled_avg_price==null?"–":usd2(r.filled_avg_price)},
+  ]);
+
+  // alerts (severity colour from type)
+  const sev = t => /block|error|fail|breach|halt/i.test(t||"") ? "bad" : /warn|stale|drift/i.test(t||"") ? "warn" : "info";
+  $("alertssub").textContent = alerts && alerts.length ? `${alerts.length} recent` : "";
+  $("alerts").innerHTML = table(alerts, [
+    {h:"Time", cls:()=>"mut", f:r=>(r.ts||"").replace("T"," ").slice(0,19)},
+    {h:"Type", f:r=>`<span class="se-pill ${sev(r.type)}" style="font-size:10px">${r.type}</span>`},
+    {h:"Message", cls:()=>"mut", f:r=>r.message},
+    {h:"Emailed", cls:r=>r.delivered?"pos":"mut", f:r=>r.delivered?"✓ sent":"dry-run"},
+  ]);
+
+  // freshness + health
+  const age = s.ts ? (Date.now()-new Date(s.ts.replace(" ","T")+(/[zZ]|\+/.test(s.ts)?"":"Z")))/1000 : null;
+  const stale = age!=null && age>360;
+  $("dot").className = "live-dot" + (stale?" stale":"");
+  $("upd").textContent = age==null ? "updated –" : "updated "+humanAge(age)+" ago";
+  $("footstrip").innerHTML =
+    `<span class="se-pill ok" style="font-size:10px"><span class="dot"></span>Postgres connected</span>` +
+    `<span>Snapshot: <span class="hi">${(s.ts||"–").replace("T"," ").slice(0,19)} UTC</span>${stale?' <span class="warn">(stale)</span>':''}</span>` +
+    `<span>Environment: <span class="hi">${(META.env||"paper").toUpperCase()}</span></span>` +
+    `<span>Target Δ: <span class="hi">${(META.target_delta||0.30).toFixed(2)}</span></span>` +
+    `<span class="mut" style="margin-left:auto">Postgres-only · monitor bridges Alpaca → snapshots every 60s</span>`;
+}
+function humanAge(s){ s=Math.round(s); return s<60?s+"s":s<3600?Math.round(s/60)+"m":Math.round(s/3600)+"h"; }
+
+// ---- boot -----------------------------------------------------------------
+async function boot(){
+  const m = await get("/api/meta"); if(m) META = Object.assign(META, m);
+  const eb = $("envbadge"); const live = (META.env||"paper")==="live";
+  eb.textContent = (META.env||"paper").toUpperCase();
+  eb.className = "se-pill " + (live ? "bad" : "warn");
+  eb.title = live ? "LIVE trading — real money" : "paper trading — simulated";
+  refresh();
+}
+$("refreshbtn").onclick = () => { $("refreshbtn").classList.add("spin"); setTimeout(()=>$("refreshbtn").classList.remove("spin"),700); refresh(); };
+boot();
 setInterval(refresh, 30000);
 </script>
 </body>

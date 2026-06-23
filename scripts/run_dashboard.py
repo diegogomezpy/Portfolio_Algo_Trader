@@ -31,7 +31,7 @@ def main() -> None:
     args = ap.parse_args()
 
     config.load_env(args.env)          # loads DATABASE_URL (no Alpaca creds needed)
-    app = create_app()
+    app = create_app(env=args.env)     # env drives the PAPER/LIVE badge + config meta
     print(f"sharpe-engine dashboard on http://{args.host}:{args.port} (env={args.env})")
     uvicorn.run(app, host=args.host, port=args.port)
 

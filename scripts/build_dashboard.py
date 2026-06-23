@@ -302,8 +302,13 @@ def main() -> None:
         FRAG_OUT.write_text(frag)
         full = ('<!DOCTYPE html>\n<html lang="en">\n<head><meta charset="utf-8">'
                 '<meta name="viewport" content="width=device-width, initial-scale=1">'
+                '<link rel="icon" href="/favicon.svg" type="image/svg+xml">'
+                '<link rel="stylesheet" href="/static/theme.css">'
                 "<title>sharpe-engine — backtest dashboard</title></head>\n"
-                '<body style="margin:0;padding:20px 0;background:#f4f3ef;">\n' + frag + "\n</body></html>")
+                # dark canvas; var(--bg) is from the shared theme, the hex is the standalone
+                # (file://) fallback so the page is still dark without the served stylesheet.
+                '<body style="margin:0;padding:22px 0;background:var(--bg,#0a0e15);">\n'
+                + frag + "\n</body></html>")
         HTML_OUT.write_text(full)
         print(f"wrote {HTML_OUT} ({HTML_OUT.stat().st_size/1024:.1f} KB) and {FRAG_OUT}")
     else:

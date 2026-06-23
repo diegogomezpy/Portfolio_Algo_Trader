@@ -1,39 +1,45 @@
 <style>
-.dash{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
- color:#1c2a24;background:#ffffff;max-width:980px;margin:0 auto;padding:28px 30px 36px;
- border-radius:14px;line-height:1.5;-webkit-font-smoothing:antialiased;}
+/* Dark-institutional backtest tab. Colours come from the shared design tokens in
+   /static/theme.css; the var() fallbacks keep it self-sufficient if opened standalone. */
+.dash{font-family:var(--font,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif);
+ color:var(--fg,#e9eef7);background:var(--panel,#121925);max-width:1040px;margin:0 auto;padding:28px 32px 36px;
+ border:1px solid var(--line,#232d40);border-radius:var(--r-lg,15px);line-height:1.5;-webkit-font-smoothing:antialiased;
+ box-shadow:var(--shadow,0 8px 30px -12px rgba(0,0,0,.6));}
 .dash *{box-sizing:border-box;}
-.dash h1{font-size:22px;font-weight:500;margin:0;}
-.dash .sub{color:#6a726c;font-size:13px;margin:3px 0 0;}
-.dash h2{font-size:15px;font-weight:500;margin:22px 0 9px;}
-.dash .sec{font-size:11.5px;font-weight:500;text-transform:uppercase;letter-spacing:.08em;color:#178a6e;
- margin:32px 0 2px;padding-bottom:6px;border-bottom:1.5px solid #e6e4dd;}
-.dash .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:9px;margin-top:18px;}
-.dash .kpi{background:#f6f5f1;border-radius:8px;padding:10px 12px;}
-.dash .kpi .l{font-size:11px;color:#6a726c;text-transform:uppercase;letter-spacing:.03em;}
-.dash .kpi .v{font-size:21px;font-weight:500;margin-top:2px;}
-.dash .kpi .d{font-size:11px;margin-top:1px;color:#6a726c;}
-.dash .pos{color:#178a6e;}.dash .neg{color:#c8503a;}
-.dash .row{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;}
+.dash h1{font-size:22px;font-weight:650;margin:0;letter-spacing:-.01em;}
+.dash .sub{color:var(--muted,#7c8a9e);font-size:13px;margin:3px 0 0;}
+.dash h2{font-size:14px;font-weight:600;margin:22px 0 9px;color:var(--fg-dim,#b3becd);}
+.dash .sec{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--green,#3ddc97);
+ margin:34px 0 2px;padding-bottom:7px;border-bottom:1px solid var(--line,#232d40);}
+.dash .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(116px,1fr));gap:10px;margin-top:18px;}
+.dash .kpi{background:var(--panel-2,#182030);border:1px solid var(--line,#232d40);border-radius:var(--r-sm,7px);padding:11px 13px;}
+.dash .kpi .l{font-size:10.5px;color:var(--muted,#7c8a9e);text-transform:uppercase;letter-spacing:.04em;}
+.dash .kpi .v{font-size:21px;font-weight:650;margin-top:3px;font-variant-numeric:tabular-nums;}
+.dash .kpi .d{font-size:11px;margin-top:2px;color:var(--muted,#7c8a9e);}
+.dash .pos{color:var(--green,#3ddc97);}.dash .neg{color:var(--red,#ff5d6c);}
+.dash .row{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start;}
 .dash .row>div{flex:1 1 380px;min-width:0;}
-.dash .lg{display:flex;gap:11px;font-size:11.5px;color:#6a726c;margin:2px 0 6px;align-items:center;flex-wrap:wrap;}
+.dash .lg{display:flex;gap:13px;font-size:11.5px;color:var(--muted,#7c8a9e);margin:2px 0 8px;align-items:center;flex-wrap:wrap;}
 .dash .lg span{display:inline-flex;align-items:center;gap:5px;}
-.dash .sw{width:11px;height:3px;border-radius:2px;display:inline-block;}
+.dash .sw{width:12px;height:3px;border-radius:2px;display:inline-block;}
 .dash .dot{width:9px;height:9px;border-radius:2px;display:inline-block;flex:none;}
-.dash table{width:100%;border-collapse:collapse;font-size:12.5px;}
-.dash th,.dash td{padding:6px 8px;text-align:right;border-bottom:0.5px solid #efede6;}
+.dash table{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums;}
+.dash th,.dash td{padding:6px 9px;text-align:right;border-bottom:1px solid var(--line-soft,#19212f);}
 .dash th:first-child,.dash td:first-child{text-align:left;}
-.dash thead th{color:#6a726c;font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.03em;}
-.dash .blot{max-height:300px;overflow:auto;border:0.5px solid #e6e4dd;border-radius:8px;}
-.dash .blot table{font-size:12px;}.dash .blot th{position:sticky;top:0;background:#fff;z-index:1;}
-.dash .adr{font-size:9.5px;color:#854f0b;background:#faeeda;border-radius:3px;padding:1px 4px;margin-left:5px;}
-.dash .call{background:#f0f6f3;border:0.5px solid #cfe3da;border-radius:9px;padding:11px 14px;font-size:13px;margin-top:12px;color:#13503f;}
-.dash .note{background:#faeeda;border:0.5px solid #efd9ad;border-radius:9px;padding:11px 14px;font-size:13px;margin-top:10px;color:#6b4310;}
-.dash input[type=range]{width:100%;accent-color:#178a6e;}
+.dash thead th{color:var(--muted,#7c8a9e);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;}
+.dash tbody tr:hover{background:var(--panel-2,#182030);}
+.dash .blot{max-height:300px;overflow:auto;border:1px solid var(--line,#232d40);border-radius:var(--r-sm,7px);}
+.dash .blot table{font-size:12px;}.dash .blot th{position:sticky;top:0;background:var(--panel,#121925);z-index:1;}
+.dash .adr{font-size:9.5px;color:var(--amber,#f5b73d);background:var(--amber-dim,rgba(245,183,61,.13));border-radius:3px;padding:1px 4px;margin-left:5px;}
+.dash .call{background:var(--green-dim,rgba(61,220,151,.13));border:1px solid rgba(61,220,151,.28);border-radius:var(--r-sm,7px);padding:12px 15px;font-size:13px;margin-top:13px;color:var(--fg-dim,#b3becd);}
+.dash .note{background:var(--amber-dim,rgba(245,183,61,.13));border:1px solid rgba(245,183,61,.30);border-radius:var(--r-sm,7px);padding:12px 15px;font-size:13px;margin-top:11px;color:var(--fg-dim,#b3becd);}
+.dash input[type=range]{width:100%;accent-color:var(--green,#3ddc97);}
 .dash .scrub{display:flex;gap:14px;align-items:center;margin:4px 0 8px;}
-.dash .scrub b{font-weight:500;min-width:62px;font-size:14px;}
-.dash .foot{color:#9aa29b;font-size:11.5px;margin-top:26px;border-top:0.5px solid #e6e4dd;padding-top:12px;}
+.dash .scrub b{font-weight:650;min-width:62px;font-size:14px;}
+.dash .foot{color:var(--faint,#54627a);font-size:11.5px;margin-top:28px;border-top:1px solid var(--line,#232d40);padding-top:13px;}
+.dash .snapbox{max-height:300px;overflow:auto;border:1px solid var(--line,#232d40);border-radius:var(--r-sm,7px);}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);}
+@media print{body{background:#fff!important;}.dash{box-shadow:none;border:0;max-width:100%;}}
 </style>
 
 <div class="dash">
@@ -41,13 +47,13 @@
 
 <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;">
   <div><h1>sharpe-engine — strategy backtest</h1><p class="sub" id="period"></p></div>
-  <div style="font-size:12px;color:#6a726c;text-align:right;">factor equity + covered-call overlay<br>vs S&amp;P 500 (SPY), net of costs</div>
+  <div style="font-size:12px;color:var(--muted,#7c8a9e);text-align:right;">factor equity + covered-call overlay<br>vs S&amp;P 500 (SPY), net of costs</div>
 </div>
 <div class="kpis" id="kpis"></div>
 
 <div class="sec">Performance</div>
 <h2>Growth of $100,000 — strategy vs S&amp;P 500</h2>
-<div class="lg"><span><i class="sw" style="background:#178a6e"></i>strategy (net)</span><span><i class="sw" style="background:#9098a0"></i>S&amp;P 500</span></div>
+<div class="lg"><span><i class="sw" style="background:var(--green,#3ddc97)"></i>strategy (net)</span><span><i class="sw" style="background:var(--spy,#8c99ad)"></i>S&amp;P 500</span></div>
 <div id="growth"></div>
 <div class="row">
   <div><h2>Drawdown</h2><div id="dd"></div></div>
@@ -75,7 +81,7 @@
   <div style="flex:0 0 220px;"><div id="pie"></div></div>
   <div style="flex:1 1 380px;">
     <div class="lg" id="pieLegend"></div>
-    <div style="max-height:300px;overflow:auto;border:0.5px solid #e6e4dd;border-radius:8px;"><table id="snapHoldings"></table></div>
+    <div class="snapbox"><table id="snapHoldings"></table></div>
   </div>
 </div>
 
@@ -83,7 +89,7 @@
 <div class="row">
   <div><h2>Factor sleeve return (annualized)</h2><div id="attr"></div></div>
   <div><h2>Calendar-year return vs SPY</h2>
-    <div class="lg"><span><i class="sw" style="background:#178a6e"></i>strategy</span><span><i class="sw" style="background:#9098a0"></i>SPY</span></div>
+    <div class="lg"><span><i class="sw" style="background:var(--green,#3ddc97)"></i>strategy</span><span><i class="sw" style="background:var(--spy,#8c99ad)"></i>SPY</span></div>
     <div id="years"></div></div>
 </div>
 <div class="row">
@@ -94,7 +100,7 @@
 <div class="sec">Trading activity &amp; costs</div>
 <div class="row">
   <div><h2>Trades per month</h2>
-    <div class="lg"><span><i class="sw" style="background:#178a6e"></i>buys</span><span><i class="sw" style="background:#c8503a"></i>sells</span></div>
+    <div class="lg"><span><i class="sw" style="background:var(--green,#3ddc97)"></i>buys</span><span><i class="sw" style="background:var(--red,#ff5d6c)"></i>sells</span></div>
     <div id="trades"></div></div>
   <div><h2>Cumulative trading cost (% of NAV)</h2><div id="cost"></div></div>
 </div>
@@ -106,7 +112,7 @@
 <div class="lg" id="ovlegend"></div>
 <div id="ovgrowth"></div>
 <h2>Option delta optimization — Sharpe vs delta</h2>
-<div class="lg"><span><i class="sw" style="background:#9098a0"></i>realized-vol floor</span><span><i class="sw" style="background:#2d6cb5"></i>market-implied IV</span><span style="color:#854f0b">assignment caps delta near 0.35</span></div>
+<div class="lg"><span><i class="sw" style="background:var(--spy,#8c99ad)"></i>realized-vol floor</span><span><i class="sw" style="background:var(--accent,#5b9dff)"></i>market-implied IV</span><span style="color:var(--amber,#f5b73d)">assignment caps delta near 0.35</span></div>
 <div id="deltachart"></div>
 <div class="note" id="deltanote"></div>
 <p class="sub" style="margin:14px 0 8px;">Upside given up is exact (real prices); premium is modeled with Black-Scholes at an assumed implied vol, sensitivity-tested. Engine validated against CBOE&rsquo;s ^BXM (corr 0.79).</p>
@@ -119,8 +125,12 @@
 <script>
 const DATA = /*__DASHBOARD_DATA__*/null;
 (function(){
-  const C={ink:"#1c2a24",mut:"#6a726c",faint:"#b3b9b2",line:"#e6e4dd",grid:"#f0eee7",teal:"#178a6e",spy:"#9098a0",blue:"#2d6cb5",red:"#c8503a"};
-  const SECCOL={"Energy":"#c8893a","Materials":"#8a8170","Industrials":"#3a7bd5","Consumer Discretionary":"#d4658a","Consumer Staples":"#7aa83c","Health Care":"#1f9e78","Financials":"#6a5fc7","Information Technology":"#3fb0d8","Communication Services":"#e06a3f","Utilities":"#98a0a8","Real Estate":"#c44d4d","Unknown":"#c2c6bf","Cash":"#e3e1d8"};
+  const css=(n,f)=>{const v=getComputedStyle(document.documentElement).getPropertyValue(n).trim();return v||f;};
+  const C={ink:css('--fg','#e9eef7'),mut:css('--muted','#7c8a9e'),faint:css('--faint','#54627a'),
+    line:css('--line','#232d40'),grid:css('--line-soft','#19212f'),panel:css('--panel','#121925'),
+    teal:css('--green','#3ddc97'),spy:css('--spy','#8c99ad'),blue:css('--accent','#5b9dff'),
+    red:css('--red','#ff5d6c'),amber:css('--amber','#f5b73d')};
+  const SECCOL={"Energy":"#e0a341","Materials":"#b3a892","Industrials":"#5b9dff","Consumer Discretionary":"#e87fa8","Consumer Staples":"#9ccc5a","Health Care":"#3ddc97","Financials":"#9a8cff","Information Technology":"#46c7e8","Communication Services":"#ff8a5c","Utilities":"#8a97ab","Real Estate":"#ef6b6b","Unknown":"#5a6678","Cash":"#2a3445"};
   const pct=(v,d=1)=>v==null?"—":(v>=0?"+":"")+(v*100).toFixed(d)+"%";
   const usd=v=>(v<0?"-$":"$")+Math.abs(v).toLocaleString();
   const nm=t=>(DATA.names&&DATA.names[t])||t;
@@ -151,7 +161,7 @@ const DATA = /*__DASHBOARD_DATA__*/null;
     const f=frame(h),n=labels.length;let s=open(f)+yaxis(f,0,1,v=>(v*100).toFixed(0)+"%")+xlabels(f,labels);let bot=new Array(n).fill(0);
     order.forEach(name=>{const data=smap[name]||[];let top=[],bp=[];
       for(let i=0;i<n;i++){const x=sx(f,i,n);bp.push([x,sy(f,bot[i],0,1)]);bot[i]+=(data[i]||0);top.push([x,sy(f,bot[i],0,1)]);}
-      s+=`<path d="${path(top)} ${bp.reverse().map(p=>"L"+p[0].toFixed(1)+" "+p[1].toFixed(1)).join(" ")} Z" fill="${SECCOL[name]||"#ccc"}" stroke="#ffffff" stroke-width="0.4"/>`;});
+      s+=`<path d="${path(top)} ${bp.reverse().map(p=>"L"+p[0].toFixed(1)+" "+p[1].toFixed(1)).join(" ")} Z" fill="${SECCOL[name]||"#ccc"}" stroke="${C.panel}" stroke-width="0.6"/>`;});
     put(id,s);
   }
   function histogram(id,counts,edges){
@@ -184,7 +194,7 @@ const DATA = /*__DASHBOARD_DATA__*/null;
     let s='<svg viewBox="0 0 200 200" width="200" height="200" role="img" style="display:block">';
     items.forEach(it=>{if(it.v<=0.0001)return;const a1=ang+it.v/tot*2*Math.PI;
       const lo=(a1-ang)>Math.PI?1:0;
-      s+=`<path d="M${(cx+Ro*Math.cos(ang)).toFixed(1)} ${(cy+Ro*Math.sin(ang)).toFixed(1)} A${Ro} ${Ro} 0 ${lo} 1 ${(cx+Ro*Math.cos(a1)).toFixed(1)} ${(cy+Ro*Math.sin(a1)).toFixed(1)} L${(cx+Ri*Math.cos(a1)).toFixed(1)} ${(cy+Ri*Math.sin(a1)).toFixed(1)} A${Ri} ${Ri} 0 ${lo} 0 ${(cx+Ri*Math.cos(ang)).toFixed(1)} ${(cy+Ri*Math.sin(ang)).toFixed(1)} Z" fill="${it.color}" stroke="#fff" stroke-width="1"/>`;
+      s+=`<path d="M${(cx+Ro*Math.cos(ang)).toFixed(1)} ${(cy+Ro*Math.sin(ang)).toFixed(1)} A${Ro} ${Ro} 0 ${lo} 1 ${(cx+Ro*Math.cos(a1)).toFixed(1)} ${(cy+Ro*Math.sin(a1)).toFixed(1)} L${(cx+Ri*Math.cos(a1)).toFixed(1)} ${(cy+Ri*Math.sin(a1)).toFixed(1)} A${Ri} ${Ri} 0 ${lo} 0 ${(cx+Ri*Math.cos(ang)).toFixed(1)} ${(cy+Ri*Math.sin(ang)).toFixed(1)} Z" fill="${it.color}" stroke="${C.panel}" stroke-width="1.2"/>`;
       ang=a1;});
     s+=`<text x="100" y="96" text-anchor="middle" font-size="13" font-weight="500" fill="${C.ink}">${items.length-1} names</text>`;
     s+=`<text x="100" y="112" text-anchor="middle" font-size="10.5" fill="${C.mut}">+ cash</text>`;
@@ -219,7 +229,7 @@ const DATA = /*__DASHBOARD_DATA__*/null;
   const secOrder=CO.sectors_order.concat(["Cash"]),smap=Object.assign({},CO.sectors,{Cash:CO.cash});
   document.getElementById("seclegend").innerHTML=secOrder.map(s=>`<span><i class="dot" style="background:${SECCOL[s]}"></i>${s}</span>`).join("");
   stacked("sectors",DATA.labels,secOrder,smap,250);
-  lineChart("adrchart",DATA.labels,[{data:CO.adr_exposure,color:"#854f0b",w:2}],{h:170,lo:0,area:true,fmtY:v=>(v*100).toFixed(0)+"%"});
+  lineChart("adrchart",DATA.labels,[{data:CO.adr_exposure,color:C.amber,w:2}],{h:170,lo:0,area:true,fmtY:v=>(v*100).toFixed(0)+"%"});
 
   const scrub=document.getElementById("scrub");scrub.max=DATA.labels.length-1;scrub.value=DATA.labels.length-1;
   function renderSnap(i){
@@ -241,17 +251,17 @@ const DATA = /*__DASHBOARD_DATA__*/null;
 
   lineChart("trades",DATA.labels,[{data:A.buys,color:C.teal,w:1.7},{data:A.sells,color:C.red,w:1.7}],{h:170,lo:0,fmtY:v=>v.toFixed(0)});
   lineChart("cost",DATA.labels,[{data:A.cum_cost,color:C.mut,w:2}],{h:170,lo:0,area:true,fmtY:v=>(v*100).toFixed(1)+"%"});
-  document.querySelector("#blotter tbody").innerHTML=A.blotter.map(b=>`<tr><td>${b.m}</td><td style="color:${b.side==='buy'?'#178a6e':'#c8503a'}">${b.side}</td><td>${b.sym}</td><td style="font-size:11.5px;color:#6a726c">${nm(b.sym)}</td><td>${usd(b.usd)}</td></tr>`).join("");
+  document.querySelector("#blotter tbody").innerHTML=A.blotter.map(b=>`<tr><td>${b.m}</td><td style="color:${b.side==='buy'?C.teal:C.red}">${b.side}</td><td>${b.sym}</td><td style="font-size:11.5px;color:${C.mut}">${nm(b.sym)}</td><td>${usd(b.usd)}</td></tr>`).join("");
 
-  const ivShade={realized:"#9fc0e8",iv110:"#6ba0dd",iv120:"#3a7bd5",market:"#15407a"},ivName={realized:"realized (floor)",iv110:"IV 1.10×",iv120:"IV 1.20×",market:"market"};
-  document.getElementById("ovlegend").innerHTML='<span><i class="sw" style="background:#178a6e"></i>equity only</span>'+Object.keys(ivShade).map(k=>`<span><i class="sw" style="background:${ivShade[k]}"></i>+ calls @ ${ivName[k]}</span>`).join("");
+  const ivShade={realized:"#3f6ea5",iv110:"#5b9dff",iv120:"#86b9ff",market:"#bcd6ff"},ivName={realized:"realized (floor)",iv110:"IV 1.10×",iv120:"IV 1.20×",market:"market"};
+  document.getElementById("ovlegend").innerHTML='<span><i class="sw" style="background:var(--green,#3ddc97)"></i>equity only</span>'+Object.keys(ivShade).map(k=>`<span><i class="sw" style="background:${ivShade[k]}"></i>+ calls @ ${ivName[k]}</span>`).join("");
   lineChart("ovgrowth",DATA.labels,[{data:(O.eq_cum||E.cum).map(v=>v*1e5),color:C.teal,w:2,dash:"5 4"}].concat(Object.keys(ivShade).map(k=>({data:(O.cums&&O.cums[k]||[]).map(v=>v*1e5),color:ivShade[k],w:1.8}))),{h:230,fmtY:v=>"$"+Math.round(v/1000)+"k"});
   const ds=O.delta_sweep||[];
   lineChart("deltachart",ds.map(r=>r.delta.toFixed(2)),[{data:ds.map(r=>r.sharpe_floor),color:C.spy,w:2},{data:ds.map(r=>r.sharpe_market),color:C.blue,w:2}],{h:180,fmtY:v=>v.toFixed(1)});
   const bd=ds.find(r=>r.delta===O.best_delta)||ds[0];
   document.getElementById("deltanote").innerHTML=`<b style="font-weight:500">Delta optimization:</b> at the realized-vol floor, Sharpe is flat (~${ds[0].sharpe_floor.toFixed(2)}) across delta — delta only pays off if implied vol exceeds realized (the premise of selling calls). At market IV, Sharpe climbs ${ds[0].sharpe_market.toFixed(2)}→${ds[ds.length-1].sharpe_market.toFixed(2)} with delta, but assignment crosses 30% near 0.35. Best feasible (assignment &lt; 30%): <b style="font-weight:500">delta ${O.best_delta}</b> — market Sharpe ${bd.sharpe_market.toFixed(2)}, ${(bd.assign*100).toFixed(0)}% assigned, ${(bd.premium*100).toFixed(0)}%/yr premium. Current setting: ${O.current_delta}.`;
   document.querySelector("#overlay tbody").innerHTML=O.rows.map(r=>{const win=r.sharpe>=E.sharpe;
-    return `<tr><td>${r.label}</td><td style="font-weight:500;${win?'color:#178a6e':''}">${r.sharpe.toFixed(2)}</td><td>${pct(r.ann)}</td><td>${pct(r.vol,0)}</td><td>${pct(r.maxdd,0)}</td><td>${pct(r.premium,0)}</td><td>${(r.assign*100).toFixed(0)}%</td></tr>`;}).join("");
+    return `<tr><td>${r.label}</td><td style="font-weight:600;${win?'color:'+C.teal:''}">${r.sharpe.toFixed(2)}</td><td>${pct(r.ann)}</td><td>${pct(r.vol,0)}</td><td>${pct(r.maxdd,0)}</td><td>${pct(r.premium,0)}</td><td>${(r.assign*100).toFixed(0)}%</td></tr>`;}).join("");
   document.getElementById("breakeven").innerHTML=`<b style="font-weight:500">Verdict:</b> the overlay cuts volatility ${(E.vol*100).toFixed(0)}%→~${(O.rows[3].vol*100).toFixed(0)}% and drawdowns <i>unconditionally</i>. It beats the equity-only Sharpe of ${E.sharpe.toFixed(2)} once implied vol exceeds <b style="font-weight:500">${O.breakeven_mult}× realized</b> — single-name options realistically trade ~1.05–1.20× realized, so a Sharpe improvement (beating SPY&rsquo;s ${S.sharpe.toFixed(2)}) is the likely outcome.`;
   document.getElementById("foot").textContent="sharpe-engine · factor equity (quality/value/momentum/low-vol, ~19 names, equal-weight, λ=0 alpha-driven) + 0.25-delta covered-call overlay · paper-trading research backtest on free IEX history from mid-2020. Not investment advice.";
 })();

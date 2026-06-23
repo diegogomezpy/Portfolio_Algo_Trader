@@ -24,7 +24,13 @@ def _latest_rebalance(conn) -> dict | None:
 
 
 def api_state(db_engine) -> dict:
-    """Current portfolio state: NAV/cash/drift, positions vs target, risk gate, day P&L, premium."""
+    """Current portfolio state: NAV/cash/drift, leverage, positions vs target, risk gate, P&L, premium.
+
+    ``leverage`` = Σ position weights = gross market value / equity (each weight is the
+    position's market_value / NAV and NAV is the account equity, so the sum is gross/equity —
+    honest, derived from the snapshot, no fabrication). ``gross_exposure`` = NAV × leverage.
+    Each position row carries its derived ``market_value`` (= weight × NAV).
+    """
     with db_engine.connect() as conn:
         snap = _latest_snapshot(conn)
         reb = _latest_rebalance(conn)
@@ -36,21 +42,39 @@ def api_state(db_engine) -> dict:
     premium = float(premium or 0.0)
     if snap is None:
         return {"nav": None, "cash": None, "drift": None, "ts": None, "positions": [],
-                "risk_gate_passed": None, "risk_gate_reason": None,
-                "day_pnl": None, "premium_collected": premium}
+                "risk_gate_passed": None, "risk_gate_reason": None, "day_pnl": None,
+                "day_pnl_pct": None, "premium_collected": premium, "leverage": None,
+                "gross_exposure": None, "n_positions": 0}
 
+    nav = snap.get("nav")
     weights = snap.get("weights") or {}
     positions = snap.get("positions") or {}
     targets = (reb or {}).get("target_weights") or {}
     names = sorted(set(weights) | set(targets) | set(positions))
     rows = [{"symbol": s, "qty": positions.get(s), "weight": weights.get(s),
-             "target_weight": targets.get(s)} for s in names]
+             "target_weight": targets.get(s),
+             "market_value": (weights[s] * nav) if (s in weights and nav is not None) else None}
+            for s in names]
+    leverage = sum(float(v) for v in weights.values()) if weights else 0.0
+    gross = (nav * leverage) if nav is not None else None
     day_pnl = (navs[0] - navs[1]) if (len(navs) >= 2 and navs[0] is not None and navs[1] is not None) else None
-    return {"nav": snap.get("nav"), "cash": snap.get("cash"), "drift": snap.get("drift"),
+    day_pnl_pct = (day_pnl / navs[1]) if (day_pnl is not None and navs[1]) else None
+    return {"nav": nav, "cash": snap.get("cash"), "drift": snap.get("drift"),
             "ts": str(snap.get("ts")), "positions": rows,
             "risk_gate_passed": (reb or {}).get("risk_gate_passed"),
             "risk_gate_reason": (reb or {}).get("risk_gate_reason"),
-            "day_pnl": day_pnl, "premium_collected": premium}
+            "day_pnl": day_pnl, "day_pnl_pct": day_pnl_pct, "premium_collected": premium,
+            "leverage": leverage, "gross_exposure": gross,
+            "n_positions": sum(1 for q in positions.values() if q)}
+
+
+def api_nav_history(db_engine, limit: int = 120) -> list[dict]:
+    """Recent NAV (and cash) snapshots, oldest-first, for the live equity sparkline."""
+    with db_engine.connect() as conn:
+        rows = conn.execute(
+            select(db.snapshots.c.ts, db.snapshots.c.nav, db.snapshots.c.cash)
+            .order_by(desc(db.snapshots.c.ts)).limit(limit)).all()
+    return [{"ts": str(ts), "nav": nav, "cash": cash} for ts, nav, cash in reversed(rows)]
 
 
 def api_orders(db_engine, limit: int = 50) -> list[dict]:

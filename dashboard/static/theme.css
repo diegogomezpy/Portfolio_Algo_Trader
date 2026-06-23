@@ -1,0 +1,137 @@
+/* sharpe-engine — shared dark-institutional design system.
+ *
+ * Single source of truth for BOTH the live tab (dashboard/static/index.html) and the
+ * generated backtest tab (reports/backtest_dashboard.html). Both <link> this file, so
+ * the two tabs can never drift apart again. The backtest SVG charts read their core
+ * colours from these CSS variables via getComputedStyle, so re-theming is one file.
+ */
+
+:root {
+  /* ---- surfaces (deep navy-black, gently lifted panels) ---------------- */
+  --bg:        #0a0e15;   /* app canvas */
+  --bg-2:      #0c111a;   /* alt canvas / sticky header bg */
+  --panel:     #121925;   /* cards & panels */
+  --panel-2:   #182030;   /* nested rows, inputs, hover */
+  --panel-3:   #1e2738;   /* active / elevated */
+  --line:      #232d40;   /* borders */
+  --line-soft: #19212f;   /* faint gridlines */
+
+  /* ---- text ------------------------------------------------------------ */
+  --fg:    #e9eef7;   /* primary */
+  --fg-dim:#b3becd;   /* secondary */
+  --muted: #7c8a9e;   /* labels / tertiary */
+  --faint: #54627a;   /* axes / quaternary */
+
+  /* ---- semantic accents ------------------------------------------------ */
+  --green:     #3ddc97;   --green-dim: rgba(61,220,151,.13);
+  --red:       #ff5d6c;   --red-dim:   rgba(255,93,108,.13);
+  --accent:    #5b9dff;   --accent-dim:rgba(91,157,255,.13);
+  --amber:     #f5b73d;   --amber-dim: rgba(245,183,61,.13);
+  --purple:    #b08bff;   --purple-dim:rgba(176,139,255,.13);
+  --spy:       #8c99ad;   /* benchmark series (neutral) */
+
+  /* ---- radii / shadow / motion ----------------------------------------- */
+  --r-sm: 7px;  --r: 11px;  --r-lg: 15px;
+  --shadow: 0 1px 0 rgba(255,255,255,.025) inset, 0 6px 18px -8px rgba(0,0,0,.55);
+  --ease: cubic-bezier(.4,0,.2,1);
+
+  /* ---- type ------------------------------------------------------------ */
+  --font: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --mono: ui-monospace,"SF Mono",SFMono-Regular,"JetBrains Mono",Menlo,Consolas,monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(1200px 600px at 78% -8%, rgba(91,157,255,.06), transparent 60%),
+    var(--bg);
+  color: var(--fg);
+  font: 14px/1.5 var(--font);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* numbers everywhere line up */
+.num, .se-table td, .se-kpi .val, .se-kpi .sub { font-variant-numeric: tabular-nums; }
+
+/* ---- semantic text colours ---------------------------------------------- */
+.pos { color: var(--green); }
+.neg { color: var(--red); }
+.mut { color: var(--muted); }
+.warn{ color: var(--amber); }
+
+/* ---- pills / badges ----------------------------------------------------- */
+.se-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 9px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; letter-spacing: .02em;
+  border: 1px solid transparent; white-space: nowrap;
+}
+.se-pill.ok   { background: var(--green-dim);  color: var(--green);  border-color: rgba(61,220,151,.28); }
+.se-pill.bad  { background: var(--red-dim);    color: var(--red);    border-color: rgba(255,93,108,.30); }
+.se-pill.warn { background: var(--amber-dim);  color: var(--amber);  border-color: rgba(245,183,61,.30); }
+.se-pill.info { background: var(--accent-dim); color: var(--accent); border-color: rgba(91,157,255,.30); }
+.se-pill.neutral { background: var(--panel-2); color: var(--muted); border-color: var(--line); }
+.se-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+/* ---- panels / cards ----------------------------------------------------- */
+.se-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.se-panel > h2, .se-panel-title {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--muted); font-weight: 600;
+  margin: 0; padding: 11px 15px; border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; gap: 8px;
+}
+.se-panel .body { max-height: 360px; overflow: auto; }
+
+/* ---- KPI card ----------------------------------------------------------- */
+.se-kpi {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 13px 16px 14px;
+  box-shadow: var(--shadow);
+  position: relative; overflow: hidden;
+}
+.se-kpi .label { color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; }
+.se-kpi .val   { font-size: 23px; font-weight: 650; margin-top: 5px; line-height: 1.1; letter-spacing: -.01em; }
+.se-kpi .sub   { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
+
+/* ---- tables ------------------------------------------------------------- */
+.se-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.se-table th, .se-table td {
+  text-align: right; padding: 7px 12px;
+  border-bottom: 1px solid var(--line-soft); white-space: nowrap;
+}
+.se-table th:first-child, .se-table td:first-child { text-align: left; }
+.se-table thead th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--panel); color: var(--muted);
+  font-weight: 600; font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
+}
+.se-table tbody tr:hover { background: var(--panel-2); }
+.se-table tbody tr:last-child td { border-bottom: 0; }
+.se-table .sym { font-weight: 600; color: var(--fg); }
+
+/* ---- micro bar (in-cell, e.g. drift / coverage) ------------------------- */
+.se-bar { display: inline-block; height: 6px; border-radius: 3px; background: var(--accent); vertical-align: middle; }
+.se-bartrack { display: inline-block; width: 54px; height: 6px; border-radius: 3px; background: var(--panel-3); vertical-align: middle; overflow: hidden; }
+
+/* ---- scrollbars (dark) -------------------------------------------------- */
+.body::-webkit-scrollbar, .blot::-webkit-scrollbar, .se-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+.body::-webkit-scrollbar-thumb, .blot::-webkit-scrollbar-thumb, .se-scroll::-webkit-scrollbar-thumb {
+  background: var(--panel-3); border-radius: 6px; border: 2px solid var(--panel);
+}
+.body::-webkit-scrollbar-track, .blot::-webkit-scrollbar-track, .se-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* ---- utility ------------------------------------------------------------ */
+.se-empty { color: var(--muted); padding: 16px; font-style: italic; font-size: 12.5px; }
+.sr-only  { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }

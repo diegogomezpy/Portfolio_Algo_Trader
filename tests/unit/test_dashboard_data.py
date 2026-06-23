@@ -67,6 +67,27 @@ def test_api_state_merges_snapshot_target_and_pnl():
     assert by_sym["MSFT"]["weight"] == 0.04 and by_sym["MSFT"]["target_weight"] == 0.05
 
 
+def test_api_state_leverage_gross_and_market_value():
+    eng = _engine()
+    _seed(eng)
+    s = data.api_state(eng)
+    # leverage = Σ weights = gross / equity; gross = nav × leverage
+    assert abs(s["leverage"] - 0.09) < 1e-9          # 0.05 + 0.04
+    assert abs(s["gross_exposure"] - 202_000.0 * 0.09) < 1e-6
+    assert s["n_positions"] == 2
+    assert abs(s["day_pnl_pct"] - 0.01) < 1e-9        # 2000 / 200000
+    by_sym = {r["symbol"]: r for r in s["positions"]}
+    assert abs(by_sym["AAPL"]["market_value"] - 0.05 * 202_000.0) < 1e-6
+
+
+def test_api_nav_history_oldest_first():
+    eng = _engine()
+    _seed(eng)
+    hist = data.api_nav_history(eng)
+    assert [h["nav"] for h in hist] == [200_000.0, 202_000.0]   # ascending by ts
+    assert hist[-1]["cash"] == 9_000.0
+
+
 def test_api_orders_returns_recent():
     eng = _engine()
     _seed(eng)
@@ -103,4 +124,6 @@ def test_empty_db_is_safe():
     eng = _engine()
     s = data.api_state(eng)
     assert s["nav"] is None and s["positions"] == [] and s["premium_collected"] == 0.0
+    assert s["leverage"] is None and s["gross_exposure"] is None and s["n_positions"] == 0
     assert data.api_orders(eng) == [] and data.api_calls(eng) == [] and data.api_factors(eng) == []
+    assert data.api_nav_history(eng) == []

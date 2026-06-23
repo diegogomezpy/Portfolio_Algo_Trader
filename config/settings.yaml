@@ -128,15 +128,17 @@ data_retention:
   fundamentals: forever
 
 alerts:
-  smtp_host: smtp.office365.com   # Microsoft 365 SMTP relay (STARTTLS on 587). Requires
-                             # SMTP AUTH enabled for the mailbox; basic auth is blocked on
-                             # MFA/Security-Defaults tenants (then need admin enable or OAuth).
+  smtp_host: smtp.gmail.com   # Gmail SMTP relay (STARTTLS on 587). M365 was abandoned for the
+                             # test because the CADIEM tenant blocks basic SMTP AUTH (535 5.7.3)
+                             # and needs IT to enable Authenticated SMTP. Personal Gmail is
+                             # self-serve: generate a 16-char App Password (Google Account →
+                             # Security → 2-Step Verification → App passwords) and put it in the
+                             # SMTP_PASSWORD env var. A plain account password is also rejected by
+                             # Gmail — the App Password is required (2FA must be on).
   smtp_port: 587
-  email_to: pasantemesa@cadiem.py   # alert recipient (test)
-  email_from: pasantemesa@cadiem.py # sender (defaults to email_to); SMTP password from env SMTP_PASSWORD
+  email_to: diegogomezzx@gmail.com   # alert recipient (personal, for testing)
+  email_from: diegogomezzx@gmail.com # sender (defaults to email_to); SMTP password from env SMTP_PASSWORD
   send_enabled: false        # alerts stay dry-run (recorded to the alerts table, shown on the
-                             # dashboard, NOT emailed) until SMTP auth works. M365 rejected the
-                             # plain account password (535 5.7.3 basic-auth blocked) — needs IT
-                             # to enable Authenticated SMTP, or an app password, or a relay
-                             # (SendGrid/SES). Flip to true once SMTP_PASSWORD authenticates.
+                             # dashboard, NOT emailed) until SMTP_PASSWORD holds a working Gmail
+                             # App Password. Flip to true once a test send authenticates.
   staleness_threshold_pct: 0.10
