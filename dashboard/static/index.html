@@ -248,7 +248,7 @@ function sparkline(hist){
 function dte(exp){ if(!exp) return null; const d=Math.round((new Date(exp+"T00:00:00")-Date.now())/864e5); return d; }
 
 // ---- main refresh ---------------------------------------------------------
-let firstLoad = true;
+let firstLoad = true, snapTs = null, lastFetch = 0, backendDown = false;
 async function refresh(){
   if (activeView !== "live") return;
   if (firstLoad){ ["positions","calls","factors","orders","alerts"].forEach(id=>$(id).innerHTML=SKEL); }
@@ -257,11 +257,12 @@ async function refresh(){
   firstLoad = false;
 
   if(!s){
-    $("dot").className = "live-dot down"; $("upd").textContent = "backend unreachable";
+    backendDown = true; lastFetch = Date.now(); tickFreshness();
     ["positions","calls","factors","orders","alerts"].forEach(id=>$(id).innerHTML =
       '<div class="errbox"><div class="big">Backend unreachable</div>Postgres or the dashboard API is not responding.</div>');
     return;
   }
+  backendDown = false;
 
   // risk-gate banner
   const g = s.risk_gate_passed, gb = $("gatebar");
@@ -331,11 +332,13 @@ async function refresh(){
     {h:"Emailed", cls:r=>r.delivered?"pos":"mut", f:r=>r.delivered?"✓ sent":"dry-run"},
   ]);
 
-  // freshness + health
-  const age = s.ts ? (Date.now()-new Date(s.ts.replace(" ","T")+(/[zZ]|\+/.test(s.ts)?"":"Z")))/1000 : null;
-  const stale = age!=null && age>360;
-  $("dot").className = "live-dot" + (stale?" stale":"");
-  $("upd").textContent = age==null ? "updated –" : "updated "+humanAge(age)+" ago";
+  // freshness + health — record when we fetched and how old the snapshot DATA is.
+  // "checked" = page poll (the ↻ button / 30s loop reset it); "data" = snapshot age,
+  // which only moves when the monitor (run_eod --serve, 60s) writes a new snapshot.
+  snapTs = s.ts ? new Date(s.ts.replace(" ","T")+(/[zZ]|\+/.test(s.ts)?"":"Z")).getTime() : null;
+  lastFetch = Date.now();
+  tickFreshness();
+  const stale = snapTs!=null && (Date.now()-snapTs)/1000 > 360;
   $("footstrip").innerHTML =
     `<span class="se-pill ok" style="font-size:10px"><span class="dot"></span>Postgres connected</span>` +
     `<span>Snapshot: <span class="hi">${(s.ts||"–").replace("T"," ").slice(0,19)} UTC</span>${stale?' <span class="warn">(stale)</span>':''}</span>` +
@@ -344,6 +347,19 @@ async function refresh(){
     `<span class="mut" style="margin-left:auto">Postgres-only · monitor bridges Alpaca → snapshots every 60s</span>`;
 }
 function humanAge(s){ s=Math.round(s); return s<60?s+"s":s<3600?Math.round(s/60)+"m":Math.round(s/3600)+"h"; }
+
+// header status: ticks every second so "checked" counts up (and the ↻/30s poll reset it),
+// while "data Nago" shows the snapshot's true age and turns amber when stale (>6 min).
+function tickFreshness(){
+  if (backendDown){ $("dot").className = "live-dot down"; $("upd").textContent = "backend unreachable"; return; }
+  const checked = lastFetch ? (Date.now()-lastFetch)/1000 : null;
+  const dataAge = snapTs!=null ? (Date.now()-snapTs)/1000 : null;
+  const stale = dataAge!=null && dataAge>360;
+  $("dot").className = "live-dot" + (stale?" stale":"");
+  const chk = checked==null ? "–" : (checked<5 ? "just now" : humanAge(checked)+" ago");
+  const dat = dataAge==null ? "no data yet" : "data "+humanAge(dataAge)+" old";
+  $("upd").innerHTML = `checked ${chk} · <span class="${stale?'warn':'mut'}">${dat}</span>`;
+}
 
 // ---- boot -----------------------------------------------------------------
 async function boot(){
@@ -356,7 +372,8 @@ async function boot(){
 }
 $("refreshbtn").onclick = () => { $("refreshbtn").classList.add("spin"); setTimeout(()=>$("refreshbtn").classList.remove("spin"),700); refresh(); };
 boot();
-setInterval(refresh, 30000);
+setInterval(refresh, 30000);     // re-read Postgres every 30s
+setInterval(tickFreshness, 1000); // tick the "checked / data age" header every second
 </script>
 </body>
 </html>
