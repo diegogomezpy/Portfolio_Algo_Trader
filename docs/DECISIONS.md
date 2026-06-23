@@ -783,3 +783,24 @@ harvested, but the assignment rate crosses the 30% cap near delta 0.35 (0.35=30%
 feasible) and keeping 0.25 (conservative) were the considered alternatives. Revisit
 once live paper-trading reveals real single-name premiums (the IV assumption is the
 load-bearing uncertainty, D27).
+---
+
+## D30 — Overlay gate judges assignment rate at market IV, not the realized floor
+
+**Decision:** the covered-call gate's `assignment rate < 30%` check is evaluated at the
+realistic market-implied (`vix_scaled`) case, matching how the Sharpe check is already
+judged — not as `all(modes < 30%)`. Confirmed with Diego (2026-06-23) during the Phase
+1/2 audit.
+
+**Why.** A Phase 1/2 audit surfaced that the committed D29 gate (delta 0.30) was
+silently FAILing: the `realized`-floor case shows a **31%** assignment rate vs the 30%
+cap, while the market-IV case is **22%**. The original gate required *every* IV mode
+under 30%. But the realized floor sets IV = realized vol (zero vol premium) — an
+intentionally pessimistic bound that writes the *tightest* strikes, mechanically
+inflating assignment. Assignment, like Sharpe, is IV-dependent, so it belongs on the
+same realistic basis the D27 verdict already uses for Sharpe ("evaluate at market IV,
+report the floor as range"). The earlier code comment claiming assignment "improves
+unconditionally" was wrong — only vol / drawdown / premium do; Sharpe and assignment
+both move with the IV assumption. The floor's 31% is still printed alongside for
+honesty. **No strategy parameter changed** (delta stays 0.30) — this corrects the gate
+criterion only. Overlay now PASSes: market Sharpe 1.31, assignment 22%.

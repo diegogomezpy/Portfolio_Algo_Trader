@@ -149,6 +149,25 @@ def sleeve_return(subscore: pd.Series, fwd: pd.Series, top_n: int) -> float:
     return float(r.mean()) if len(r) else np.nan
 
 
+def safe_covariance(price_panel, ff5, *, as_of, window, min_obs):
+    """``covariance.covariance_from_prices`` that degrades to an empty Σ instead of
+    raising when the FF5 factor data doesn't cover enough of the window.
+
+    Ken French's daily file lags publication, so a window dated near the live edge can
+    overlap too few factor days to estimate Σ. With λ=0 the optimizer doesn't use Σ
+    anyway (it falls back to the full top-K when Σ is empty — see engine.optimize), so a
+    publication gap should keep the rebalance alive, not crash it. In-sample the window
+    is fully covered, so this returns the real Σ and changes nothing.
+    """
+    try:
+        return covariance.covariance_from_prices(price_panel, ff5, as_of=as_of,
+                                                 window=window, min_obs=min_obs)
+    except ValueError as exc:
+        log.warning("covariance unavailable; proceeding without Σ",
+                    extra={"as_of": str(as_of), "error": str(exc)})
+        return pd.DataFrame()
+
+
 # ====================================================================== #
 # Walk-forward driver
 # ====================================================================== #
@@ -183,7 +202,7 @@ def run_walkforward(start: date, end: date, *, settings=None) -> pd.DataFrame:
         if composite.empty:
             continue
         top = composite.sort_values(ascending=False).head(settings.optimizer.preselect_top_k).index
-        sigma = covariance.covariance_from_prices(
+        sigma = safe_covariance(
             panel[top], ff5, as_of=d0, window=settings.covariance.estimation_window_days,
             min_obs=settings.covariance.min_regression_obs)
         res = optimize.optimize_portfolio(composite, sigma, sector_map, settings=settings, prev_weights=prev_w)
@@ -224,7 +243,13 @@ def _clip_returns(fwd: pd.Series, clip: float, d1) -> pd.Series:
 
 
 def _latest_adv(latest_date) -> pd.Series:
-    """ADV per symbol from the most recent equities snapshot (for cost tiering)."""
+    """ADV per symbol from the most recent equities snapshot (for cost tiering).
+
+    The current snapshot's ADV is reused for *every* historical rebalance. This is a
+    mild look-ahead, but it only selects which bps tier a name pays — it never touches
+    returns — and the liquid held book rarely changes tier over the window, so the
+    effect on net return is negligible. Point-in-time ADV would be the precise version.
+    """
     from engine import ingest
     files = sorted(Path(PRICES_DIR).glob("*.parquet"))
     if not files:

@@ -211,8 +211,24 @@ def test_optimize_portfolio_excludes_names_missing_from_sigma():
     names = [f"S{i}" for i in range(20)]
     scores = pd.Series(np.linspace(3.0, -3.0, 20), index=names)
     # Σ omits the top name S0 (e.g. dropped for thin history) — it must not be funded.
+    # (_settings() uses λ=1.0, so Σ membership genuinely gates selection.)
     modelled = names[1:]
     sigma = _diag_sigma(modelled, var=0.05)
     sectors = pd.Series({n: "Unknown" for n in names})
     res = optimize.optimize_portfolio(scores, sigma, sectors, settings=_settings())
     assert "S0" not in res.weights.index
+
+
+def test_optimize_portfolio_proceeds_when_sigma_empty_and_lambda_zero():
+    # FF5 publication lag can leave Σ unbuildable (empty frame). With λ=0 the solver
+    # never touches Σ, so an empty Σ must NOT empty the universe or crash — selection
+    # falls back to the full top-K. (Contrast the λ>0 test above, where Σ gates names.)
+    names = [f"S{i}" for i in range(30)]
+    scores = pd.Series(np.linspace(3.0, -3.0, 30), index=names)
+    sectors = pd.Series({n: _SIX[i % len(_SIX)] for i, n in enumerate(names)})
+    cfg = dict(max_single_name_pct=0.05, risk_aversion_lambda=0.0)   # the ~19-name book
+    res = optimize.optimize_portfolio(scores, pd.DataFrame(), sectors,
+                                      settings=_settings(portfolio=cfg))
+    assert res.status in ("optimal", "relaxed")
+    assert res.weights.sum() == pytest.approx(0.95, abs=1e-3)
+    assert res.weights.index[0] == "S0"              # top scorer funded despite no Σ

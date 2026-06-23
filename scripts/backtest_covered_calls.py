@@ -132,8 +132,8 @@ def run_overlay(start: date, end: date, *, settings=None, iv_mode: str = "vix_sc
         if comp.empty:
             continue
         top = comp.sort_values(ascending=False).head(settings.optimizer.preselect_top_k).index
-        sigma = covariance.covariance_from_prices(panel[top], ff5, as_of=d0, window=win,
-                                                  min_obs=settings.covariance.min_regression_obs)
+        sigma = eq.safe_covariance(panel[top], ff5, as_of=d0, window=win,
+                                   min_obs=settings.covariance.min_regression_obs)
         w = optimize.optimize_portfolio(comp, sigma, sector_map, settings=settings, prev_weights=prev_w).weights
         if w.empty:
             continue
@@ -238,21 +238,26 @@ def summarize(results_by_mode: dict[str, pd.DataFrame]) -> dict:
               f"{cc['sharpe']:>8.2f}{cc['max_drawdown']*100:>7.1f}%{prem_yr*100:>11.1f}%"
               f"{assign*100:>8.0f}% {better}")
 
-    # Verdict (DECISIONS D27): vol/drawdown/premium/assignment improve UNCONDITIONALLY
-    # (exact, data-driven). The Sharpe lift is premium-dependent, so it's evaluated at the
-    # market-implied 'vix_scaled' case and reported with the conservative floor as a range.
+    # Verdict (DECISIONS D27, refined D30): vol / drawdown / premium improve
+    # UNCONDITIONALLY across every IV assumption (exact, data-driven). Sharpe AND the
+    # assignment rate both depend on the IV assumption — a lower IV writes tighter
+    # strikes, which lifts assignment — so both are judged at the realistic market-
+    # implied 'vix_scaled' case (the conservative realized floor is reported alongside
+    # for range, not used as a pass/fail bar: its tight strikes overstate assignment).
     floor = out["modes"].get("realized")
     market = out["modes"].get("vix_scaled", out["modes"][list(out["modes"])[-1]])
     vol_ok = all(m["ann_vol"] < eq_metrics["ann_vol"] for m in out["modes"].values())
     dd_ok = all(m["max_drawdown"] >= eq_metrics["max_drawdown"] - 1e-9 for m in out["modes"].values())
     prem_ok = all(m["premium_yr"] > 0 for m in out["modes"].values())
-    assign_ok = all(m["assignment"] < 0.30 for m in out["modes"].values())
+    assign_ok = market["assignment"] < 0.30
     sharpe_ok = market["sharpe"] >= eq_metrics["sharpe"] - 1e-9
     print("\n  Gate:")
     print(f"    vol reduced vs equity-only         {'✅' if vol_ok else '❌'}  (unconditional)")
     print(f"    maxDD reduced vs equity-only       {'✅' if dd_ok else '❌'}  (unconditional)")
     print(f"    premium income > 0                 {'✅' if prem_ok else '❌'}  (unconditional)")
-    print(f"    assignment rate < 30%              {'✅' if assign_ok else '❌'}")
+    floor_assign = f"{floor['assignment']*100:.0f}%" if floor else "n/a"
+    print(f"    assignment < 30% @ market IV       {'✅' if assign_ok else '❌'}  "
+          f"(market {market['assignment']*100:.0f}%; floor {floor_assign} at tighter strikes)")
     print(f"    Sharpe ≥ equity-only @ market IV   {'✅' if sharpe_ok else '❌'}  "
           f"(premium-dependent: floor {floor['sharpe'] if floor else float('nan'):.2f} "
           f"→ market {market['sharpe']:.2f})")

@@ -98,25 +98,45 @@ def fetch_ff5_daily(
     return df
 
 
+def _fetch_and_cache(cache_path: Path, url: str, fetch: Callable[[str], bytes]) -> pd.DataFrame:
+    df = fetch_ff5_daily(url=url, fetch=fetch)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(cache_path)
+    return df
+
+
 def load_ff5_daily(
     *,
     cache_path: Path | str = DEFAULT_FF5_CACHE,
     url: str = FF5_DAILY_URL,
     fetch: Callable[[str], bytes] = _http_get_bytes,
     force: bool = False,
+    max_stale_days: int | None = None,
 ) -> pd.DataFrame:
     """Return the daily FF5 frame, from the parquet cache or a fresh download.
 
-    The factors are historical and effectively immutable, so a cache hit is used
-    unconditionally unless ``force=True``.
+    History is immutable so a cache hit is normally used unconditionally. But Ken
+    French publishes the daily file with a multi-week lag, so a *live* daily engine
+    drifts behind the price data — and a covariance window dated near "today" can then
+    overlap too few factor days to estimate Σ (it raises). ``max_stale_days`` (used by
+    the live pipeline, not the in-sample backtest) triggers a best-effort refresh when
+    the cached data ends more than that many days before today; if the refresh fails
+    (offline / SEC hiccup) the stale cache is logged and returned rather than crashing.
+    Default ``None`` keeps the cache-unconditional behavior (backtest / tests unchanged).
     """
     cache_path = Path(cache_path)
-    if cache_path.exists() and not force:
-        return pd.read_parquet(cache_path)
-    df = fetch_ff5_daily(url=url, fetch=fetch)
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(cache_path)
-    return df
+    if force or not cache_path.exists():
+        return _fetch_and_cache(cache_path, url, fetch)
+    cached = pd.read_parquet(cache_path)
+    if max_stale_days is not None and not cached.empty:
+        age = (pd.Timestamp.today().normalize() - cached.index.max()).days
+        if age > max_stale_days:
+            try:
+                return _fetch_and_cache(cache_path, url, fetch)
+            except Exception as exc:  # noqa: BLE001 — degrade to the stale cache, never crash
+                log.warning("ff5 refresh failed; using stale cache",
+                            extra={"age_days": int(age), "error": str(exc)})
+    return cached
 
 
 # ====================================================================== #

@@ -117,7 +117,8 @@ def solve_qp(
     prob = cp.Problem(objective, constraints)
     try:
         prob.solve(solver=cp.CLARABEL)
-    except (cp.SolverError, Exception):  # noqa: BLE001 — any solver failure ⇒ infeasible path
+    except Exception as exc:  # noqa: BLE001 — any solver failure ⇒ treat this name set as infeasible
+        log.debug("QP solve raised; treating as infeasible", extra={"n": n, "error": str(exc)})
         return None
     if w.value is None or prob.status not in ("optimal", "optimal_inaccurate"):
         return None
@@ -208,9 +209,17 @@ def optimize_portfolio(
     # turnover. The bonus shifts ranks; everything downstream (caps, weights) is unchanged.
     eff_scores = _apply_incumbent_bonus(scores, prev_weights, _incumbent_bonus(settings))
     mu_all = compute_mu(eff_scores, o.target_return_scale)
-    # Pre-select top-K, then keep only names we can actually risk-model and bucket.
+    # Pre-select top-K. Σ membership doubles as a min-history guard (names without
+    # enough return history to risk-model are dropped from Σ). But when λ=0 the solver
+    # never touches Σ (DECISIONS D25), so an *unavailable* Σ — e.g. the Ken French FF5
+    # file lagging publication, leaving the window too thin to estimate — must not be
+    # allowed to silently empty the universe or kill the rebalance. Filter by Σ only
+    # when we actually have one, or when λ>0 genuinely needs it; else keep the full top-K.
     topk = mu_all.sort_values(ascending=False).head(o.preselect_top_k).index
-    active = [s for s in topk if s in sigma.index]
+    if lam > 0 or not sigma.empty:
+        active = [s for s in topk if s in sigma.index]
+    else:
+        active = list(topk)
     mu = mu_all.loc[active]
     sectors = sector_map.reindex(active).fillna("Unknown")
 

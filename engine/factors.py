@@ -285,6 +285,11 @@ def point_in_time_fundamentals(all_fundamentals: pd.DataFrame, as_of: _date, lag
     ]
     if avail.empty:
         return pd.DataFrame(columns=FUNDAMENTAL_FIELDS).rename_axis("symbol")
+    # Latest available quarter per symbol, picked by filing (report) date. Edge case:
+    # a late-filed restatement (e.g. a 10-K/A for an older year filed after a newer
+    # quarter) would have the latest report_date and could win over that newer quarter.
+    # Rare, and the EDGAR loader already dedups to one row per period end (earliest
+    # filing), so in practice report_date order == period_end order. Left as-is.
     latest = avail.sort_values("report_date").groupby("symbol").tail(1).set_index("symbol")
     return latest[[*FUNDAMENTAL_FIELDS, "report_date"]]
 

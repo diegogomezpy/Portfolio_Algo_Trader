@@ -126,6 +126,52 @@ def test_load_ff5_daily_via_injected_zip(tmp_path):
     pd.testing.assert_frame_equal(df, again)
 
 
+def _ff5_zip(csv_text: str) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("F-F_Research_Data_5_Factors_2x3_daily.csv", csv_text)
+    return buf.getvalue()
+
+
+def test_load_ff5_daily_refreshes_when_cache_is_stale(tmp_path):
+    # Seed a cache whose data ends in early 2024 (old), then request with a tight
+    # max_stale_days: it must refetch a payload carrying a newer row.
+    cache = tmp_path / "ff5.parquet"
+    covariance.load_ff5_daily(cache_path=cache, fetch=lambda url: _ff5_zip(_SYNTHETIC_FF5))
+    newer = _SYNTHETIC_FF5.replace(
+        "20240104,    0.75,   -0.10,    0.10,    0.20,   -0.25,    0.02\n",
+        "20240104,    0.75,   -0.10,    0.10,    0.20,   -0.25,    0.02\n"
+        "20991231,    0.10,    0.10,    0.10,    0.10,    0.10,    0.01\n",
+    )
+    df = covariance.load_ff5_daily(cache_path=cache, fetch=lambda url: _ff5_zip(newer),
+                                   max_stale_days=5)
+    assert df.index.max() == pd.Timestamp("2099-12-31")        # refetched the newer file
+
+
+def test_load_ff5_daily_falls_back_to_stale_cache_on_refresh_failure(tmp_path):
+    # When stale but the refresh fails (offline), return the stale cache — never crash.
+    cache = tmp_path / "ff5.parquet"
+    covariance.load_ff5_daily(cache_path=cache, fetch=lambda url: _ff5_zip(_SYNTHETIC_FF5))
+
+    def boom(url):
+        raise OSError("offline")
+
+    df = covariance.load_ff5_daily(cache_path=cache, fetch=boom, max_stale_days=5)
+    assert df.index.max() == pd.Timestamp("2024-01-04")        # stale cache, no raise
+
+
+def test_load_ff5_daily_default_does_not_refresh_stale_cache(tmp_path):
+    # Default (max_stale_days=None) keeps the cache-unconditional behavior even if old.
+    cache = tmp_path / "ff5.parquet"
+    covariance.load_ff5_daily(cache_path=cache, fetch=lambda url: _ff5_zip(_SYNTHETIC_FF5))
+
+    def boom(url):
+        raise AssertionError("must not refetch when max_stale_days is None")
+
+    df = covariance.load_ff5_daily(cache_path=cache, fetch=boom)
+    assert df.index.max() == pd.Timestamp("2024-01-04")
+
+
 def test_covariance_from_prices_is_point_in_time():
     ff5 = _make_ff5(n_days=120)
     rng = np.random.default_rng(5)

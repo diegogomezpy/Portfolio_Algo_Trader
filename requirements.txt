@@ -1,34 +1,37 @@
 # sharpe-engine runtime + dev dependencies.
-# Pin in a follow-up once the environment is validated (Phase 0).
+# Pinned to the validated environment (Python 3.12). Bump deliberately, re-run the
+# test suite + the Phase 2 backtest, then re-pin.
 
 # Broker / market data
-alpaca-py
-yfinance
-pandas-datareader
+alpaca-py==0.43.4
+yfinance==1.4.1
+# NOTE: pandas-datareader was removed — it import-crashes under pandas 3.0 and is
+# unused. engine/covariance.py fetches the Ken French FF5 file directly via urllib.
 
 # Data handling
-pandas
-numpy
-scipy
-pyarrow
+pandas==3.0.3
+numpy==2.4.6
+scipy==1.17.1            # engine/options.py (scipy.stats.norm) for Black-Scholes
+pyarrow==24.0.0
 
 # Operational store
-psycopg2-binary
-SQLAlchemy
+psycopg2-binary==2.9.12
+SQLAlchemy==2.0.51
 
 # Optimizer (Phase 2)
-cvxpy
+cvxpy==1.9.1
+clarabel==0.11.1         # the convex solver cvxpy calls (engine/optimize.py)
 
 # Scheduler / runtime
-apscheduler
-pytz
-requests
-python-dotenv
-PyYAML
+APScheduler==3.11.2
+pytz==2026.2
+requests==2.34.2
+python-dotenv==1.2.2
+PyYAML==6.0.3
 
 # Dashboard (Phase 5)
-fastapi
-uvicorn
+fastapi==0.137.2
+uvicorn==0.49.0
 
 # Testing
-pytest
+pytest==9.1.0
