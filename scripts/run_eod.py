@@ -4,19 +4,27 @@ Wires the equity pipeline into one cycle:
 
     reconcile → holiday gate → compute targets → risk gate → execute → monitor
 
-This is increment 3.6 — the **single-cycle** driver (``--once``), the thing the Phase 3
-gate exercises ("first paper rebalance executes"). The continuous APScheduler wrapper
-(timed jobs, SIGTERM, the 60s monitor loop) is 3.7. Covered-call jobs are Phase 4.
+Two modes:
 
-Design: :func:`run_cycle` is a thin orchestrator whose data-heavy and broker steps are
-**injectable** (``targets_fn``, ``trading_day_fn``), so the integration test drives the
-full wiring with a fake client / broker / sqlite and a stubbed target producer — no
-network, no live data. :func:`main` builds the real dependencies and runs one cycle.
+* ``--once`` (3.6) — run exactly one cycle now (what the Phase 3 gate exercises:
+  "first paper rebalance executes").
+* ``--serve`` (3.7) — the continuous APScheduler process: a daily 16:10-ET job that
+  gates on the market calendar, ingests, then **branches** — a full rebalance on the
+  first trading day of the month, otherwise a lightweight reconcile+monitor pass — plus a
+  60-second monitor loop, plus a SIGTERM handler that finishes the current stage and
+  cancels open orders before exiting 0.
+
+Design: the orchestrators (:func:`run_cycle`, :func:`daily_job`) take **injectable**
+data/broker/calendar steps, so the integration tests drive the full wiring with a fake
+client / broker / sqlite and stubbed producers — no network, no live data. The thin parts
+that can't be unit-tested (APScheduler timing, OS signals) live in :func:`serve` and are
+verified by Diego against the live paper account. Covered-call jobs are Phase 4.
 
 Usage::
 
-    python scripts/run_eod.py --once --env paper
-    python scripts/run_eod.py --once --env paper --date 2026-07-01 --skip-ingest
+    python scripts/run_eod.py --once  --env paper
+    python scripts/run_eod.py --once  --env paper --date 2026-07-01 --skip-ingest
+    python scripts/run_eod.py --serve --env paper
 """
 
 from __future__ import annotations
@@ -173,6 +181,128 @@ def _write_rebalance_log(db_engine, as_of: date, weights: pd.Series, rc: RiskChe
 
 
 # ====================================================================== #
+# Scheduler (3.7) — daily dispatch, continuous monitor, graceful shutdown
+# ====================================================================== #
+@dataclass
+class DailyResult:
+    """Outcome of one scheduled daily job."""
+    status: str  # "rebalanced" | "monitored" | "not_trading_day"
+    cycle: Optional[CycleResult] = None
+    monitor: Optional[monitor.MonitorResult] = None
+
+
+def is_first_trading_day_of_month(client, as_of: date) -> bool:
+    """Whether ``as_of`` is the first NYSE trading day of its month (Alpaca calendar)."""
+    start = as_of.replace(day=1)
+    cal = client.market_calendar(start.isoformat(), as_of.isoformat())
+    days = sorted(str(d.get("date"))[:10] for d in cal)
+    return bool(days) and days[0] == as_of.isoformat()
+
+
+def daily_job(
+    *,
+    client,
+    broker,
+    db_engine,
+    settings,
+    as_of: date,
+    ingest_fn: Callable[[str], None] | None = None,
+    targets_fn: Callable[..., TargetPlan] = compute_targets,
+    trading_day_fn: Callable[[object, str], bool] = ingest.is_trading_day,
+    first_trading_day_fn: Callable[[object, date], bool] | None = None,
+    alert: Callable[[str], None] | None = None,
+) -> DailyResult:
+    """The once-a-day scheduled job: gate on the calendar, ingest, then branch.
+
+    On the **first trading day of the month** it runs the full rebalance cycle
+    (:func:`run_cycle`); on any other trading day it does a lightweight reconcile +
+    monitor pass (no trading). Non-trading days are skipped. ``ingest_fn`` (default
+    ``None`` = skip, so tests never hit the network) refreshes the day's data first.
+    """
+    if not trading_day_fn(client, as_of.isoformat()):
+        log.info("not a trading day; daily job skipped", extra={"date": as_of.isoformat()})
+        return DailyResult("not_trading_day")
+
+    if ingest_fn is not None:
+        ingest_fn(as_of.isoformat())
+
+    first_of_month = first_trading_day_fn or is_first_trading_day_of_month
+    if first_of_month(client, as_of):
+        cyc = run_cycle(client=client, broker=broker, db_engine=db_engine, settings=settings,
+                        as_of=as_of, force=True, trigger="monthly", targets_fn=targets_fn,
+                        trading_day_fn=trading_day_fn, alert=alert)
+        return DailyResult("rebalanced", cycle=cyc)
+
+    # Non-rebalance trading day: keep the DB honest and snapshot, but don't trade.
+    reconcile.reconcile(client, db_engine, alert=alert)
+    tgt = monitor.last_target_weights(db_engine)
+    mon = monitor.monitor_once(client, db_engine, target_weights=tgt)
+    log.info("daily monitor pass (no rebalance)", extra={"date": as_of.isoformat()})
+    return DailyResult("monitored", monitor=mon)
+
+
+def continuous_monitor_job(client, db_engine) -> None:
+    """The 60s monitor tick: snapshot NAV/drift. A transient error must not kill the loop."""
+    try:
+        tgt = monitor.last_target_weights(db_engine)
+        monitor.monitor_once(client, db_engine, target_weights=tgt)
+    except Exception as exc:  # noqa: BLE001 — keep the scheduler alive across read hiccups
+        log.error("monitor job error", extra={"error": str(exc)})
+
+
+def graceful_shutdown(scheduler, broker) -> None:
+    """SIGTERM contract (ARCHITECTURE): finish the current stage, then cancel open orders.
+
+    Shuts the scheduler down with ``wait=True`` so an in-flight rebalance stage completes,
+    then cancels any working orders so nothing is left live overnight. Both steps are
+    guarded so a failure in one still attempts the other.
+    """
+    log.warning("shutting down — finishing current stage, then cancelling open orders")
+    try:
+        scheduler.shutdown(wait=True)
+    except Exception as exc:  # noqa: BLE001
+        log.error("scheduler shutdown error", extra={"error": str(exc)})
+    try:
+        n = broker.cancel_all_orders()
+        log.info("cancelled open orders on shutdown", extra={"count": n})
+    except Exception as exc:  # noqa: BLE001
+        log.error("cancel-all on shutdown failed", extra={"error": str(exc)})
+
+
+def serve(*, env: str, settings, client, broker, db_engine, hour: int = 16, minute: int = 10) -> None:
+    """Run the continuous APScheduler process (blocks until SIGTERM/SIGINT).
+
+    Two jobs: a weekday EOD job at ``hour:minute`` America/New_York (the holiday gate +
+    rebalance/monitor branch live inside :func:`daily_job`), and a 60s monitor tick.
+    """
+    import signal
+
+    import pytz
+    from apscheduler.schedulers.blocking import BlockingScheduler
+
+    sched = BlockingScheduler(timezone=pytz.timezone("America/New_York"))
+    sched.add_job(
+        lambda: daily_job(client=client, broker=broker, db_engine=db_engine, settings=settings,
+                          as_of=date.today(),
+                          ingest_fn=lambda d: ingest.run_daily_ingest(env=env, as_of=d)),
+        "cron", day_of_week="mon-fri", hour=hour, minute=minute, id="eod")
+    sched.add_job(lambda: continuous_monitor_job(client, db_engine),
+                  "interval", seconds=60, id="monitor")
+
+    def _handler(signum, _frame):
+        log.warning("signal received; shutting down", extra={"signal": int(signum)})
+        graceful_shutdown(sched, broker)
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _handler)
+    signal.signal(signal.SIGINT, _handler)
+    log.info("scheduler started", extra={"env": env, "eod": f"{hour:02d}:{minute:02d} ET"})
+    print(f"sharpe-engine scheduler running (env={env}, EOD {hour:02d}:{minute:02d} ET). "
+          f"SIGTERM/Ctrl-C to stop.")
+    sched.start()
+
+
+# ====================================================================== #
 # CLI
 # ====================================================================== #
 def _countdown(seconds: int) -> None:
@@ -187,13 +317,14 @@ def main() -> None:
     from engine.broker import Broker
     from engine.config import require_env
 
-    ap = argparse.ArgumentParser(description="End-of-day rebalance driver (Phase 3, single cycle)")
-    ap.add_argument("--once", action="store_true", required=True,
-                    help="run exactly one rebalance cycle (the only mode in 3.6)")
+    ap = argparse.ArgumentParser(description="End-of-day rebalance driver (Phase 3)")
+    mode = ap.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--once", action="store_true", help="run exactly one rebalance cycle now")
+    mode.add_argument("--serve", action="store_true", help="run the continuous scheduler (APScheduler)")
     ap.add_argument("--env", choices=("paper", "live"), required=True)
     ap.add_argument("--date", type=lambda s: date.fromisoformat(s), default=date.today())
-    ap.add_argument("--force", action="store_true", help="run even if not a trading day")
-    ap.add_argument("--skip-ingest", action="store_true", help="reuse existing snapshot data")
+    ap.add_argument("--force", action="store_true", help="run even if not a trading day (--once)")
+    ap.add_argument("--skip-ingest", action="store_true", help="reuse existing snapshot data (--once)")
     args = ap.parse_args()
 
     config.load_env(args.env)
@@ -203,6 +334,10 @@ def main() -> None:
     client = config.get_alpaca_client()
     broker = Broker(require_env("ALPACA_API_KEY"), require_env("ALPACA_SECRET_KEY"))
     db_engine = db.get_engine()
+
+    if args.serve:
+        serve(env=args.env, settings=settings, client=client, broker=broker, db_engine=db_engine)
+        return
 
     if not args.skip_ingest:
         ingest.run_daily_ingest(env=args.env, as_of=args.date.isoformat())

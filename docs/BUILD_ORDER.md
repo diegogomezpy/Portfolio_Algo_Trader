@@ -17,7 +17,7 @@ active and never build ahead of it.
 | 1 | Factor scoring | Factor scores look reasonable on historical data | ✅ |
 | 2 | Optimizer + equity-only backtest | Equity book validated: net +14%/yr, beats SPY on return, Sharpe 0.75 ≈ SPY (Sharpe>1.0 met combined in 2b) | ✅ |
 | 2b | Full strategy backtest including covered calls | Combined beats SPY Sharpe under realistic premium; vol/DD cut unconditionally (D27) | ✅ |
-| 3 | Execution engine + risk gate | Orders submit and fill correctly in paper account | ⬜ |
+| 3 | Execution engine + risk gate | Orders submit and fill correctly in paper account | 🔄 (3.1–3.7 built + tested; live-paper gate pending Diego) |
 | 4 | Covered call overlay | Calls written, rolled, and assigned correctly in paper | ⬜ |
 | 5 | Dashboard + alerting | Live dashboard shows portfolio state, alerts deliver | ⬜ |
 | 6 | Crypto allocation | Crypto positions added to paper portfolio | ⬜ |
@@ -333,6 +333,19 @@ positions correctly.
   shows 5-second countdown
 - `pytest tests/unit/` all pass
 - `pytest tests/integration/test_execution.py` passes
+
+**Build status (2026-06-23) — 🔄 code complete, equity-only (options = Phase 4).**
+Increments: 3.1 `risk.py` tested; 3.2 `broker.py` (Alpaca write client); 3.3 `execute.py`
+(pure `plan_orders` + idempotent `submit_and_track` with fill poll / session-end cancel);
+3.4 `reconcile.py` (diff vs DB, correct to Alpaca, block if unreachable); 3.5 `monitor.py`
+(NAV / L1-drift telemetry / snapshots); 3.6 `run_eod.py --once` single-cycle driver; 3.7
+`run_eod.py --serve` APScheduler wrapper (daily 16:10-ET branch rebalance/monitor, 60s
+monitor loop, SIGTERM finish-stage-then-cancel). 193 tests pass; all logic is unit/
+integration-tested via the pure-fn + injected-I/O split. **Pending (needs a live paper
+account + Postgres, for Diego to run):** first paper rebalance fills in the Alpaca
+dashboard, no duplicate orders on re-run, live SIGTERM shutdown, the `pending_adjustments`
+roll across cycles — the criteria above that can only be verified against the broker.
+Cadence is the single monthly rebalance (DECISIONS D31).
 
 ---
 

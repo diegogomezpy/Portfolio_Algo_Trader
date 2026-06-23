@@ -46,17 +46,18 @@ sharpe-engine/
 │   ├── db.py                  ← PostgreSQL schema + connection factory
 │   ├── alpaca_client.py       ← thin Alpaca REST wrapper
 │   ├── ingest.py              ← Alpaca + yfinance data pulls
-│   ├── reconcile.py           ← position reconciliation vs Alpaca (stub)
+│   ├── reconcile.py           ← position reconciliation vs Alpaca (Phase 3 ✅)
 │   ├── factors.py             ← factor score computation (Phase 1 ✅)
 │   ├── edgar.py               ← SEC EDGAR point-in-time fundamentals (D22)
 │   ├── sectors.py             ← SIC→sector map for the sector cap (Phase 2 ✅, D23c)
 │   ├── covariance.py          ← FF5 factor-model covariance (Phase 2 ✅, D23a)
 │   ├── optimize.py            ← alpha-driven weighting + constraints (Phase 2 ✅, D24/D25)
 │   ├── options.py             ← Black-Scholes for the covered-call overlay (Phase 2b ✅)
-│   ├── covered_calls.py       ← ⏳ covered call selection + roll logic
-│   ├── execute.py             ← ⏳ order routing + Alpaca execution
-│   ├── risk.py                ← ⏳ pre-trade risk gate
-│   └── monitor.py             ← ⏳ drift monitor + NAV tracking
+│   ├── broker.py              ← Alpaca write client: orders (Phase 3 ✅)
+│   ├── covered_calls.py       ← ⏳ covered call selection (Phase 4)
+│   ├── execute.py             ← order routing + execution (Phase 3 ✅)
+│   ├── risk.py                ← pre-trade risk gate (Phase 3 ✅)
+│   └── monitor.py             ← NAV tracking + drift telemetry (Phase 3 ✅)
 ├── dashboard/                 ← ⏳ Phase 5
 │   ├── app.py                 ← FastAPI backend
 │   └── static/index.html      ← single-page dashboard
@@ -64,7 +65,7 @@ sharpe-engine/
 │   ├── init_db.py             ← create the PostgreSQL schema
 │   ├── backfill.py            ← one-time historical data pull
 │   ├── backtest.py            ← ⏳ walk-forward backtest
-│   ├── run_eod.py             ← ⏳ scheduler entry point (terminal 1)
+│   ├── run_eod.py             ← rebalance driver: --once / --serve (Phase 3 ✅)
 │   └── run_dashboard.py       ← ⏳ dashboard entry point (terminal 2)
 ├── tests/
 │   ├── unit/                  ← one file per engine module
@@ -165,7 +166,8 @@ SMTP_PASSWORD            # email alert credentials
 
 ## Where to start
 
-See docs/BUILD_ORDER.md. Phases 0-1 and **2 + 2b** are ✅ gate-passed: the
-factor model + covered-call overlay are validated in backtest (combined beats
-SPY on Sharpe under realistic premium, vol/drawdown cut unconditionally — D27).
-**Phase 3 (execution engine + risk gate) is next.**
+See docs/BUILD_ORDER.md. Phases 0-1 and **2 + 2b** are ✅ gate-passed (factor model +
+covered-call overlay validated in backtest — D27). **Phase 3 (execution engine + risk
+gate) is code-complete (3.1–3.7, equity-only) and tested**; its live-paper gate criteria
+(orders filling in the Alpaca dashboard, no duplicate orders on re-run, SIGTERM shutdown)
+are pending a run against the paper account. **Phase 4 (covered-call overlay) is next.**

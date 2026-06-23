@@ -22,10 +22,12 @@ from scripts import run_eod
 
 # --------------------------------------------------------------- fakes ----
 class _FakeClient:
-    def __init__(self, positions=None, equity=100_000.0, cash=5_000.0, raise_positions=False):
+    def __init__(self, positions=None, equity=100_000.0, cash=5_000.0, raise_positions=False,
+                 calendar=None):
         self._positions = positions or {}        # {symbol: (qty, market_value)}
         self._equity, self._cash = equity, cash
         self._raise = raise_positions
+        self._calendar = calendar or []          # ISO date strings of trading days
 
     def account(self):
         return {"equity": self._equity, "cash": self._cash}
@@ -35,6 +37,9 @@ class _FakeClient:
             raise AlpacaAPIError("*", "all_positions", "503 unreachable")
         return [{"symbol": s, "qty": q, "market_value": mv}
                 for s, (q, mv) in self._positions.items()]
+
+    def market_calendar(self, start, end):
+        return [{"date": d} for d in self._calendar if start <= d <= end]
 
 
 class _FakeBroker:
@@ -145,3 +150,66 @@ def test_run_cycle_blocks_when_alpaca_unreachable():
             client=_FakeClient(raise_positions=True), broker=_FakeBroker(), db_engine=eng,
             settings=load_settings(), as_of=date(2026, 7, 1), force=True,
             targets_fn=_targets({"AAPL": 0.05}, {"AAPL": "x"}, {"AAPL": 100.0}))
+
+
+# ============================== scheduler (3.7) ============================== #
+def test_is_first_trading_day_of_month():
+    # July 2026 trading days start Wed Jul 1.
+    client = _FakeClient(calendar=["2026-07-01", "2026-07-02", "2026-07-03"])
+    assert run_eod.is_first_trading_day_of_month(client, date(2026, 7, 1)) is True
+    assert run_eod.is_first_trading_day_of_month(client, date(2026, 7, 2)) is False
+
+
+def test_daily_job_rebalances_on_first_trading_day():
+    eng = _engine()
+    broker = _FakeBroker()
+    ingested = []
+    res = run_eod.daily_job(
+        client=_FakeClient(), broker=broker, db_engine=eng, settings=load_settings(),
+        as_of=date(2026, 7, 1),
+        ingest_fn=ingested.append,
+        targets_fn=_targets({"AAPL": 0.05}, {"AAPL": "Information Technology"}, {"AAPL": 100.0}),
+        trading_day_fn=lambda c, d: True, first_trading_day_fn=lambda c, d: True)
+    assert res.status == "rebalanced" and res.cycle.status == "executed"
+    assert ingested == ["2026-07-01"]                    # data refreshed before the cycle
+    assert len(_rows(eng, db.orders)) == 1
+
+
+def test_daily_job_monitors_on_non_rebalance_day():
+    eng = _engine()
+    broker = _FakeBroker()
+    res = run_eod.daily_job(
+        client=_FakeClient(), broker=broker, db_engine=eng, settings=load_settings(),
+        as_of=date(2026, 7, 2),
+        trading_day_fn=lambda c, d: True, first_trading_day_fn=lambda c, d: False)
+    assert res.status == "monitored"
+    assert broker.submitted == [] and _rows(eng, db.orders) == []   # no trading
+    assert len(_rows(eng, db.snapshots)) == 1                       # monitor still snapshots
+
+
+def test_daily_job_skips_non_trading_day():
+    eng = _engine()
+    broker = _FakeBroker()
+    ingested = []
+    res = run_eod.daily_job(
+        client=_FakeClient(), broker=broker, db_engine=eng, settings=load_settings(),
+        as_of=date(2026, 7, 4), ingest_fn=ingested.append,
+        trading_day_fn=lambda c, d: False)
+    assert res.status == "not_trading_day"
+    assert ingested == [] and broker.submitted == []                # nothing ran
+
+
+def test_graceful_shutdown_finishes_stage_then_cancels():
+    calls = []
+
+    class _Sched:
+        def shutdown(self, wait=False):
+            calls.append(("shutdown", wait))
+
+    class _Brk:
+        def cancel_all_orders(self):
+            calls.append(("cancel_all",))
+            return 3
+
+    run_eod.graceful_shutdown(_Sched(), _Brk())
+    assert calls == [("shutdown", True), ("cancel_all",)]           # finish stage, then cancel
