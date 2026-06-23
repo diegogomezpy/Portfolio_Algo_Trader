@@ -42,7 +42,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from engine import (  # noqa: E402
-    covariance, covered_calls, factors, ingest, monitor, optimize, reconcile, risk, sectors,
+    alerts, covariance, covered_calls, factors, ingest, monitor, optimize, reconcile, risk, sectors,
 )
 from engine.config import load_settings  # noqa: E402
 from engine.execute import ExecReport, plan_orders, submit_and_track  # noqa: E402
@@ -197,6 +197,9 @@ def run_cycle(
         n_written = len(written or [])
 
     mon = monitor.monitor_once(client, db_engine, target_weights=weights.to_dict())
+    if alert:
+        alert(f"rebalance {as_of.isoformat()} complete: {report.submitted} submitted, "
+              f"{report.filled} filled, {n_closed} calls closed, {n_written} written")
     log.info("cycle executed", extra={"date": as_of.isoformat(), "closed": n_closed,
                                       "written": n_written, **vars(report)})
     return CycleResult("executed", weights, rc, report, mon,
@@ -321,7 +324,8 @@ def graceful_shutdown(scheduler, broker) -> None:
         log.error("cancel-all on shutdown failed", extra={"error": str(exc)})
 
 
-def serve(*, env: str, settings, client, broker, db_engine, hour: int = 16, minute: int = 10) -> None:
+def serve(*, env: str, settings, client, broker, db_engine, alert=None,
+          hour: int = 16, minute: int = 10) -> None:
     """Run the continuous APScheduler process (blocks until SIGTERM/SIGINT).
 
     Two jobs: a weekday EOD job at ``hour:minute`` America/New_York (the holiday gate +
@@ -335,7 +339,7 @@ def serve(*, env: str, settings, client, broker, db_engine, hour: int = 16, minu
     sched = BlockingScheduler(timezone=pytz.timezone("America/New_York"))
     sched.add_job(
         lambda: daily_job(client=client, broker=broker, db_engine=db_engine, settings=settings,
-                          as_of=date.today(), overlay=True,
+                          as_of=date.today(), overlay=True, alert=alert,
                           ingest_fn=lambda d: ingest.run_daily_ingest(env=env, as_of=d)),
         "cron", day_of_week="mon-fri", hour=hour, minute=minute, id="eod")
     sched.add_job(lambda: continuous_monitor_job(client, db_engine),
@@ -387,9 +391,12 @@ def main() -> None:
     client = config.get_alpaca_client()
     broker = Broker(require_env("ALPACA_API_KEY"), require_env("ALPACA_SECRET_KEY"))
     db_engine = db.get_engine()
+    smtp = str(getattr(settings.alerts, "smtp_host", "") or "").strip()
+    alerter = alerts.make_alerter(db_engine, settings, dry_run=(smtp in ("", "TBD")))
 
     if args.serve:
-        serve(env=args.env, settings=settings, client=client, broker=broker, db_engine=db_engine)
+        serve(env=args.env, settings=settings, client=client, broker=broker,
+              db_engine=db_engine, alert=alerter)
         return
 
     if not args.skip_ingest:
@@ -397,7 +404,7 @@ def main() -> None:
 
     result = run_cycle(client=client, broker=broker, db_engine=db_engine,
                        settings=settings, as_of=args.date, force=args.force,
-                       overlay=not args.no_overlay)
+                       overlay=not args.no_overlay, alert=alerter)
     print(f"\nCycle {args.date} → {result.status}")
     if result.exec_report:
         r = result.exec_report
