@@ -138,7 +138,8 @@ alerts:
   smtp_port: 587
   email_to: diegogomezzx@gmail.com   # alert recipient (personal, for testing)
   email_from: diegogomezzx@gmail.com # sender (defaults to email_to); SMTP password from env SMTP_PASSWORD
-  send_enabled: false        # alerts stay dry-run (recorded to the alerts table, shown on the
-                             # dashboard, NOT emailed) until SMTP_PASSWORD holds a working Gmail
-                             # App Password. Flip to true once a test send authenticates.
+  send_enabled: true         # LIVE 2026-06-23: a real test send authenticated against
+                             # smtp.gmail.com with the 16-char Gmail App Password in
+                             # SMTP_PASSWORD. Alerts now email (and still record to the alerts
+                             # table + show on the dashboard). Set false to return to dry-run.
   staleness_threshold_pct: 0.10
