@@ -131,6 +131,6 @@ alerts:
   smtp_host: TBD              # set this to enable email; until then alerts run dry-run
                              # (recorded to the alerts table + logged, no email sent)
   smtp_port: 587
-  email_to: TBD              # alert recipient
-  email_from: TBD            # sender (defaults to email_to); SMTP password from env SMTP_PASSWORD
+  email_to: pasantemesa@cadiem.py   # alert recipient (test)
+  email_from: pasantemesa@cadiem.py # sender (defaults to email_to); SMTP password from env SMTP_PASSWORD
   staleness_threshold_pct: 0.10

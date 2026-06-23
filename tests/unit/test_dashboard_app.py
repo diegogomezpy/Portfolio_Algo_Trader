@@ -17,7 +17,8 @@ def test_create_app_exposes_expected_routes():
     db.create_all(eng)
     app = create_app(eng)
     paths = {r.path for r in app.routes}
-    assert {"/", "/api/state", "/api/orders", "/api/calls", "/api/factors", "/api/alerts"} <= paths
+    assert {"/", "/backtest", "/api/state", "/api/orders", "/api/calls",
+            "/api/factors", "/api/alerts"} <= paths
 
 
 def test_index_route_serves_html():

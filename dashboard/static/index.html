@@ -12,12 +12,17 @@
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--fg);
          font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
-  header { display:flex; align-items:baseline; gap:14px; padding:16px 20px; border-bottom:1px solid var(--line); }
+  header { display:flex; align-items:center; gap:16px; padding:12px 20px; border-bottom:1px solid var(--line); }
   header h1 { font-size:16px; margin:0; font-weight:600; letter-spacing:.3px; }
+  nav.tabs { display:flex; gap:4px; }
+  .tab { background:transparent; color:var(--muted); border:1px solid transparent; border-radius:6px;
+         padding:5px 14px; font-size:13px; cursor:pointer; font-weight:500; }
+  .tab:hover { color:var(--fg); }
+  .tab.active { color:var(--fg); background:var(--panel); border-color:var(--line); }
+  header .gate { font-size:12px; }
   header .upd { color:var(--muted); font-size:12px; margin-left:auto; }
   .kpis { display:flex; flex-wrap:wrap; gap:12px; padding:16px 20px; }
-  .kpi { background:var(--panel); border:1px solid var(--line); border-radius:8px;
-         padding:12px 16px; min-width:140px; }
+  .kpi { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 16px; min-width:140px; }
   .kpi .label { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
   .kpi .val { font-size:20px; font-weight:600; margin-top:4px; font-variant-numeric:tabular-nums; }
   .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:0 20px 24px; }
@@ -35,21 +40,33 @@
   .pill.ok { background:rgba(63,185,80,.15); color:var(--green); }
   .pill.bad { background:rgba(248,81,73,.15); color:var(--red); }
   .empty { color:var(--muted); padding:14px; font-style:italic; }
+  #backtest-view { display:none; }
+  #bt { width:100%; height:calc(100vh - 58px); border:0; display:block; background:var(--bg); }
 </style>
 </head>
 <body>
 <header>
-  <h1>sharpe-engine</h1><span class="mut" id="gate"></span>
+  <h1>sharpe-engine</h1>
+  <nav class="tabs">
+    <button class="tab active" data-view="live">Live</button>
+    <button class="tab" data-view="backtest">Backtest</button>
+  </nav>
+  <span class="gate mut" id="gate"></span>
   <span class="upd" id="upd">connecting…</span>
 </header>
-<div class="kpis" id="kpis"></div>
-<div class="grid">
-  <div class="panel"><h2>Positions vs target</h2><div class="body" id="positions"></div></div>
-  <div class="panel"><h2>Covered calls</h2><div class="body" id="calls"></div></div>
-  <div class="panel"><h2>Factor scores (held)</h2><div class="body" id="factors"></div></div>
-  <div class="panel"><h2>Recent orders</h2><div class="body" id="orders"></div></div>
-  <div class="panel" style="grid-column:1/-1"><h2>Alerts</h2><div class="body" id="alerts"></div></div>
+
+<div id="live-view">
+  <div class="kpis" id="kpis"></div>
+  <div class="grid">
+    <div class="panel"><h2>Positions vs target</h2><div class="body" id="positions"></div></div>
+    <div class="panel"><h2>Covered calls</h2><div class="body" id="calls"></div></div>
+    <div class="panel"><h2>Factor scores (held)</h2><div class="body" id="factors"></div></div>
+    <div class="panel"><h2>Recent orders</h2><div class="body" id="orders"></div></div>
+    <div class="panel" style="grid-column:1/-1"><h2>Alerts</h2><div class="body" id="alerts"></div></div>
+  </div>
 </div>
+
+<div id="backtest-view"><iframe id="bt" title="backtest dashboard"></iframe></div>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -58,6 +75,19 @@ const usd = v => v==null ? "–" : "$"+num(v,0);
 const pct = v => v==null ? "–" : (100*v).toFixed(1)+"%";
 const sign = v => v==null ? "mut" : v>0 ? "pos" : v<0 ? "neg" : "mut";
 
+// ---- tabs -------------------------------------------------------------
+let activeView = "live";
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
+  activeView = t.dataset.view;
+  document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
+  $("live-view").style.display = activeView === "live" ? "" : "none";
+  $("backtest-view").style.display = activeView === "backtest" ? "block" : "none";
+  const bt = $("bt");
+  if (activeView === "backtest" && !bt.src) bt.src = "/backtest";   // lazy-load once
+  if (activeView === "live") refresh();
+});
+
+// ---- live view --------------------------------------------------------
 async function get(p){ try { const r = await fetch(p); return r.ok ? await r.json() : null; } catch { return null; } }
 
 function table(rows, cols){
@@ -78,10 +108,11 @@ function kpis(s){
   $("kpis").innerHTML = items.map(([l,v])=>`<div class="kpi"><div class="label">${l}</div><div class="val">${v}</div></div>`).join("");
   const g = s.risk_gate_passed;
   $("gate").innerHTML = g==null ? "" : `risk gate <span class="pill ${g?'ok':'bad'}">${g?'PASS':'BLOCK'}</span>` +
-      (g ? "" : ` <span class="mut">${s.risk_gate_reason||''}</span>`);
+      (g ? "" : ` ${s.risk_gate_reason||''}`);
 }
 
 async function refresh(){
+  if (activeView !== "live") return;
   const [s, orders, calls, factors, alerts] = await Promise.all(
     ["/api/state","/api/orders","/api/calls","/api/factors","/api/alerts"].map(get));
   if(!s){ $("upd").textContent = "backend unreachable"; return; }

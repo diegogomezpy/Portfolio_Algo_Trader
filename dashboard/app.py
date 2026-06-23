@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse
 from dashboard import data
 
 _INDEX = Path(__file__).parent / "static" / "index.html"
+_BACKTEST = Path(__file__).parent.parent / "reports" / "backtest_dashboard.html"
 
 
 def create_app(db_engine=None) -> FastAPI:
@@ -28,6 +29,14 @@ def create_app(db_engine=None) -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
         return _INDEX.read_text() if _INDEX.exists() else "<h1>sharpe-engine dashboard</h1>"
+
+    @app.get("/backtest", response_class=HTMLResponse)
+    def backtest() -> str:
+        """Serve the static backtest-analytics dashboard (the 'Backtest' tab's iframe)."""
+        if _BACKTEST.exists():
+            return _BACKTEST.read_text()
+        return ("<div style='font:14px sans-serif;color:#8b949e;padding:40px'>"
+                "No backtest dashboard yet — run <code>python scripts/build_dashboard.py</code>.</div>")
 
     @app.get("/api/state")
     def state() -> dict:
