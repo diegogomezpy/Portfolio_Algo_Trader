@@ -42,7 +42,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from engine import covariance, factors, options, optimize, sectors  # noqa: E402
+from engine import covariance, factors, options, options_data, optimize, sectors  # noqa: E402
 from engine.config import load_settings  # noqa: E402
 from engine.logger import get_logger  # noqa: E402
 from scripts import backtest as eq  # equity walk-forward helpers  # noqa: E402
@@ -97,12 +97,19 @@ def estimate_iv(rv_name: pd.Series, vix: float, rv_spx: float, mode: str) -> pd.
 # Walk-forward overlay
 # ====================================================================== #
 def run_overlay(start: date, end: date, *, settings=None, iv_mode: str = "vix_scaled",
-                iv_scale: float | None = None, target_delta: float | None = None) -> pd.DataFrame:
+                iv_scale: float | None = None, target_delta: float | None = None,
+                premium_source: str = "model") -> pd.DataFrame:
     """Walk-forward equity book + covered-call overlay; one row per rebalance.
 
     Columns: equity_net (book, no overlay), cc_net (book + covered calls), premium_income,
     upside_given_up, assignment_rate, turnover, n_names. Both *_net are net of the same
     equity transaction costs; cc_net also nets the premium-execution haircut.
+
+    ``premium_source='dolthub'`` (DECISIONS D33) replaces the modeled premium with REAL
+    historical call mids (and real strikes) from DoltHub where available — falling back to the
+    BS model elsewhere — and records implied-vs-realized vol per name for the variance-risk-
+    premium analysis (extra columns: real_coverage, implied_vol, realized_vol_fwd, vrp_vol,
+    vrp_var). Default ``'model'`` is the original BS path.
     """
     settings = settings or load_settings()
     delta = target_delta if target_delta is not None else settings.covered_calls.target_delta
@@ -153,13 +160,43 @@ def run_overlay(start: date, end: date, *, settings=None, iv_mode: str = "vix_sc
 
         S0 = panel.loc[d0, names].to_numpy()
         K = options.strike_for_delta(S0, T, iv.to_numpy(), delta)
-        strike_ret = pd.Series(K / S0 - 1.0, index=names)
+        strike_ret = pd.Series(K / S0 - 1.0, index=names)                      # BS baseline
         prem_yield = pd.Series(options.bs_call_price(S0, K, T, iv.to_numpy()) / S0, index=names) * (1.0 - slippage)
+
+        # Real premiums + implied vol from DoltHub (D33). Three-way treatment of each held name:
+        #   1. real DoltHub chain        → real mid premium + real strike cap (+ VRP data)
+        #   2. missing but optionable    → keep the BS-imputed premium (a data gap, still hedgeable)
+        #   3. missing & NOT optionable  → leave UNHEDGED (live we couldn't write a call at all)
+        impl_v, real_v, real_names, unhedged = {}, {}, set(), []
+        if premium_source == "dolthub":
+            spot = pd.Series(S0, index=names)
+            dte_min, dte_max = settings.covered_calls.min_dte_entry, settings.covered_calls.max_dte_entry
+            chains = options_data.fetch_calls(list(names), d0.date(), dte_min=dte_min, dte_max=dte_max)
+            for s in names:
+                c = options_data.select_call(chains.get(s, []), d0.date(), target_delta=delta,
+                                             dte_min=dte_min, dte_max=dte_max)
+                py = options_data.premium_yield(c, float(spot[s]), slippage=slippage) if c else None
+                if py is None:
+                    continue
+                prem_yield[s] = py                                            # real mid premium
+                strike_ret[s] = float(c["strike"]) / float(spot[s]) - 1.0     # real strike cap
+                real_names.add(s)
+                ivc = float(c["vol"]) if c.get("vol") is not None and not pd.isna(c["vol"]) else np.nan
+                rvf = options_data.forward_realized_vol(panel[s], d0, d1)
+                if not np.isnan(ivc) and rvf is not None:
+                    impl_v[s], real_v[s] = ivc, rvf
+            missing = [s for s in names if s not in real_names]
+            optionable = options_data.optionable_underlyings(missing) if missing else set()
+            unhedged = [s for s in missing if s not in optionable]
+            for s in unhedged:                                               # can't be hedged live
+                strike_ret[s] = 1e9                                          # no cap → keeps full eq_ret
+                prem_yield[s] = 0.0                                          # no premium collected
+
         cc_ret = options.covered_call_return(eq_ret, strike_ret, prem_yield)
         assigned = eq_ret > strike_ret
 
         cost = eq.transaction_cost(prev_w, w, adv, **cost_kw)
-        rows.append({
+        row = {
             "date": d1.date(), "n_names": len(names),
             "equity_net": float((w * eq_ret).sum()) - cost,
             "cc_net": float((w * cc_ret).sum()) - cost,
@@ -167,7 +204,23 @@ def run_overlay(start: date, end: date, *, settings=None, iv_mode: str = "vix_sc
             "upside_given_up": float((w * (eq_ret - strike_ret).clip(lower=0)).sum()),
             "assignment_rate": float(assigned.mean()),
             "turnover": eq.turnover(prev_w, w),
-        })
+        }
+        if premium_source == "dolthub":
+            n = max(len(names), 1)
+            row["real_coverage"] = len(real_names) / n           # priced from real chains
+            row["n_unhedged"] = len(unhedged)                    # not optionable → no call written
+            row["unhedged_weight"] = float(w.reindex(unhedged).sum()) if unhedged else 0.0
+            vn = [s for s in names if s in impl_v]               # names with both implied & realized
+            if vn:
+                ww = w.reindex(vn); ww = ww / ww.sum()
+                iv_s, rv_s = pd.Series(impl_v).reindex(vn), pd.Series(real_v).reindex(vn)
+                row["implied_vol"] = float((ww * iv_s).sum())
+                row["realized_vol_fwd"] = float((ww * rv_s).sum())
+                row["vrp_vol"] = row["implied_vol"] - row["realized_vol_fwd"]
+                row["vrp_var"] = float((ww * (iv_s ** 2 - rv_s ** 2)).sum())
+            else:
+                row["implied_vol"] = row["realized_vol_fwd"] = row["vrp_vol"] = row["vrp_var"] = np.nan
+        rows.append(row)
         prev_w = eq.drift_weights(w, eq_ret)
 
     return pd.DataFrame(rows)
@@ -293,6 +346,32 @@ def summarize(results_by_mode: dict[str, pd.DataFrame]) -> dict:
               f"{drag['cagr_lagged']*100:+.2f}%  →  drag {drag['drag_bps_per_yr']:.1f} bps/yr "
               f"({drag['drag_total_pct']:.2f}% total over {drag['months']} mo)")
 
+    # Real premiums + VARIANCE RISK PREMIUM (DoltHub, D33): does the modeled premium hold up
+    # against real prices, and how much VRP did we actually harvest (implied vs realized vol)?
+    real = results_by_mode.get("dolthub_real")
+    if real is not None and "vrp_var" in real.columns:
+        cov = float(real["real_coverage"].mean()) if "real_coverage" in real else float("nan")
+        real_prem = real["premium_income"].mean() * 12
+        mkt_prem = results_by_mode.get("vix_scaled", real)["premium_income"].mean() * 12
+        uw = float(real["unhedged_weight"].mean()) if "unhedged_weight" in real else 0.0
+        print(f"\n  Real premiums + variance risk premium (DoltHub real chains, "
+              f"{cov*100:.0f}% of name-months covered):")
+        print(f"    hedge mix: {cov*100:.0f}% real chains + BS-imputed (optionable, data gap), "
+              f"{uw*100:.1f}% of NAV left UNHEDGED (non-optionable on Alpaca, e.g. DDS/UI/WTM)")
+        print(f"    premium/yr   real {real_prem*100:.1f}%   vs   modeled @ market-IV {mkt_prem*100:.1f}%"
+              f"   ({'model OPTIMISTIC' if mkt_prem > real_prem else 'model conservative'})")
+        v = real.dropna(subset=["implied_vol", "realized_vol_fwd"])
+        if not v.empty:
+            imp, rea = float(v["implied_vol"].mean()), float(v["realized_vol_fwd"].mean())
+            vrp_var, ratio = float(v["vrp_var"].mean()), (imp / rea if rea > 0 else float("nan"))
+            hit = float((v["vrp_vol"] > 0).mean())
+            out["vrp"] = {"implied_vol": imp, "realized_vol": rea, "vrp_vol": imp - rea,
+                          "vrp_var": vrp_var, "iv_rv_ratio": ratio, "hit_rate": hit, "coverage": cov}
+            print(f"    sold @ implied vol {imp*100:.1f}%   names realized {rea*100:.1f}%   "
+                  f"→  VRP {(imp - rea) * 100:+.1f} vol pts  (IV/RV {ratio:.2f}; IV>RV {hit*100:.0f}% of months)")
+            print(f"    variance risk premium  IV²−RV² = {vrp_var:+.4f}   "
+                  f"({'options were RICH — selling them was paid for risk' if vrp_var > 0 else 'options were CHEAP — no edge'})")
+
     # Verdict (DECISIONS D27, refined D30): vol / drawdown / premium improve
     # UNCONDITIONALLY across every IV assumption (exact, data-driven). Sharpe AND the
     # assignment rate both depend on the IV assumption — a lower IV writes tighter
@@ -301,9 +380,11 @@ def summarize(results_by_mode: dict[str, pd.DataFrame]) -> dict:
     # for range, not used as a pass/fail bar: its tight strikes overstate assignment).
     floor = out["modes"].get("realized")
     market = out["modes"].get("vix_scaled", out["modes"][list(out["modes"])[-1]])
-    vol_ok = all(m["ann_vol"] < eq_metrics["ann_vol"] for m in out["modes"].values())
-    dd_ok = all(m["max_drawdown"] >= eq_metrics["max_drawdown"] - 1e-9 for m in out["modes"].values())
-    prem_ok = all(m["premium_yr"] > 0 for m in out["modes"].values())
+    # Gate judges the MODELED sensitivity (realized / vix_scaled); dolthub_real is informational.
+    model_modes = [m for k, m in out["modes"].items() if k != "dolthub_real"]
+    vol_ok = all(m["ann_vol"] < eq_metrics["ann_vol"] for m in model_modes)
+    dd_ok = all(m["max_drawdown"] >= eq_metrics["max_drawdown"] - 1e-9 for m in model_modes)
+    prem_ok = all(m["premium_yr"] > 0 for m in model_modes)
     assign_ok = market["assignment"] < 0.30
     sharpe_ok = market["sharpe"] >= eq_metrics["sharpe"] - 1e-9
     print("\n  Gate:")
@@ -327,6 +408,8 @@ def main() -> None:
     ap.add_argument("--start", type=lambda s: date.fromisoformat(s), default=date(2021, 7, 1))
     ap.add_argument("--end", type=lambda s: date.fromisoformat(s), default=date.today())
     ap.add_argument("--validate-bxm", action="store_true", help="cross-check the engine vs ^BXM")
+    ap.add_argument("--no-real-premium", action="store_true",
+                    help="skip the DoltHub real-premium run (model-only; no network)")
     args = ap.parse_args()
     for n in ("engine.factors", "engine.covariance", "scripts.backtest"):
         logging.getLogger(n).setLevel(logging.WARNING)
@@ -334,6 +417,10 @@ def main() -> None:
 
     results = {mode: run_overlay(args.start, args.end, settings=settings, iv_mode=mode)
                for mode in ("realized", "vix_scaled")}
+    if not args.no_real_premium:                 # real DoltHub premiums + the VRP analysis
+        print("  pulling real historical chains from DoltHub (cached after first run)…")
+        results["dolthub_real"] = run_overlay(args.start, args.end, settings=settings,
+                                              iv_mode="vix_scaled", premium_source="dolthub")
     summarize(results)
 
     if args.validate_bxm:

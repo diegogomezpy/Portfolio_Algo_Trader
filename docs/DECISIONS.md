@@ -862,3 +862,43 @@ to the gate; `risk._check_leverage_cap` hard-blocks `leverage > max_leverage`. T
 weights, and box/sector caps are **unchanged** — they operate in fractions of the deployable
 base, so only the dollar base scales. The backtest stays 1x (it is return-based, not sized);
 the −50% figure is a manual extrapolation, not a backtested number.
+
+
+## D33 — Real historical option premiums (DoltHub) + variance-risk-premium analysis
+
+**Decision.** Replace the Black-Scholes-modeled covered-call premium in the Phase 2b backtest
+with **real historical call prices** from the free DoltHub `post-no-preference/options` database
+where available, using a three-way per-name hedgeability treatment:
+1. real DoltHub chain → real mid premium + real strike cap (+ implied vol for the VRP readout);
+2. missing from DoltHub but **optionable on Alpaca** → keep the BS-imputed premium (data gap,
+   still hedgeable live);
+3. missing **and** not optionable on Alpaca → leave the position **unhedged** (live we could not
+   write a call at all).
+
+**Why.** The Phase 2b caveat was always "premium is modeled — no free historical single-name IV"
+(D27). DoltHub publishes free daily EOD chains with greeks + IV back to 2020, covering the whole
+window — with whole-day scraper gaps (resolved to the nearest trading day ±3; an adjacent chain is
+~identical for premium) and a **liquidity-biased** universe (~70% of held name-months have real
+chains; the rest skew mega-cap-light). Cross-referencing the gaps against Alpaca's
+option-contracts endpoint (`expiration_date_gte=today` — without it the endpoint omits a name's
+nearest contracts and falsely reads non-optionable) shows only **3 of 65** ever-missing names
+(DDS / UI / WTM) are genuinely non-optionable, so leaving them unhedged costs **~1% of NAV**.
+
+**Result (58 mo, 2021-09 → 2026-06).** Real-premium overlay: **ann +19.6%, vol 15.5%, Sharpe
+1.24, maxDD −16.7%, premium 24.8%/yr, assignment 22%** — vs the modeled market-IV case (Sharpe
+1.33, premium 26.3%) and equity-only (Sharpe 0.63). The model was only **mildly optimistic**; the
+overlay's edge clearly survives real prices. **Variance risk premium:** sold at implied vol
+**38.4%** vs underlyings' realized **33.2%** → **+5.2 vol points**, with IV > RV in **78%** of
+months (IV/RV 1.16) — a real, persistent vol premium. But the variance-term **IV²−RV² = −0.029**
+(negative): variance is **tail-dominated**, so a few large single-name realizations swamp the
+steady premium. The covered call's 0.30-delta strike **caps** that tail, which is why the overlay
+still beats equity-only despite the negative raw variance premium. The firm verdict still comes
+from live paper-trading.
+
+**Code.** New `engine/options_data.py` — DoltHub SQL-API fetch with ±3-day gap resolution + a
+per-date cache (git-ignored `data/ref/dolthub_options/`); pure `select_call` / `premium_yield` /
+`forward_realized_vol` / `variance_risk_premium`; `optionable_underlyings` (Alpaca option-contracts
+probe, cached to `data/ref/optionable_alpaca.json`). `scripts/backtest_covered_calls.py` gains
+`run_overlay(premium_source="dolthub")` (default `"model"` is the original BS path, offline) with
+the three-way hedge treatment, plus a real-vs-modeled + VRP report in `summarize()`. The gate
+still judges only the **modeled** cases (realized / vix_scaled); `dolthub_real` is informational.
