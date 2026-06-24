@@ -21,10 +21,13 @@ render() {  # render <unit> by substituting placeholders, write to /etc/systemd/
   echo "installed $DST/$1"
 }
 
-for u in sharpe-eod.service sharpe-dashboard.service sharpe-backup.service sharpe-backup.timer; do
+for u in sharpe-eod.service sharpe-dashboard.service sharpe-backup.service sharpe-backup.timer \
+         sharpe-watchdog.service sharpe-watchdog.timer; do
   render "$u"
 done
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now sharpe-eod.service sharpe-dashboard.service sharpe-backup.timer
-echo "== services up. Check: systemctl status sharpe-eod sharpe-dashboard; systemctl list-timers sharpe-backup =="
+sudo systemctl enable --now sharpe-eod.service sharpe-dashboard.service \
+     sharpe-backup.timer sharpe-watchdog.timer
+echo "== services up. Check: systemctl status sharpe-eod sharpe-dashboard;"
+echo "   systemctl list-timers sharpe-backup sharpe-watchdog =="

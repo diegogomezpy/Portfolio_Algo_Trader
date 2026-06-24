@@ -140,7 +140,7 @@ This renders the unit files for this host (user/dir/bucket), enables and starts
 systemctl status sharpe-eod sharpe-dashboard --no-pager
 journalctl -u sharpe-eod -n 40 --no-pager        # should show "scheduler started ... EOD 16:10 ET"
 curl -s localhost:8000/api/state | head -c 300   # dashboard answering
-systemctl list-timers sharpe-backup --no-pager
+systemctl list-timers sharpe-backup sharpe-watchdog --no-pager   # both timers scheduled
 ```
 
 **View the dashboard** from your laptop via an SSH tunnel (no public exposure):
@@ -152,11 +152,61 @@ gcloud compute ssh "$VM" --zone="$ZONE" -- -N -L 8000:localhost:8000
 
 ---
 
+## Resilience & self-healing (what keeps it up)
+
+Three layers, weakest failure to strongest:
+
+1. **Process crash / clean exit** → `systemd Restart=always` (`RestartSec=10`) restarts each
+   service within ~10s.
+2. **VM reboot** (GCP maintenance, OS update, manual) → the services are `enable`d, so they
+   start on boot. GCP also auto-restarts the VM on host failure (default on).
+3. **Alive-but-wedged** (process running but the dashboard stops answering, or a unit ended up
+   inactive) → the **`sharpe-watchdog.timer`** runs `deploy/watchdog.sh` every 5 min, restarts
+   the offending unit, and **emails you** (via `deploy/notify.py`, your existing Gmail SMTP).
+
+Check it: `systemctl list-timers sharpe-watchdog --no-pager` · `journalctl -u sharpe-watchdog -n 20`.
+Test it: `sudo systemctl stop sharpe-dashboard` → within 5 min the watchdog restarts it and emails.
+
+**Optional, strongest (VM resurrection):** if you want the VM itself recreated when it's truly
+dead, wrap it in a **Managed Instance Group (size 1) with an HTTP health check** on the dashboard
+— GCP then auto-heals the instance. More moving parts; overkill for a single paper VM, but the
+path is there if uptime becomes critical at go-live.
+
+## Safe updates (no bricking)
+
+Use **`deploy/update.sh`** — it pulls `main`, installs deps, runs the offline unit suite, and
+**only restarts if green**; on any failure it rolls back to the previous commit and leaves the
+running services untouched (or restarts the rollback if a restart already happened). So a bad
+push can't take down live trading.
+
+```bash
+cd ~/Portfolio_Algo_Trader && bash deploy/update.sh
+```
+
+- **Schema changes:** `update.sh` runs `init_db.py` (adds new *tables*), but new *columns* need a
+  manual `ALTER` first (as with `snapshots.last_equity`) — do that before updating.
+- **Unit-file changes:** if you edited anything under `deploy/systemd/`, also re-run
+  `bash deploy/install_services.sh "$PROJECT-sharpe-backups"`.
+
+## Accessing the dashboard
+
+It already runs on the VM (`sharpe-dashboard.service`), bound to **localhost** — it has no auth,
+so it's never exposed publicly. Two ways in:
+
+- **SSH tunnel (default, free, most secure):**
+  `gcloud compute ssh "$VM" --zone="$ZONE" -- -N -L 8000:localhost:8000` → http://localhost:8000
+- **IAP TCP tunnel (convenient, still private, identity-gated):**
+  `gcloud compute start-iap-tunnel "$VM" 8000 --local-host-port=localhost:8000 --zone="$ZONE"`
+  (grant yourself `roles/iap.tunnelResourceAccessor`; no SSH key juggling).
+
+Do **not** open port 8000 to `0.0.0.0` — the app has no login. If you ever want a real URL, put it
+behind an IAP-secured HTTPS load balancer (auth at the edge) rather than exposing the port.
+
 ## Ongoing operations
 
 | Task | Command (on the VM, in `~/Portfolio_Algo_Trader`) |
 |---|---|
-| **Deploy code update** | `git pull && ./.venv/bin/pip install -r requirements.txt && bash deploy/install_services.sh "$PROJECT-sharpe-backups"` |
+| **Deploy code update** | `bash deploy/update.sh` (pulls, tests, restarts, auto-rolls-back on failure) |
 | **Rotate a secret** | update it in Secret Manager, then `bash deploy/fetch_secrets.sh && sudo systemctl restart sharpe-eod sharpe-dashboard` |
 | **Tail logs** | `journalctl -u sharpe-eod -f`  ·  `tail -f logs/sharpe-engine.log` |
 | **Force a rebalance now** | `sudo systemctl stop sharpe-eod && ./.venv/bin/python scripts/run_eod.py --once --force --env paper && sudo systemctl start sharpe-eod` |

@@ -1,0 +1,10 @@
+[Unit]
+# Health watchdog (paired with sharpe-watchdog.timer). Runs as root so it can restart
+# the other units; emails via notify.py (as the app user) on any intervention.
+Description=sharpe-engine health watchdog
+
+[Service]
+Type=oneshot
+Environment=APP_DIR=__APP_DIR__
+Environment=APP_USER=__APP_USER__
+ExecStart=__APP_DIR__/deploy/watchdog.sh
