@@ -119,6 +119,14 @@
 <table id="overlay"><thead><tr><th>Implied-vol assumption</th><th>Sharpe</th><th>Ann. return</th><th>Volatility</th><th>Max drawdown</th><th>Premium/yr</th><th>Assigned</th></tr></thead><tbody></tbody></table>
 <div class="call" id="breakeven"></div>
 
+<div class="sec">Variance risk premium &amp; real option premiums</div>
+<p class="sub" id="vrpsub" style="margin:2px 0 4px;"></p>
+<div class="kpis" id="vrpkpis"></div>
+<h2>Implied vol (sold) vs realized vol (over the hold)</h2>
+<div class="lg"><span><i class="sw" style="background:var(--accent,#5b9dff)"></i>implied vol — what we sold at</span><span><i class="sw" style="background:var(--spy,#8c99ad)"></i>realized vol — what the names did</span></div>
+<div id="vrpchart"></div>
+<div class="note" id="vrpnote"></div>
+
 <p class="foot" id="foot"></p>
 </div>
 
@@ -263,6 +271,23 @@ const DATA = /*__DASHBOARD_DATA__*/null;
   document.querySelector("#overlay tbody").innerHTML=O.rows.map(r=>{const win=r.sharpe>=E.sharpe;
     return `<tr><td>${r.label}</td><td style="font-weight:600;${win?'color:'+C.teal:''}">${r.sharpe.toFixed(2)}</td><td>${pct(r.ann)}</td><td>${pct(r.vol,0)}</td><td>${pct(r.maxdd,0)}</td><td>${pct(r.premium,0)}</td><td>${(r.assign*100).toFixed(0)}%</td></tr>`;}).join("");
   document.getElementById("breakeven").innerHTML=`<b style="font-weight:500">Verdict:</b> the overlay cuts volatility ${(E.vol*100).toFixed(0)}%→~${(O.rows[3].vol*100).toFixed(0)}% and drawdowns <i>unconditionally</i>. It beats the equity-only Sharpe of ${E.sharpe.toFixed(2)} once implied vol exceeds <b style="font-weight:500">${O.breakeven_mult}× realized</b> — single-name options realistically trade ~1.05–1.20× realized, so a Sharpe improvement (beating SPY&rsquo;s ${S.sharpe.toFixed(2)}) is the likely outcome.`;
+  const VRP=DATA.vrp;
+  if(VRP){
+    const mkt=O.rows[O.rows.length-1];                 // VIX-scaled (market) modeled overlay
+    const pp=(v,d=0)=>v==null?"—":(v*100).toFixed(d)+"%";
+    document.getElementById("vrpsub").textContent=`Premiums priced from REAL historical chains (DoltHub) where available — ${pp(VRP.real_coverage)} of name-months — Black-Scholes-imputed for optionable data gaps, and ${pp(VRP.unhedged_weight,1)} of NAV left unhedged where no listed options exist (DECISIONS D33).`;
+    document.getElementById("vrpkpis").innerHTML=[
+      {l:"Sharpe (real)",v:VRP.sharpe.toFixed(2),d:`modeled ${mkt.sharpe.toFixed(2)} · equity ${E.sharpe.toFixed(2)}`},
+      {l:"Premium/yr (real)",v:pp(VRP.premium),d:`modeled ${pp(mkt.premium)}`},
+      {l:"Sold @ implied vol",v:pp(VRP.implied_vol),d:`realized ${pp(VRP.realized_vol)}`},
+      {l:"Variance risk premium",v:(VRP.vrp_vol>=0?"+":"")+(VRP.vrp_vol*100).toFixed(1)+" pts",d:`IV/RV ${VRP.ratio.toFixed(2)}`},
+      {l:"IV > RV",v:pp(VRP.hit_rate),d:"of months"},
+      {l:"Real coverage",v:pp(VRP.real_coverage),d:`${pp(VRP.unhedged_weight,1)} unhedged`},
+    ].map(k=>`<div class="kpi"><div class="l">${k.l}</div><div class="v">${k.v}</div><div class="d">${k.d}</div></div>`).join("");
+    lineChart("vrpchart",VRP.labels,[{data:VRP.iv,color:C.blue,w:2},{data:VRP.rv,color:C.spy,w:2}],{h:200,lo:0,fmtY:v=>(v*100).toFixed(0)+"%"});
+    const tail=VRP.vrp_var==null?"":(VRP.vrp_var>=0?`positive (+${VRP.vrp_var.toFixed(3)})`:`slightly negative (${VRP.vrp_var.toFixed(3)}) — tail-dominated: a few large single-name moves spike realized variance`);
+    document.getElementById("vrpnote").innerHTML=`<b style="font-weight:600">Variance risk premium:</b> sold calls at ${pp(VRP.implied_vol)} implied vol vs ${pp(VRP.realized_vol)} realized — a <b style="font-weight:600">+${(VRP.vrp_vol*100).toFixed(1)} vol-point</b> edge, implied &gt; realized in ${pp(VRP.hit_rate)} of months (IV/RV ${VRP.ratio.toFixed(2)}). In variance terms (IV²−RV²) it is ${tail}. The 0.30-delta strike caps that tail, so the real-premium overlay (Sharpe ${VRP.sharpe.toFixed(2)}) still beats equity-only (${E.sharpe.toFixed(2)}). Real chains for ${pp(VRP.real_coverage)} of name-months; BS-imputed for optionable gaps; ${pp(VRP.unhedged_weight,1)} of NAV unhedged (non-optionable on Alpaca).`;
+  }
   document.getElementById("foot").textContent="sharpe-engine · factor equity (quality/value/momentum/low-vol, ~19 names, equal-weight, λ=0 alpha-driven) + 0.25-delta covered-call overlay · paper-trading research backtest on free IEX history from mid-2020. Not investment advice.";
 })();
 </script>

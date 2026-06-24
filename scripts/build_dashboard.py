@@ -277,6 +277,36 @@ def sleeves_block(settings) -> dict:
             for k in ("quality", "value", "momentum", "lowvol")}
 
 
+def vrp_block(settings) -> dict:
+    """Real-premium (DoltHub) + variance-risk-premium analysis for the dashboard (DECISIONS D33).
+
+    Runs the overlay with real historical chains and returns the real-vs-modeled metrics plus the
+    monthly implied-vs-realized-vol series for the Backtest-tab chart. Caches are warm, so the
+    extra walk-forward is fast and offline.
+    """
+    for name in ("scripts.backtest", "scripts.backtest_covered_calls", "engine.options_data"):
+        logging.getLogger(name).setLevel(logging.ERROR)
+    df = cc.run_overlay(START, END, settings=settings, iv_mode="vix_scaled", premium_source="dolthub")
+    s = df.set_index("date")
+    m = eq.portfolio_metrics(s["cc_net"])
+    v = df.dropna(subset=["implied_vol", "realized_vol_fwd"])
+    imp = float(v["implied_vol"].mean()) if not v.empty else float("nan")
+    rea = float(v["realized_vol_fwd"].mean()) if not v.empty else float("nan")
+    return {
+        "sharpe": _r(m["sharpe"], 3), "ann": _r(m["ann_return"], 4), "vol": _r(m["ann_vol"], 4),
+        "maxdd": _r(m["max_drawdown"], 4), "premium": _r(df["premium_income"].mean() * 12, 4),
+        "assign": _r(df["assignment_rate"].mean(), 3),
+        "real_coverage": _r(df["real_coverage"].mean(), 3),
+        "unhedged_weight": _r(df["unhedged_weight"].mean(), 4),
+        "implied_vol": _r(imp, 4), "realized_vol": _r(rea, 4), "vrp_vol": _r(imp - rea, 4),
+        "vrp_var": _r(float(v["vrp_var"].mean()), 4) if not v.empty else None,
+        "ratio": _r(imp / rea if rea > 0 else 0.0, 3),
+        "hit_rate": _r(float((v["vrp_vol"] > 0).mean()), 3) if not v.empty else None,
+        "labels": [str(d) for d in v["date"]], "iv": _ser(v["implied_vol"], 4),
+        "rv": _ser(v["realized_vol_fwd"], 4), "months": int(len(v)),
+    }
+
+
 def main() -> None:
     settings = load_settings()
     data = collect(settings)
@@ -293,6 +323,7 @@ def main() -> None:
     data["composition"]["adr_exposure"] = adr_exp
     data["sleeves"] = sleeves_block(settings)
     data["overlay"] = overlay_block(settings)
+    data["vrp"] = vrp_block(settings)        # real premiums + variance risk premium (D33)
 
     DATA_OUT.parent.mkdir(parents=True, exist_ok=True)
     DATA_OUT.write_text(json.dumps(data))
