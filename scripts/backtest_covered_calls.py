@@ -211,6 +211,48 @@ def validate_against_bxm(start: date, end: date, *, settings=None) -> dict:
 
 
 # ====================================================================== #
+# Premium-deployment lag
+# ====================================================================== #
+def premium_deployment_drag(df: pd.DataFrame) -> dict:
+    """Quantify the one-cycle premium-deployment lag (live behaviour vs the cc_net assumption).
+
+    Live (DECISIONS D31 / run_eod ordering): a call's premium is collected when the call is
+    *written* — the last step of the monthly cycle, after the equity redeployment — so it can
+    only be deployed at the NEXT rebalance; meanwhile it sits as cash. The ``cc_net`` series
+    instead folds each month's premium into that month's return (same-cycle, slightly
+    optimistic). This compares the two compounding paths of the *same* returns:
+
+      * same-cycle : premium in month t compounds from month t (the cc_net assumption);
+      * lagged     : premium in month t earns 0 for one month, then joins the invested base
+                     at t+1 (the realistic live behaviour).
+
+    Returns each path's CAGR and the drag (same − lagged) in bps/yr and total %. The book is
+    1x in the backtest, so premium_income is a yield on NAV and no leverage scaling is needed.
+    """
+    if df.empty:
+        return {}
+    cc = df["cc_net"].to_numpy(dtype=float)
+    prem = df["premium_income"].to_numpy(dtype=float)
+    core = cc - prem                          # period return WITHOUT the premium contribution
+    years = len(cc) / 12.0
+
+    # Lagged (live / cc_net): premium is added flat at the period's end, so it only starts
+    # compounding from the NEXT cycle — exactly run_eod's "write calls last → premium funds the
+    # next rebalance" ordering.
+    w_lag = float(np.prod(1.0 + cc))                       # = prod(1 + core + prem)
+    # Same-cycle ideal: premium deployed at the period's START, so it ALSO earns that period's
+    # core return. The only difference is the per-period core·prem cross-term.
+    w_same = float(np.prod((1.0 + core) * (1.0 + prem)))   # = prod(1 + core + prem + core*prem)
+
+    return {"cagr_same_cycle": w_same ** (1.0 / years) - 1.0,
+            "cagr_lagged": w_lag ** (1.0 / years) - 1.0,
+            "drag_bps_per_yr": (w_same ** (1.0 / years) - w_lag ** (1.0 / years)) * 1e4,
+            "drag_total_pct": (w_same / w_lag - 1.0) * 100.0,
+            "avg_monthly_premium_pct": float(np.mean(prem) * 100.0),
+            "avg_monthly_core_pct": float(np.mean(core) * 100.0), "months": int(len(cc))}
+
+
+# ====================================================================== #
 # Summary / gate
 # ====================================================================== #
 def summarize(results_by_mode: dict[str, pd.DataFrame]) -> dict:
@@ -237,6 +279,19 @@ def summarize(results_by_mode: dict[str, pd.DataFrame]) -> dict:
         print(f"  {mode:14}{cc['ann_return']*100:>8.1f}%{cc['ann_vol']*100:>7.1f}%"
               f"{cc['sharpe']:>8.2f}{cc['max_drawdown']*100:>7.1f}%{prem_yr*100:>11.1f}%"
               f"{assign*100:>8.0f}% {better}")
+
+    # Premium-deployment lag: live, premium is parked as cash until the next monthly rebalance
+    # (run_eod writes calls AFTER the equity redeploy → premium funds NEXT cycle), whereas
+    # cc_net assumes same-cycle compounding. Quantify the gap on the realistic market-IV book.
+    market_df = results_by_mode.get("vix_scaled", next(iter(results_by_mode.values())))
+    drag = premium_deployment_drag(market_df)
+    if drag:
+        out["premium_deployment_drag"] = drag
+        print(f"\n  Premium-deployment lag (premium ≈{drag['avg_monthly_premium_pct']:.2f}%/mo parked "
+              f"as cash 1 cycle, then redeployed):")
+        print(f"    same-cycle CAGR {drag['cagr_same_cycle']*100:+.2f}%  vs  lagged "
+              f"{drag['cagr_lagged']*100:+.2f}%  →  drag {drag['drag_bps_per_yr']:.1f} bps/yr "
+              f"({drag['drag_total_pct']:.2f}% total over {drag['months']} mo)")
 
     # Verdict (DECISIONS D27, refined D30): vol / drawdown / premium improve
     # UNCONDITIONALLY across every IV assumption (exact, data-driven). Sharpe AND the
