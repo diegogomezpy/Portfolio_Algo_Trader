@@ -18,12 +18,12 @@ def _engine():
 
 def _seed(eng):
     with eng.begin() as c:
-        # two snapshots (for day P&L) — newest last
+        # two snapshots (for day P&L) — newest last; last_equity = prior-day close (P&L basis)
         c.execute(insert(db.snapshots).values(
-            ts=datetime(2026, 6, 30, 16), nav=200_000.0, cash=10_000.0,
+            ts=datetime(2026, 6, 30, 16), nav=200_000.0, cash=10_000.0, last_equity=198_000.0,
             weights={"AAPL": 0.05}, positions={"AAPL": 100}, drift=0.0))
         c.execute(insert(db.snapshots).values(
-            ts=datetime(2026, 7, 1, 16), nav=202_000.0, cash=9_000.0,
+            ts=datetime(2026, 7, 1, 16), nav=202_000.0, cash=9_000.0, last_equity=200_000.0,
             weights={"AAPL": 0.05, "MSFT": 0.04}, positions={"AAPL": 100, "MSFT": 40}, drift=0.03))
         c.execute(insert(db.rebalance_log).values(
             ts=datetime(2026, 7, 1, 16), trigger_reason="monthly",
@@ -60,7 +60,7 @@ def test_api_state_merges_snapshot_target_and_pnl():
     _seed(eng)
     s = data.api_state(eng)
     assert s["nav"] == 202_000.0 and s["cash"] == 9_000.0 and s["drift"] == 0.03
-    assert s["day_pnl"] == 2_000.0                       # 202k − 200k
+    assert s["day_pnl"] == 2_000.0                       # 202k − last_equity 200k (NOT prev snapshot)
     assert s["risk_gate_passed"] is True
     assert s["premium_collected"] == 400.0 + 150.0 - 120.0
     by_sym = {r["symbol"]: r for r in s["positions"]}
@@ -78,6 +78,34 @@ def test_api_state_leverage_gross_and_market_value():
     assert abs(s["day_pnl_pct"] - 0.01) < 1e-9        # 2000 / 200000
     by_sym = {r["symbol"]: r for r in s["positions"]}
     assert abs(by_sym["AAPL"]["market_value"] - 0.05 * 202_000.0) < 1e-6
+
+
+def test_day_pnl_uses_last_equity_not_prior_snapshot():
+    # last_equity (prior-day close) is the P&L basis, NOT the previous 60s snapshot's NAV.
+    eng = _engine()
+    with eng.begin() as c:
+        c.execute(insert(db.snapshots).values(
+            ts=datetime(2026, 7, 1, 15, 59), nav=205_000.0, cash=9_000.0, last_equity=200_000.0,
+            weights={"AAPL": 0.05}, positions={"AAPL": 100}, drift=0.0))
+        c.execute(insert(db.snapshots).values(   # 60s later — only NAV moved a touch
+            ts=datetime(2026, 7, 1, 16, 0), nav=205_100.0, cash=9_000.0, last_equity=200_000.0,
+            weights={"AAPL": 0.05}, positions={"AAPL": 100}, drift=0.0))
+    s = data.api_state(eng)
+    assert s["day_pnl"] == 5_100.0                       # 205.1k − last_equity 200k, not − 205k
+    assert abs(s["day_pnl_pct"] - 5_100.0 / 200_000.0) < 1e-12
+
+
+def test_leverage_and_count_exclude_written_options():
+    # A short call shares the snapshot but must not deflate the equity-leverage gauge.
+    eng = _engine()
+    with eng.begin() as c:
+        c.execute(insert(db.snapshots).values(
+            ts=datetime(2026, 7, 1, 16), nav=200_000.0, cash=9_000.0, last_equity=200_000.0,
+            weights={"AAPL": 0.05, "MSFT": 0.04, "AAPL260821C00215000": -0.001},
+            positions={"AAPL": 100, "MSFT": 40, "AAPL260821C00215000": -1}, drift=0.0))
+    s = data.api_state(eng)
+    assert abs(s["leverage"] - 0.09) < 1e-9              # equity only; the -0.001 call is excluded
+    assert s["n_positions"] == 2                          # AAPL + MSFT, not the call
 
 
 def test_api_nav_history_oldest_first():

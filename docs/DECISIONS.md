@@ -22,7 +22,7 @@ of academic evidence across dozens of markets and time periods. They work
 because they are compensation for systematic risk, not because they identify
 mispricings. This makes them more durable and more defensible to management.
 
-**Why this fits CADIEM's mandate:** The goal is capital preservation and
+**Why this fits the firm's mandate:** The goal is capital preservation and
 uncorrelated returns, not alpha generation. A clean factor portfolio with
 an options income overlay is honest about what it is, easy to explain to
 an investment committee, and has a credible academic track record. A black-
@@ -60,7 +60,7 @@ against held equity positions to harvest the volatility risk premium.
 cash reserves as collateral — dead weight in a prop book. Covered calls
 generate income on capital that is already deployed in the factor portfolio.
 The capped upside is acceptable given the capital preservation mandate —
-CADIEM doesn't need 50% years, they need consistent income.
+the firm doesn't need 50% years, they need consistent income.
 
 **Why not the wheel strategy (puts + calls):** Additional operational
 complexity. The put side creates cash drag. For a first version, covered
@@ -113,7 +113,7 @@ High-quality, low-vol stocks by definition hold up better in market stress.
 Adding a regime filter on top creates double-counting — the portfolio would
 reduce equity allocation AND rotate defensively at the same time, making
 the risk-off response too aggressive. Simplicity is also a virtue: the
-fewer moving parts, the easier the system is to audit and explain to CADIEM.
+fewer moving parts, the easier the system is to audit and explain to the firm.
 
 **What was considered:** Composite z-score regime filter using VIX, yield
 curve, and HY credit spread. Rejected because: (1) factor model subsumes
@@ -170,7 +170,7 @@ point-in-time data. For backtesting quality and value factors in 2019,
 the P/E and ROE figures may reflect subsequent restatements. This makes
 the backtest quality and value signals slightly optimistic. Mentally
 discount the backtest Sharpe by ~5-10% and document this limitation
-clearly in any CADIEM presentation.
+clearly in any the firm presentation.
 
 **Known limitation — reliability:**
 yfinance is an unofficial Yahoo Finance scraper and can break when Yahoo
@@ -238,7 +238,7 @@ no serialized model files, no IC validation, no signal decay analysis.
 ML infrastructure: no training scripts, no model versioning, no
 rollback logic, no held-out test sets, no backfill_meta, no
 meta-model cold start problem. The system is simpler, more auditable,
-and easier to explain to CADIEM management.
+and easier to explain to firm management.
 
 **What replaces model quality monitoring:** Factor score stability
 monitoring in the dashboard (are factor scores behaving reasonably?),
@@ -257,7 +257,7 @@ the live strategy has a validated track record.
 **Why defer:** Paper trading validates signal quality and execution.
 Live unlevered validates real-world performance. Adding leverage to
 an unvalidated strategy amplifies both returns and errors. Presenting
-an unlevered system to CADIEM first also builds trust — it's easier
+an unlevered system to the firm first also builds trust — it's easier
 to add leverage to a proven strategy than to explain leverage losses
 on an unproven one.
 
@@ -854,7 +854,7 @@ the **capital-preservation mandate**. Leverage doesn't change Sharpe but scales 
 the unlevered backtest's drawdowns (equity maxDD −26%, overlay −18.5%) become **~−50% /
 ~−37%** at 2:1. Accepted because it's a **paper** account (reversible) and the goal is to
 exercise the full strategy + overlay before committing real capital. **Revisit the leverage
-level before any live go-live** — do not assume 2:1 carries to real CADIEM capital.
+level before any live go-live** — do not assume 2:1 carries to real firm capital.
 
 **Code.** Added `portfolio.target_leverage` + `portfolio.max_leverage`. `run_eod.run_cycle`
 sizes against `nav = equity × target_leverage` (the deployable base) and passes the leverage
@@ -902,3 +902,46 @@ probe, cached to `data/ref/optionable_alpaca.json`). `scripts/backtest_covered_c
 `run_overlay(premium_source="dolthub")` (default `"model"` is the original BS path, offline) with
 the three-way hedge treatment, plus a real-vs-modeled + VRP report in `summarize()`. The gate
 still judges only the **modeled** cases (realized / vix_scaled); `dolthub_real` is informational.
+
+
+## D34 — Cash-secured-put "wheel" as an OPTIONAL, leverage-capped overlay (backtest stage)
+
+**Decision (2026-06-24).** Add the ability to sell 30Δ OTM **puts** on the factor-ranked names as
+an optional overlay — the "wheel": sell a put → if assigned, hold the stock and write a covered
+call → if called away, sell a put again. Built and **backtested** now; the live `run_cycle` put
+leg is **NOT wired** and the `puts.enabled` toggle defaults **false** (sketch/validation stage).
+
+**Why leverage-capped, never additive.** A short put is long-delta + short-vega — it *adds*
+downside on a book already at 2× with a capital-preservation mandate. So put-assignment notional
+counts toward **gross**, and puts **displace** equity within `max_leverage` rather than stacking
+on it: worst case (all assigned) total long exposure is still ≤ 2×. Universe is the ranked-held
+names only, so an assignment always lands a name the model already wanted (a discount entry), never
+pure premium-chasing. The backtest blends the sleeve at `puts.budget_pct` (25%) of gross:
+`wheel = (1−β)·cc_net + β·put_net`.
+
+**Result (2021-07→2026-05, 58 mo, 1× basis, real DoltHub put premiums):** put sleeve standalone
+ann **+15.5%**, vol **5.9%**, Sharpe **2.49**, maxDD **−4.7%** (only ~25% assignment; the 30Δ
+cushion + diversification bounded the 2022 tail). Blended **wheel** ann +18.7%, vol 12.9%, Sharpe
+**1.40**, maxDD **−12.8%** — it **beats covered-call alone** (1.24 / −16.7%) and equity-only
+(0.63 / −26.4%) on both Sharpe and drawdown. **Honesty flags:** put **IV²−RV² = −0.032** (negative)
+— in pure variance terms the left tail was **not fully paid for**; the favorable result comes from
+the OTM-strike cushion bounding the tail, not rich variance compensation (same nuance as the call
+side, D33). And this is **1×**: at the book's 2× leverage the put sleeve's drawdown ~doubles, since
+it is long-delta. Verdict deferred to (a) Diego's read of these numbers, then (b) live mechanics
+(a `check_cash_secured_puts` risk-gate leg + put-assignment handling) before the toggle goes on.
+
+**Code.** `engine/options.py` gains `bs_put_price` / `bs_put_delta` / `strike_for_put_delta` /
+`cash_secured_put_return`. `engine/options_data.py` gains `fetch_puts` + `select_put` (a `right=`
+param on the fetcher; puts cache to `*.put.parquet`, separate from calls; per-month fetch now
+degrades to modeled premiums on an API hiccup rather than aborting the walk-forward).
+`scripts/backtest_covered_calls.py` `run_overlay(with_puts=…, put_delta=…)` emits the put-sleeve
+columns + put VRP; `--with-puts` + `wheel_summary` print the blended wheel. `config/settings.yaml`
+adds the `puts:` block (enabled:false). Dashboard: `build_dashboard.wheel_block` + a "Cash-secured
+put wheel — optional overlay" section on the Backtest tab.
+
+**Dashboard cleanup (same change).** Removed low-signal Backtest-tab panels that added clutter
+without decision value: Foreign/ADR exposure (moot under the EDGAR-only universe, D28), the monthly
+return histogram, rolling-12m volatility, best/worst-months tables, trades-per-month, cumulative
+trading cost, and the trade blotter. Kept growth-vs-SPY, drawdown, rolling Sharpe, sector-exposure
+stack, the time-scrubbing snapshot, factor sleeves, calendar-year, contributors/detractors, the
+IV-assumption overlay growth, delta optimization, VRP, and the new wheel panel.

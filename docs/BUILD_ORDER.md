@@ -4,8 +4,9 @@ Phase-by-phase build plan. Do not proceed to the next phase until the
 gate criteria are met. Claude Code should always know which phase is
 active and never build ahead of it.
 
-**Active phase: 1** (factor scoring). Status legend:
-✅ done · 🔄 in progress · ⬜ not started.
+**Active phase: 3–5** (execution engine, covered-call overlay, and dashboard/alerting are
+all code-complete and tested; the one remaining gate across them is live-paper verification
+by Diego). Phases 0–2b are ✅. Status legend: ✅ done · 🔄 in progress · ⬜ not started.
 
 ---
 
@@ -19,10 +20,10 @@ active and never build ahead of it.
 | 2b | Full strategy backtest including covered calls | Combined beats SPY Sharpe under realistic premium; vol/DD cut unconditionally (D27) | ✅ |
 | 3 | Execution engine + risk gate | Orders submit and fill correctly in paper account | 🔄 (3.1–3.7 built + tested; live-paper gate pending Diego) |
 | 4 | Covered call overlay | Calls written, rolled, and assigned correctly in paper | 🔄 (4.0–4.6 built + tested; paper verify pending) |
-| 5 | Dashboard + alerting | Live dashboard shows portfolio state, alerts deliver | 🔄 (5.0–5.2 built + tested; SMTP host + live view pending) |
+| 5 | Dashboard + alerting | Live dashboard shows portfolio state, alerts deliver | 🔄 (built + tested; SMTP live via Gmail App Password, self-updating dashboard + real-premium/VRP analytics live; live-paper verify pending) |
 | 6 | Crypto allocation | Crypto positions added to paper portfolio | ⬜ |
 | 7 | Go-live | User-defined gate criteria met | ⬜ |
-| 8 | Leverage (TBD) | Live track record validated, CADIEM approval | ⬜ |
+| 8 | Leverage (TBD) | Live track record validated, firm approval | ⬜ |
 
 ---
 
@@ -201,7 +202,7 @@ sensible output on historical data.
 
 **Gate criteria:**
 - Backtest Sharpe > 1.0 annualized after transaction costs
-- Max drawdown within acceptable range (TBD — present to CADIEM)
+- Max drawdown within acceptable range (TBD — present to the firm)
 - Turnover cost modest and accounted for in net returns (D26 — was "< 30%/mo";
   reframed because this book's churn is signal-driven and its realized cost is ~1%/yr,
   already inside the net return; a hysteresis knob exists but suppressing turnover
@@ -490,16 +491,16 @@ live paper book. Dashboard is Postgres-only (no Alpaca creds in that process).
 
 ## Phase 7 — Go-live
 
-**Goal:** Deploy real CADIEM capital to the live Alpaca account.
+**Goal:** Deploy real firm capital to the live Alpaca account.
 
 **Prerequisites (all must be met):**
 - Phases 0-6 gate criteria met
-- Paper trading has run for a meaningful period (TBD by CADIEM)
-- Go-live gate criteria defined and met (TBD by CADIEM)
+- Paper trading has run for a meaningful period (TBD by the firm)
+- Go-live gate criteria defined and met (TBD by the firm)
 - Database backup configured and tested
 - All alert types confirmed working on live paper events
 - Manual review of at least 5 complete rebalance cycles
-- CADIEM sign-off received
+- firm sign-off received
 
 **Build:**
 1. Switch `ALPACA_BASE_URL` to live endpoint in `.env.live`
@@ -521,7 +522,7 @@ changes between paper and live. This is by design.
 **Prerequisites:**
 - Minimum 6 months live track record
 - Sharpe in live trading consistent with backtest
-- CADIEM approval for levered operation
+- firm approval for levered operation
 - Margin account enabled on Alpaca live account
 
 **Build:**
@@ -537,7 +538,7 @@ changes between paper and live. This is by design.
 - Do not build the execution engine before Phase 2 backtest gate is met
 - Do not add covered calls before Phase 3 execution engine is stable
 - Do not add crypto before equities + covered calls are running cleanly
-- Do not go live before paper trading period meets CADIEM's criteria
+- Do not go live before paper trading period meets the firm's criteria
 - Do not add leverage before a live track record is established
 - Do not add ML models — if signal quality needs improving, add
   Bloomberg data and earnings revision signals first

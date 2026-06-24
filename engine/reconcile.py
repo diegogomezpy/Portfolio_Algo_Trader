@@ -120,14 +120,14 @@ def _write_correction_snapshot(client, db_engine, live: dict[str, float]) -> Non
     """Write a snapshot whose positions equal Alpaca's (the 'DB matches Alpaca' step)."""
     from sqlalchemy import insert
     from engine.db import snapshots
-    nav = cash = None
+    nav = cash = last_equity = None
     try:
         acct = client.account()
-        nav, cash = acct.get("equity"), acct.get("cash")
+        nav, cash, last_equity = acct.get("equity"), acct.get("cash"), acct.get("last_equity")
     except AlpacaError as exc:                       # positions read fine; account hiccup
         log.warning("reconcile: account read failed; correction snapshot without nav/cash",
                     extra={"error": str(exc)})
     with db_engine.begin() as conn:
         conn.execute(insert(snapshots).values(
-            ts=datetime.now(timezone.utc), nav=nav, cash=cash,
+            ts=datetime.now(timezone.utc), nav=nav, cash=cash, last_equity=last_equity,
             positions=live, weights={}, drift=None))

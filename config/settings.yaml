@@ -12,7 +12,7 @@ universe:
 
 portfolio:
   nav: 100_000
-  min_position_usd: 4_000        # sized for covered-call (mini) contract eligibility
+  min_position_usd: 4_000        # min funded position; the optimizer floor (w >= min or w = 0)
   max_single_name_pct: 0.05      # ~19-20 names (DECISIONS D24). The max-name cap — not
                                  # lambda/scale — governs name count; 5% over the 4% floor
                                  # gives a diversified, ~equal-weight book for capital
@@ -77,12 +77,25 @@ covered_calls:
   # backtest (one monthly write per option life); 30-45 DTE covers the ~1-month hold.
   min_dte_entry: 30
   max_dte_entry: 45
-  min_holding_days: 10           # don't write calls on positions about to be exited (consumed in Phase 4)
   reentry_threshold: 0.0         # re-enter if composite score > 0 after assignment
-  prefer_mini_contracts: true    # use 10-share mini contracts where available
+  # NOTE: single-name 10-share mini options were delisted ~2014 (D32), so a position must hold
+  # >= 100 shares to be covered; there is no mini-contract path. (Removed the dead
+  # prefer_mini_contracts / min_holding_days keys — neither was read by any module.)
   close_before_earnings: true    # close calls before an earnings announcement, rewrite after —
                                  # kept as a risk control (DECISIONS D31): the one event-driven
                                  # action outside the monthly cadence.
+
+puts:                            # OPTIONAL cash-secured-put wheel overlay (backtest/sketch stage).
+  enabled: false                 # master toggle. OFF by default — the live run_cycle put leg is
+                                 # NOT wired yet (backtest sleeve only). Flip on once the numbers
+                                 # justify it AND the live mechanics (risk gate + assignment) ship.
+  target_delta: 0.30             # 30Δ OTM puts (mirrors the call side)
+  budget_pct: 0.25               # share of the 2× gross budget given to the put sleeve. Puts
+                                 # DISPLACE equity within max_leverage — never additive, so worst
+                                 # case (all assigned) total long exposure still ≤ max_leverage.
+  min_dte_entry: 30
+  max_dte_entry: 45
+  universe: ranked_held          # sell puts only on factor-ranked names (assignment = a wanted name)
 
 execution:
   min_trade_usd: 500
@@ -129,7 +142,7 @@ data_retention:
 
 alerts:
   smtp_host: smtp.gmail.com   # Gmail SMTP relay (STARTTLS on 587). M365 was abandoned for the
-                             # test because the CADIEM tenant blocks basic SMTP AUTH (535 5.7.3)
+                             # test because the the firm tenant blocks basic SMTP AUTH (535 5.7.3)
                              # and needs IT to enable Authenticated SMTP. Personal Gmail is
                              # self-serve: generate a 16-char App Password (Google Account →
                              # Security → 2-Step Verification → App passwords) and put it in the

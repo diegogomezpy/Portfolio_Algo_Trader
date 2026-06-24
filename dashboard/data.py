@@ -8,9 +8,20 @@ wraps them in FastAPI routes. Tested directly against in-memory sqlite — no HT
 
 from __future__ import annotations
 
+import re
+
 from sqlalchemy import desc, func, select
 
 from engine import db
+
+# OCC option symbols end in YYMMDD + C/P + an 8-digit strike (e.g. AAPL260821C00215000).
+# Used to keep the leverage gauge and position count equity-only once the overlay writes
+# options into the same snapshot (a short call carries negative market value).
+_OCC_SUFFIX = re.compile(r"\d{6}[CP]\d{8}$")
+
+
+def _is_option(symbol: str) -> bool:
+    return bool(_OCC_SUFFIX.search(str(symbol)))
 
 
 def _latest_snapshot(conn) -> dict | None:
@@ -26,16 +37,18 @@ def _latest_rebalance(conn) -> dict | None:
 def api_state(db_engine) -> dict:
     """Current portfolio state: NAV/cash/drift, leverage, positions vs target, risk gate, P&L, premium.
 
-    ``leverage`` = Σ position weights = gross market value / equity (each weight is the
-    position's market_value / NAV and NAV is the account equity, so the sum is gross/equity —
-    honest, derived from the snapshot, no fabrication). ``gross_exposure`` = NAV × leverage.
-    Each position row carries its derived ``market_value`` (= weight × NAV).
+    ``leverage`` = Σ **equity** position weights = equity gross / account equity (each weight is
+    the position's market_value / NAV; options are excluded so a written short call's negative
+    market value can't deflate the gauge). ``gross_exposure`` = NAV × leverage. ``day_pnl`` is the
+    true intraday change vs Alpaca's prior-trading-day close equity (``snapshots.last_equity``),
+    not the change since the last 60-second snapshot. Each position row carries its derived
+    ``market_value`` (= weight × NAV).
     """
     with db_engine.connect() as conn:
         snap = _latest_snapshot(conn)
         reb = _latest_rebalance(conn)
-        navs = [r[0] for r in conn.execute(
-            select(db.snapshots.c.nav).order_by(desc(db.snapshots.c.ts)).limit(2)).all()]
+        prev_nav = conn.execute(
+            select(db.snapshots.c.nav).order_by(desc(db.snapshots.c.ts)).offset(1).limit(1)).scalar()
         premium = conn.execute(
             select(func.coalesce(func.sum(db.options_lifecycle.c.premium), 0.0))).scalar()
 
@@ -55,17 +68,23 @@ def api_state(db_engine) -> dict:
              "target_weight": targets.get(s),
              "market_value": (weights[s] * nav) if (s in weights and nav is not None) else None}
             for s in names]
-    leverage = sum(float(v) for v in weights.values()) if weights else 0.0
+    # Equity-only leverage / position count (exclude written options from the gauge).
+    leverage = sum(float(v) for s, v in weights.items() if not _is_option(s)) if weights else 0.0
     gross = (nav * leverage) if nav is not None else None
-    day_pnl = (navs[0] - navs[1]) if (len(navs) >= 2 and navs[0] is not None and navs[1] is not None) else None
-    day_pnl_pct = (day_pnl / navs[1]) if (day_pnl is not None and navs[1]) else None
+    # True day P&L: current equity vs Alpaca's prior-close equity. Fall back to the previous
+    # snapshot's NAV only if last_equity is absent (e.g. pre-migration snapshots).
+    basis = snap.get("last_equity")
+    if basis is None:
+        basis = prev_nav
+    day_pnl = (nav - basis) if (nav is not None and basis is not None) else None
+    day_pnl_pct = (day_pnl / basis) if (day_pnl is not None and basis) else None
     return {"nav": nav, "cash": snap.get("cash"), "drift": snap.get("drift"),
             "ts": str(snap.get("ts")), "positions": rows,
             "risk_gate_passed": (reb or {}).get("risk_gate_passed"),
             "risk_gate_reason": (reb or {}).get("risk_gate_reason"),
             "day_pnl": day_pnl, "day_pnl_pct": day_pnl_pct, "premium_collected": premium,
             "leverage": leverage, "gross_exposure": gross,
-            "n_positions": sum(1 for q in positions.values() if q)}
+            "n_positions": sum(1 for s, q in positions.items() if q and not _is_option(s))}
 
 
 def api_nav_history(db_engine, limit: int = 120) -> list[dict]:

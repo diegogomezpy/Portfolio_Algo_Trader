@@ -885,8 +885,8 @@ class AlpacaClient:
     ) -> list[dict]:
         """Return the option chain for ``underlying`` (D3/D4 covered call overlay).
 
-        Read-only chain reader feeding the covered call overlay's delta-0.25
-        strike selection. Each contract is normalised to::
+        Read-only chain reader feeding the covered call overlay's target-delta
+        (0.30, DECISIONS D29) strike selection. Each contract is normalised to::
 
             {"symbol", "underlying", "type" ("call"/"put"), "strike",
              "expiration" (ISO date), "bid", "ask", "mid", "last"}

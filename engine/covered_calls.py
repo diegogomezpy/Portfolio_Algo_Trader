@@ -31,7 +31,7 @@ from typing import Mapping, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from engine import factors, options
+from engine import factors, options, risk
 from engine.alpaca_client import AlpacaAPIError
 from engine.logger import get_logger
 
@@ -262,13 +262,26 @@ def write_calls(client, broker, db_engine, holdings_shares: Mapping[str, float],
     ivs = estimate_ivs(price_panel, names, as_of, window=settings.covariance.estimation_window_days)
     writes, skipped = build_write_plan(holdings_shares, chains, spots, ivs, settings=settings, as_of=as_of)
 
+    # Defense in depth (D32): re-derive coverage on the plan before anything reaches the broker.
+    # build_write_plan only writes floor(shares/100) so this is structurally satisfied, but the
+    # independent gate guarantees no naked / expired call is ever submitted (a bug upstream stops
+    # here, not at the market) — the same check the pre-trade risk gate runs.
+    cover_fail = risk.check_covered_call_coverage(
+        [{"underlying": w.underlying, "contracts": w.contracts, "expiration": w.expiration}
+         for w in writes], holdings_shares, as_of)
+    if cover_fail:
+        log.error("covered-call coverage gate blocked writes", extra={"failures": cover_fail})
+        if alert:
+            alert(f"covered-call coverage gate blocked: {'; '.join(cover_fail)}")
+        return [], skipped
+
     submitted = []
     for w in writes:
         coid = f"cc:{as_of.isoformat()}:{w.underlying}:open"
         try:
-            resp = broker.submit_option_order(w.option_symbol, w.contracts, "sell",
-                                              position_intent="sell_to_open", order_type="limit",
-                                              limit_price=w.limit_price, client_order_id=coid)
+            broker.submit_option_order(w.option_symbol, w.contracts, "sell",
+                                       position_intent="sell_to_open", order_type="limit",
+                                       limit_price=w.limit_price, client_order_id=coid)
         except AlpacaAPIError as exc:
             log.error("covered-call write rejected", extra={"underlying": w.underlying, "error": str(exc)})
             if alert:

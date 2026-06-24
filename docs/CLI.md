@@ -149,6 +149,87 @@ Writes the same Parquet layout as the backfill (identical schema by construction
 
 ---
 
+## `scripts/run_eod.py` — rebalance driver (the live engine)
+
+The end-of-day orchestrator: `reconcile → holiday gate → compute targets → risk gate →
+[overlay close calls] → execute equities → [overlay write calls] → monitor`. Two modes.
+The Alpaca client is **paper-only** regardless of `--env`.
+
+```bash
+# Run exactly one rebalance cycle now
+./.venv/bin/python scripts/run_eod.py --once --env paper
+
+# Run the continuous scheduler (daily 16:10-ET branch + 60s monitor; Ctrl-C / SIGTERM to stop)
+./.venv/bin/python scripts/run_eod.py --serve --env paper
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--once` / `--serve` | — | **Required, mutually exclusive.** One cycle now, or the continuous APScheduler process. |
+| `--env {paper,live}` | — | **Required.** Secrets file to load (`live` adds a 5s abort countdown but still trades paper). |
+| `--date ISO` | today | The `as_of` rebalance date (`--once`). |
+| `--force` | off | Run even if `--date` is not a trading day (`--once`). |
+| `--skip-ingest` | off | Reuse the existing snapshot data instead of pulling first (`--once`). |
+| `--no-overlay` | off | Equities only — skip the covered-call close/write legs. |
+
+---
+
+## `scripts/run_dashboard.py` — live dashboard server
+
+Serves the FastAPI dashboard (live tab from Postgres + the Backtest tab) and, unless
+disabled, runs the in-process Alpaca→Postgres monitor so the page self-updates without
+`run_eod`. Open `http://127.0.0.1:8000`.
+
+```bash
+./.venv/bin/python scripts/run_dashboard.py --env paper
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--env {paper,live}` | `paper` | Secrets file to load. |
+| `--host` | `127.0.0.1` | Bind address. |
+| `--port` | `8000` | Bind port. |
+| `--no-monitor` | off | Disable the background monitor + live-orders layer (Postgres-only, static). |
+| `--monitor-interval` | `60` | Seconds between background monitor snapshots. |
+
+---
+
+## `scripts/build_dashboard.py` — regenerate the Backtest tab
+
+Runs the equity + covered-call + real-premium/VRP backtests and writes the static
+`reports/backtest_dashboard.html` that the dashboard's **Backtest** tab serves. No flags;
+re-run whenever the backtest inputs change. The DoltHub real-premium pull is cached after
+the first run.
+
+```bash
+./.venv/bin/python scripts/build_dashboard.py
+```
+
+---
+
+## Backtests — `scripts/backtest*.py`
+
+Walk-forward system tests (Phase gates). All default to `2021-07-01 → today`.
+
+```bash
+# Phase 1 — factor sanity (quantile spread of the composite)
+./.venv/bin/python scripts/backtest_factors.py --quintiles 5
+
+# Phase 2 — equity-only walk-forward (beats SPY on return; Sharpe gate)
+./.venv/bin/python scripts/backtest.py
+
+# Phase 2b — covered-call overlay + real-premium/VRP analysis
+./.venv/bin/python scripts/backtest_covered_calls.py --validate-bxm
+```
+
+| Script | Key flags |
+|---|---|
+| `backtest_factors.py` | `--start`, `--end`, `--quintiles` (default 5) |
+| `backtest.py` | `--start`, `--end`, `--quiet` |
+| `backtest_covered_calls.py` | `--start`, `--end`, `--validate-bxm` (cross-check vs ^BXM), `--no-real-premium` (model-only, no network) |
+
+---
+
 ## `pytest` — test suite
 
 ```bash

@@ -102,18 +102,18 @@ def test_check_pretrade_skips_leverage_when_not_supplied():
 def test_naked_call_blocks():
     # 1 contract × 100 shares needs 100 held; only 50 held ⇒ naked.
     orders = [{"underlying": "AAPL", "contracts": 1, "expiration": "2026-12-18"}]
-    bad = risk._check_covered_calls(orders, {"AAPL": 50}, as_of=date(2026, 6, 23))
+    bad = risk.check_covered_call_coverage(orders, {"AAPL": 50}, as_of=date(2026, 6, 23))
     assert len(bad) == 1 and "naked call" in bad[0]
 
 
 def test_fully_covered_call_is_ok():
     orders = [{"underlying": "AAPL", "contracts": 1, "expiration": "2026-12-18"}]
-    assert risk._check_covered_calls(orders, {"AAPL": 100}, as_of=date(2026, 6, 23)) == []
+    assert risk.check_covered_call_coverage(orders, {"AAPL": 100}, as_of=date(2026, 6, 23)) == []
 
 
 def test_expired_option_blocks():
     orders = [{"underlying": "AAPL", "contracts": 1, "expiration": "2026-01-01"}]
-    bad = risk._check_covered_calls(orders, {"AAPL": 100}, as_of=date(2026, 6, 23))
+    bad = risk.check_covered_call_coverage(orders, {"AAPL": 100}, as_of=date(2026, 6, 23))
     assert len(bad) == 1 and "expired" in bad[0]
 
 
@@ -121,7 +121,7 @@ def test_mini_contract_size_respected():
     # A 10-share mini against 10 held shares is covered.
     orders = [{"underlying": "AAPL", "contracts": 1, "contract_size": 10,
                "expiration": "2026-12-18"}]
-    assert risk._check_covered_calls(orders, {"AAPL": 10}, as_of=date(2026, 6, 23)) == []
+    assert risk.check_covered_call_coverage(orders, {"AAPL": 10}, as_of=date(2026, 6, 23)) == []
 
 
 # ------------------------------------------------------- end-to-end gate ----

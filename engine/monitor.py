@@ -90,7 +90,7 @@ def monitor_once(
     (DECISIONS D31; monthly is the sole cadence).
     """
     acct = client.account()
-    nav, cash = acct.get("equity"), acct.get("cash")
+    nav, cash, last_equity = acct.get("equity"), acct.get("cash"), acct.get("last_equity")
     positions = client.all_positions()
     weights = compute_weights(positions, nav or 0.0)
     pos_qty = {p["symbol"]: float(p["qty"]) for p in positions}
@@ -98,16 +98,17 @@ def monitor_once(
     drift: Optional[float] = l1_drift(weights, target_weights) if target_weights is not None else None
 
     if db_engine is not None:
-        _write_snapshot(db_engine, nav, cash, weights, pos_qty, drift)
+        _write_snapshot(db_engine, nav, cash, weights, pos_qty, drift, last_equity)
     log.info("monitor pass", extra={"nav": nav, "n_positions": len(pos_qty), "drift": drift})
     return MonitorResult(nav, cash, weights, pos_qty, drift)
 
 
-def _write_snapshot(db_engine, nav, cash, weights: pd.Series, positions: dict, drift) -> None:
+def _write_snapshot(db_engine, nav, cash, weights: pd.Series, positions: dict, drift,
+                    last_equity=None) -> None:
     from sqlalchemy import insert
     from engine.db import snapshots
     with db_engine.begin() as conn:
         conn.execute(insert(snapshots).values(
-            ts=datetime.now(timezone.utc), nav=nav, cash=cash,
+            ts=datetime.now(timezone.utc), nav=nav, cash=cash, last_equity=last_equity,
             weights={k: float(v) for k, v in weights.items()},
             positions=positions, drift=drift))

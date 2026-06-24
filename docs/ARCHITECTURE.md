@@ -110,7 +110,7 @@ Runs at the start of every rebalance cycle and daily for drift monitoring.
 - Rate-limit aware: add sleep between ticker pulls for large batches
 - Known limitation: not point-in-time (current restated figures).
   Backtest quality/value signals may be slightly optimistic. Discount
-  backtest Sharpe by ~5-10% mentally and document in any CADIEM presentation.
+  backtest Sharpe by ~5-10% mentally and document in any the firm presentation.
 - Upgrade path: swap yfinance for FMP paid tier or Bloomberg API when
   available — only engine/ingest.py needs to change
 

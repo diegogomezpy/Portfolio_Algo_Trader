@@ -1,7 +1,7 @@
 # sharpe-engine
 
 A systematic **factor-equity portfolio** with a **covered-call income overlay**,
-run as a proprietary book for CADIEM Casa de Bolsa and paper-traded on Alpaca.
+run as a proprietary book for the firm and paper-traded on Alpaca.
 The goal is uncorrelated, risk-adjusted USD returns that diversify a core
 brokerage business. **Capital preservation is the primary mandate.**
 

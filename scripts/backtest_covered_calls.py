@@ -98,7 +98,8 @@ def estimate_iv(rv_name: pd.Series, vix: float, rv_spx: float, mode: str) -> pd.
 # ====================================================================== #
 def run_overlay(start: date, end: date, *, settings=None, iv_mode: str = "vix_scaled",
                 iv_scale: float | None = None, target_delta: float | None = None,
-                premium_source: str = "model") -> pd.DataFrame:
+                premium_source: str = "model", with_puts: bool = False,
+                put_delta: float | None = None) -> pd.DataFrame:
     """Walk-forward equity book + covered-call overlay; one row per rebalance.
 
     Columns: equity_net (book, no overlay), cc_net (book + covered calls), premium_income,
@@ -110,6 +111,12 @@ def run_overlay(start: date, end: date, *, settings=None, iv_mode: str = "vix_sc
     BS model elsewhere — and records implied-vs-realized vol per name for the variance-risk-
     premium analysis (extra columns: real_coverage, implied_vol, realized_vol_fwd, vrp_vol,
     vrp_var). Default ``'model'`` is the original BS path.
+
+    ``with_puts=True`` adds the **cash-secured-put sleeve** (the optional put-wheel overlay):
+    a ``put_delta`` (default = the call delta) OTM put per held name, short-put return =
+    premium + min(eq_ret − put_strike_ret, 0). Reported as separate sleeve columns
+    (``put_net, put_premium_income, put_assignment_rate`` + put VRP under dolthub) so the wheel
+    can be blended within the leverage cap downstream — it does NOT alter the equity/cc columns.
     """
     settings = settings or load_settings()
     delta = target_delta if target_delta is not None else settings.covered_calls.target_delta
@@ -171,7 +178,11 @@ def run_overlay(start: date, end: date, *, settings=None, iv_mode: str = "vix_sc
         if premium_source == "dolthub":
             spot = pd.Series(S0, index=names)
             dte_min, dte_max = settings.covered_calls.min_dte_entry, settings.covered_calls.max_dte_entry
-            chains = options_data.fetch_calls(list(names), d0.date(), dte_min=dte_min, dte_max=dte_max)
+            try:
+                chains = options_data.fetch_calls(list(names), d0.date(), dte_min=dte_min, dte_max=dte_max)
+            except Exception as exc:  # noqa: BLE001 — one month's API hiccup → BS this month, don't abort
+                log.warning("dolthub call fetch failed %s; modeled premiums this month: %s", d0.date(), exc)
+                chains = {}
             for s in names:
                 c = options_data.select_call(chains.get(s, []), d0.date(), target_delta=delta,
                                              dte_min=dte_min, dte_max=dte_max)
@@ -194,6 +205,57 @@ def run_overlay(start: date, end: date, *, settings=None, iv_mode: str = "vix_sc
 
         cc_ret = options.covered_call_return(eq_ret, strike_ret, prem_yield)
         assigned = eq_ret > strike_ret
+
+        # Optional cash-secured-put sleeve (the put-wheel). Mirror the call leg: a put_delta OTM
+        # put per held name, priced by BS at the same IV (or real DoltHub put mids/strikes), with
+        # the short-put payoff. Kept as its own columns so the wheel is blended within the
+        # leverage cap downstream — never folded into equity_net / cc_net.
+        put_cols: dict = {}
+        if with_puts:
+            pdelta = put_delta if put_delta is not None else delta
+            spot_p = pd.Series(S0, index=names)
+            Kp = options.strike_for_put_delta(S0, T, iv.to_numpy(), pdelta)
+            put_strike_ret = pd.Series(Kp / S0 - 1.0, index=names)
+            put_prem = pd.Series(options.bs_put_price(S0, Kp, T, iv.to_numpy()) / S0, index=names) * (1.0 - slippage)
+            p_impl, p_real, p_real_names = {}, {}, set()
+            if premium_source == "dolthub":
+                try:
+                    pchains = options_data.fetch_puts(list(names), d0.date(), dte_min=dte_min, dte_max=dte_max)
+                except Exception as exc:  # noqa: BLE001 — degrade to modeled puts this month
+                    log.warning("dolthub put fetch failed %s; modeled puts this month: %s", d0.date(), exc)
+                    pchains = {}
+                for s in names:
+                    pc = options_data.select_put(pchains.get(s, []), d0.date(), target_delta=pdelta,
+                                                 dte_min=dte_min, dte_max=dte_max)
+                    py = options_data.premium_yield(pc, float(spot_p[s]), slippage=slippage) if pc else None
+                    if py is None:
+                        continue
+                    put_prem[s] = py                                          # real put mid premium
+                    put_strike_ret[s] = float(pc["strike"]) / float(spot_p[s]) - 1.0   # real strike
+                    p_real_names.add(s)
+                    ivc = float(pc["vol"]) if pc.get("vol") is not None and not pd.isna(pc["vol"]) else np.nan
+                    rvf = options_data.forward_realized_vol(panel[s], d0, d1)
+                    if not np.isnan(ivc) and rvf is not None:
+                        p_impl[s], p_real[s] = ivc, rvf
+            put_ret = options.cash_secured_put_return(eq_ret, put_strike_ret, put_prem)
+            put_cols = {
+                "put_net": float((w * put_ret).sum()),
+                "put_premium_income": float((w * put_prem).sum()),
+                "put_assignment_rate": float((eq_ret < put_strike_ret).mean()),
+            }
+            if premium_source == "dolthub":
+                put_cols["put_real_coverage"] = len(p_real_names) / max(len(names), 1)
+                vn = [s for s in names if s in p_impl]
+                if vn:
+                    ww = w.reindex(vn); ww = ww / ww.sum()
+                    iv_s, rv_s = pd.Series(p_impl).reindex(vn), pd.Series(p_real).reindex(vn)
+                    put_cols["put_implied_vol"] = float((ww * iv_s).sum())
+                    put_cols["put_realized_vol_fwd"] = float((ww * rv_s).sum())
+                    put_cols["put_vrp_vol"] = put_cols["put_implied_vol"] - put_cols["put_realized_vol_fwd"]
+                    put_cols["put_vrp_var"] = float((ww * (iv_s ** 2 - rv_s ** 2)).sum())
+                else:
+                    put_cols["put_implied_vol"] = put_cols["put_realized_vol_fwd"] = \
+                        put_cols["put_vrp_vol"] = put_cols["put_vrp_var"] = np.nan
 
         cost = eq.transaction_cost(prev_w, w, adv, **cost_kw)
         row = {
@@ -220,6 +282,7 @@ def run_overlay(start: date, end: date, *, settings=None, iv_mode: str = "vix_sc
                 row["vrp_var"] = float((ww * (iv_s ** 2 - rv_s ** 2)).sum())
             else:
                 row["implied_vol"] = row["realized_vol_fwd"] = row["vrp_vol"] = row["vrp_var"] = np.nan
+        row.update(put_cols)
         rows.append(row)
         prev_w = eq.drift_weights(w, eq_ret)
 
@@ -403,6 +466,44 @@ def summarize(results_by_mode: dict[str, pd.DataFrame]) -> dict:
     return out
 
 
+def wheel_summary(df: pd.DataFrame, eq_metrics: dict, *, budget: float, delta: float) -> dict:
+    """Print the cash-secured-put sleeve + blended-wheel metrics + the put-skew VRP / left tail.
+
+    ``budget`` is the share of gross given to puts (they displace equity within the leverage cap),
+    so the blended wheel = ``(1−budget)·cc_net + budget·put_net``. Reported at 1× (the backtest
+    basis); leverage scales the sleeve's drawdown ~linearly, and the put sleeve is long-delta.
+    """
+    if "put_net" not in df.columns:
+        return {}
+    s = df.set_index("date")
+    put_m = eq.portfolio_metrics(s["put_net"])
+    cc_m = eq.portfolio_metrics(s["cc_net"])
+    wheel = (1.0 - budget) * s["cc_net"] + budget * s["put_net"]
+    wh_m = eq.portfolio_metrics(wheel)
+    print(f"\n  Cash-secured-put WHEEL ({delta:.2f}Δ puts · {budget*100:.0f}% of gross to puts · 1× backtest):")
+    print(f"    {'sleeve':18}{'ann':>9}{'vol':>8}{'Sharpe':>8}{'maxDD':>8}")
+    for label, mm in (("equity-only", eq_metrics), ("covered-call", cc_m),
+                      ("put sleeve", put_m), ("WHEEL (cc+puts)", wh_m)):
+        print(f"    {label:18}{mm['ann_return']*100:>8.1f}%{mm['ann_vol']*100:>7.1f}%"
+              f"{mm['sharpe']:>8.2f}{mm['max_drawdown']*100:>7.1f}%")
+    print(f"    put premium/yr {s['put_premium_income'].mean()*12*100:.1f}%   "
+          f"put assignment {s['put_assignment_rate'].mean()*100:.0f}%")
+    out = {"put_sleeve": put_m, "wheel": wh_m, "budget": budget, "delta": delta}
+    v = df.dropna(subset=["put_implied_vol", "put_realized_vol_fwd"]) if "put_implied_vol" in df.columns else df.iloc[0:0]
+    if not v.empty:
+        imp, rea = float(v["put_implied_vol"].mean()), float(v["put_realized_vol_fwd"].mean())
+        vrp_var = float(v["put_vrp_var"].mean())
+        cov = float(df["put_real_coverage"].mean()) if "put_real_coverage" in df.columns else float("nan")
+        hit = float((v["put_vrp_vol"] > 0).mean())
+        out["vrp"] = {"implied_vol": imp, "realized_vol": rea, "vrp_var": vrp_var, "coverage": cov}
+        print(f"    put VRP: sold IV {imp*100:.1f}% vs realized {rea*100:.1f}% = {(imp-rea)*100:+.1f} vol pts "
+              f"(IV>RV {hit*100:.0f}% of months; real coverage {cov*100:.0f}%)")
+        print(f"    put variance term IV²−RV² = {vrp_var:+.4f}  "
+              f"({'left tail WAS paid for' if vrp_var > 0 else 'left tail NOT fully paid — crash-dominated'})")
+    print("    ⚠ 1× backtest — at 2× leverage the put sleeve is long-delta, so its drawdown ~doubles.")
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Covered-call overlay backtest (Phase 2b)")
     ap.add_argument("--start", type=lambda s: date.fromisoformat(s), default=date(2021, 7, 1))
@@ -410,18 +511,26 @@ def main() -> None:
     ap.add_argument("--validate-bxm", action="store_true", help="cross-check the engine vs ^BXM")
     ap.add_argument("--no-real-premium", action="store_true",
                     help="skip the DoltHub real-premium run (model-only; no network)")
+    ap.add_argument("--with-puts", action="store_true",
+                    help="also run the optional cash-secured-put wheel sleeve (real DoltHub put premiums)")
     args = ap.parse_args()
     for n in ("engine.factors", "engine.covariance", "scripts.backtest"):
         logging.getLogger(n).setLevel(logging.WARNING)
     settings = load_settings()
+    pcfg = getattr(settings, "puts", None)
+    pdelta = float(getattr(pcfg, "target_delta", 0.30))
+    pbudget = float(getattr(pcfg, "budget_pct", 0.25))
 
     results = {mode: run_overlay(args.start, args.end, settings=settings, iv_mode=mode)
                for mode in ("realized", "vix_scaled")}
     if not args.no_real_premium:                 # real DoltHub premiums + the VRP analysis
         print("  pulling real historical chains from DoltHub (cached after first run)…")
         results["dolthub_real"] = run_overlay(args.start, args.end, settings=settings,
-                                              iv_mode="vix_scaled", premium_source="dolthub")
-    summarize(results)
+                                              iv_mode="vix_scaled", premium_source="dolthub",
+                                              with_puts=args.with_puts, put_delta=pdelta)
+    out = summarize(results)
+    if args.with_puts and "dolthub_real" in results:
+        wheel_summary(results["dolthub_real"], out["equity"], budget=pbudget, delta=pdelta)
 
     if args.validate_bxm:
         v = validate_against_bxm(args.start, args.end, settings=settings)

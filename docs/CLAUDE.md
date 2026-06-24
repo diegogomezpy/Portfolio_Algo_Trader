@@ -7,8 +7,8 @@ Primary anchor for Claude Code. Read this first, then docs/ in order.
 ## What this project is
 
 A systematic factor equity portfolio with a covered call income overlay,
-run as a proprietary book for CADIEM Casa de Bolsa. The goal is to generate
-uncorrelated, risk-adjusted USD returns that diversify CADIEM's core
+run as a proprietary book for the firm. The goal is to generate
+uncorrelated, risk-adjusted USD returns that diversify the firm's core
 brokerage business. Capital preservation is the primary mandate.
 
 This is not an alpha-seeking ML system. It is a systematic implementation
@@ -60,13 +60,15 @@ sharpe-engine/
 │   ├── monitor.py             ← NAV tracking + drift telemetry (Phase 3 ✅)
 │   └── alerts.py              ← DB-recorded, dry-run-capable email alerts (Phase 5 ✅)
 ├── dashboard/                 ← live dashboard (Phase 5 ✅)
-│   ├── app.py                 ← FastAPI backend (Postgres-only)
+│   ├── app.py                 ← FastAPI backend (Postgres reads + self-updating monitor/live-orders layer)
 │   ├── data.py                ← dashboard read queries
-│   └── static/index.html      ← single-page dashboard (polls /api/*)
+│   └── static/{index.html,theme.css} ← dark-institutional single-page dashboard (polls /api/*)
 ├── scripts/
 │   ├── init_db.py             ← create the PostgreSQL schema
 │   ├── backfill.py            ← one-time historical data pull
-│   ├── backtest.py            ← ⏳ walk-forward backtest
+│   ├── backtest.py            ← walk-forward equity backtest (Phase 2 ✅)
+│   ├── backtest_covered_calls.py ← covered-call overlay + real-premium/VRP backtest (Phase 2b ✅, D33)
+│   ├── build_dashboard.py     ← regenerate the Backtest-tab analytics (Phase 5 ✅)
 │   ├── run_eod.py             ← rebalance driver: --once / --serve (Phase 3 ✅)
 │   └── run_dashboard.py       ← dashboard entry point, terminal 2 (Phase 5 ✅)
 ├── tests/
@@ -94,13 +96,13 @@ sharpe-engine/
 | Covered calls | Delta = 0.30 (D29), 30-45 DTE, rewritten monthly — no mid-cycle roll (D31) |
 | Covered call rebalance | Close all calls before monthly rebalance, rewrite fresh after new weights set |
 | Earnings policy | Close calls before earnings date, rewrite after announcement |
-| Contract sizing | Mini options (10 shares) where available, standard (100 shares) otherwise |
+| Contract sizing | Standard 100-share contracts only; single-name 10-share minis were delisted ~2014 (DECISIONS D32) — a position must hold ≥100 shares to be covered |
 | Factor freshness | Price factors (momentum, vol) recomputed daily; fundamentals from last quarterly pull |
 | Assignment policy | Conditional re-entry if stock still scores above threshold |
 | Regime filter | None — quality and low-vol factors handle defensiveness naturally |
 | Crypto | Small allocation, size TBD after equities validated |
 | Leverage | 2:1 on the paper book now (DECISIONS D32, `target_leverage=2.0`, risk-gate capped) to make the covered-call overlay testable; revisit before live |
-| Covariance | Fama-French 5 factor model via pandas-datareader |
+| Covariance | Fama-French 5 factor model; FF5 daily downloaded directly from the Ken French data library (DECISIONS D23a — pandas-datareader removed, it import-crashes under pandas 3.0) |
 | Price data | Alpaca Data API, adjustment='all' |
 | Fundamental data | SEC EDGAR for deep point-in-time history (DECISIONS D22); yfinance current-quarter fallback |
 | Data stores | Parquet (raw prices + fundamentals), PostgreSQL (operational) |
@@ -174,9 +176,11 @@ gate) is code-complete (3.1–3.7, equity-only) and tested**; its live-paper gat
 (orders filling in the Alpaca dashboard, no duplicate orders on re-run, SIGTERM shutdown)
 are pending a run against the paper account. **Phase 4 (covered-call overlay) is
 code-complete (4.0–4.5: leverage, strike selection, broker option orders, write/close,
-earnings-close + expiry + rewrite; assignment re-entry deferred to 4.6) and tested.**
-**Phase 5 (alerting + live dashboard) is code-complete (5.0–5.2) and tested** — alerts.py
-records/dry-run-emails the 6 SPEC alert types; dashboard/app.py + static/index.html serve
-the live state from Postgres (verified end-to-end over HTTP). Remaining before paper: the
-SMTP host for live email (alerts run dry-run until then), and the live-paper verification of
-the full strategy. **Phase 6 (crypto) and Phase 7 (go-live) follow.**
+earnings-close + expiry + rewrite + assignment re-entry, 4.0–4.6) and tested.**
+**Phase 5 (alerting + live dashboard) is code-complete and tested** — alerts.py records and
+(now) live-emails the 6 SPEC alert types via Gmail SMTP (`send_enabled: true`, App Password
+in `SMTP_PASSWORD`); the dark-institutional dashboard (app.py + static/) serves live state
+from Postgres, self-updates via an in-process Alpaca→Postgres monitor + live-orders read, and
+its Backtest tab carries the real-premium/variance-risk-premium analytics (D33). The one
+remaining gate is the **live-paper verification of the full strategy**. **Phase 6 (crypto)
+and Phase 7 (go-live) follow.**

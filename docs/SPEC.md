@@ -7,14 +7,14 @@ What the system does, end to end. No architecture, no tech choices.
 ## Purpose
 
 sharpe-engine maintains a systematic factor equity portfolio with a covered
-call income overlay on behalf of CADIEM Casa de Bolsa's proprietary book.
+call income overlay on behalf of the firm's proprietary book.
 It scores stocks on four well-documented factors, constructs a max-Sharpe
 portfolio subject to hard constraints, writes covered calls against held
 positions to harvest the volatility risk premium, and rebalances monthly
 or when the portfolio drifts significantly from target.
 
 The mandate is capital preservation and generation of uncorrelated
-USD-denominated returns that diversify CADIEM's core brokerage business.
+USD-denominated returns that diversify the firm's core brokerage business.
 
 ---
 
@@ -222,7 +222,7 @@ the rest. No full pipeline halt for individual asset data gaps.
 ## Paper trading and go-live
 
 The system runs on Alpaca paper trading until go-live criteria are met.
-Go-live criteria are TBD and will be defined by CADIEM before real
+Go-live criteria are TBD and will be defined by the firm before real
 capital is deployed.
 
 ---

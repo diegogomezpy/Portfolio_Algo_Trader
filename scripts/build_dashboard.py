@@ -185,8 +185,6 @@ def collect(settings) -> dict:
     detractors = [{"sym": k, "v": _r(v, 4)} for k, v in csort[-6:] if v < 0][::-1]
     for x in contributors + detractors:
         tickers.add(x["sym"])
-    counts, edges = np.histogram(net.values, bins=12)
-    bw = sorted(zip(labels, net_l), key=lambda x: x[1])
     keep_sectors = [s for s in SECTOR_ORDER if any(v > 0.001 for v in sector_series[s])]
 
     return {
@@ -197,14 +195,9 @@ def collect(settings) -> dict:
             "cagr": _r(m["ann_return"], 4), "sharpe": _r(m["sharpe"], 3), "vol": _r(m["ann_vol"], 4),
             "maxdd": _r(m["max_drawdown"], 4), "calmar": _r(m["calmar"], 3),
             "total_return": _r(cum.iloc[-1] - 1, 4), "hit_rate": _r((net > 0).mean(), 3),
-            "best": _r(net.max(), 4), "worst": _r(net.min(), 4),
             "streaks": _streaks(net_l),
-            "best_months": [{"m": k, "r": _r(v, 4)} for k, v in bw[-5:][::-1]],
-            "worst_months": [{"m": k, "r": _r(v, 4)} for k, v in bw[:5]],
             "cum": _ser(cum), "spy_cum": _ser(scum), "dd": _ser(dd),
             "roll_sharpe": _ser(roll.mean() / roll.std() * np.sqrt(12)),
-            "roll_vol": _ser(net.rolling(12).std() * np.sqrt(12)),
-            "net": _ser(net), "turnover": _ser(pd.Series(turn_l)),
         },
         "spy": {"cagr": _r(mb["ann_return"], 4), "sharpe": _r(mb["sharpe"], 3),
                 "vol": _r(mb["ann_vol"], 4), "maxdd": _r(mb["max_drawdown"], 4),
@@ -217,13 +210,9 @@ def collect(settings) -> dict:
             "holdings_by_month": holdings_by_month,
         },
         "activity": {
-            "buys": buys_l, "sells": sells_l, "cost": _ser(pd.Series(cost_l)),
-            "cum_cost": _ser(pd.Series(cost_l).cumsum()),
             "total_cost_usd": int(round(sum(cost_l) * nav)), "total_trades": len(blotter),
-            "blotter": blotter[-30:][::-1],
         },
         "contributors": contributors, "detractors": detractors,
-        "hist": {"counts": [int(c) for c in counts], "edges": [_r(e, 4) for e in edges]},
     }
 
 
@@ -296,6 +285,10 @@ def vrp_block(settings) -> dict:
         "sharpe": _r(m["sharpe"], 3), "ann": _r(m["ann_return"], 4), "vol": _r(m["ann_vol"], 4),
         "maxdd": _r(m["max_drawdown"], 4), "premium": _r(df["premium_income"].mean() * 12, 4),
         "assign": _r(df["assignment_rate"].mean(), 3),
+        # Whole-portfolio growth (factor equity + covered-call overlay, real premiums) for the
+        # headline chart, plus the equity-only reference. Same monthly index as DATA.labels.
+        "eq_cum": _ser((1 + s["equity_net"]).cumprod()),
+        "cc_cum": _ser((1 + s["cc_net"]).cumprod()),
         "real_coverage": _r(df["real_coverage"].mean(), 3),
         "unhedged_weight": _r(df["unhedged_weight"].mean(), 4),
         "implied_vol": _r(imp, 4), "realized_vol": _r(rea, 4), "vrp_vol": _r(imp - rea, 4),
@@ -304,6 +297,63 @@ def vrp_block(settings) -> dict:
         "hit_rate": _r(float((v["vrp_vol"] > 0).mean()), 3) if not v.empty else None,
         "labels": [str(d) for d in v["date"]], "iv": _ser(v["implied_vol"], 4),
         "rv": _ser(v["realized_vol_fwd"], 4), "months": int(len(v)),
+    }
+
+
+def wheel_block(settings) -> dict:
+    """Optional cash-secured-put wheel sleeve for the dashboard (sketch/backtest stage).
+
+    Runs the overlay with real DoltHub put premiums + the put sleeve, and returns the put-sleeve
+    and blended-wheel metrics vs equity / covered-call, the put-skew variance-risk-premium, and
+    growth curves. 1× basis (leverage scales the sleeve's drawdown ~linearly). Falls back to
+    modeled (BS) put premiums if the DoltHub pull is unavailable so the build never fails.
+    """
+    for name in ("scripts.backtest", "scripts.backtest_covered_calls", "engine.options_data"):
+        logging.getLogger(name).setLevel(logging.ERROR)
+    pcfg = getattr(settings, "puts", None)
+    pdelta = float(getattr(pcfg, "target_delta", 0.30))
+    budget = float(getattr(pcfg, "budget_pct", 0.25))
+
+    def _m(mm):
+        return {"sharpe": _r(mm["sharpe"], 3), "ann": _r(mm["ann_return"], 4),
+                "vol": _r(mm["ann_vol"], 4), "maxdd": _r(mm["max_drawdown"], 4)}
+
+    try:
+        df = cc.run_overlay(START, END, settings=settings, iv_mode="vix_scaled",
+                            premium_source="dolthub", with_puts=True, put_delta=pdelta)
+        source = "real"
+    except Exception as exc:  # noqa: BLE001 — degrade to modeled puts; never fail the build
+        print(f"(wheel: DoltHub put pull unavailable: {exc}) — modeled premiums")
+        df = cc.run_overlay(START, END, settings=settings, iv_mode="vix_scaled",
+                            with_puts=True, put_delta=pdelta)
+        source = "model"
+    s = df.set_index("date")
+    wheel = (1.0 - budget) * s["cc_net"] + budget * s["put_net"]
+    v = (df.dropna(subset=["put_implied_vol", "put_realized_vol_fwd"])
+         if "put_implied_vol" in df.columns else df.iloc[0:0])
+    imp = float(v["put_implied_vol"].mean()) if not v.empty else float("nan")
+    rea = float(v["put_realized_vol_fwd"].mean()) if not v.empty else float("nan")
+    return {
+        "enabled": bool(getattr(pcfg, "enabled", False)), "source": source,
+        "budget": budget, "delta": pdelta,
+        "eq": _m(eq.portfolio_metrics(s["equity_net"])),
+        "cc": _m(eq.portfolio_metrics(s["cc_net"])),
+        "put": _m(eq.portfolio_metrics(s["put_net"])),
+        "wheel": _m(eq.portfolio_metrics(wheel)),
+        "put_premium": _r(df["put_premium_income"].mean() * 12, 4),
+        "put_assign": _r(df["put_assignment_rate"].mean(), 3),
+        "coverage": _r(df["put_real_coverage"].mean(), 3) if "put_real_coverage" in df.columns else None,
+        "implied_vol": _r(imp, 4), "realized_vol": _r(rea, 4), "vrp_vol": _r(imp - rea, 4),
+        "vrp_var": _r(float(v["put_vrp_var"].mean()), 4) if not v.empty else None,
+        "hit_rate": _r(float((v["put_vrp_vol"] > 0).mean()), 3) if not v.empty else None,
+        "labels": [str(d) for d in s.index],
+        "eq_cum": _ser((1 + s["equity_net"]).cumprod()),
+        "cc_cum": _ser((1 + s["cc_net"]).cumprod()),
+        "wheel_cum": _ser((1 + wheel).cumprod()),
+        "vlabels": [str(d) for d in v["date"]] if not v.empty else [],
+        "iv": _ser(v["put_implied_vol"], 4) if not v.empty else [],
+        "rv": _ser(v["put_realized_vol_fwd"], 4) if not v.empty else [],
+        "months": int(len(v)),
     }
 
 
@@ -317,13 +367,10 @@ def main() -> None:
     data["names"] = {t: _clean_name(raw_names.get(t, t)) for t in tickers}
     data["adr"] = {t: (t in foreign or _is_adr(raw_names.get(t, ""))) for t in tickers}
     data["tsec"] = {t: str(sector_map.get(t, "Unknown")) for t in tickers}
-    # ADR vs domestic exposure over time (each held name is ~5% of NAV).
-    adr_exp = [round(0.05 * sum(1 for s in hm if data["adr"].get(s)), 4)
-               for hm in data["composition"]["holdings_by_month"]]
-    data["composition"]["adr_exposure"] = adr_exp
     data["sleeves"] = sleeves_block(settings)
     data["overlay"] = overlay_block(settings)
     data["vrp"] = vrp_block(settings)        # real premiums + variance risk premium (D33)
+    data["wheel"] = wheel_block(settings)    # optional cash-secured-put wheel sleeve
 
     DATA_OUT.parent.mkdir(parents=True, exist_ok=True)
     DATA_OUT.write_text(json.dumps(data))

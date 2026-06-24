@@ -37,6 +37,34 @@ def test_select_call_empty_or_no_quote():
         date(2022, 9, 1)) is None
 
 
+def _put_chain():
+    return [
+        {"expiration": "2022-09-30", "strike": 145.0, "bid": 1.60, "ask": 1.70, "vol": 0.31, "delta": -0.2300},
+        {"expiration": "2022-09-30", "strike": 150.0, "bid": 2.95, "ask": 3.05, "vol": 0.33, "delta": -0.3400},
+        {"expiration": "2022-09-30", "strike": 140.0, "bid": 0.90, "ask": 1.00, "vol": 0.30, "delta": -0.1500},
+    ]
+
+
+def test_select_put_nearest_abs_delta():
+    p = od.select_put(_put_chain(), date(2022, 9, 1), target_delta=0.30, dte_min=25, dte_max=35)
+    assert p is not None and abs(p["strike"] - 150.0) < 1e-9   # |−0.34| nearest 0.30
+    assert p["delta"] < 0 and abs(p["mid"] - 3.0) < 1e-9
+
+
+def test_fetch_puts_uses_put_right_and_negative_delta_band(tmp_path):
+    seen = {}
+
+    def fake_query(sql):
+        seen["sql"] = sql
+        return [{"date": "2022-09-01", "act_symbol": "AAPL", "expiration": "2022-09-30",
+                 "strike": 150.0, "bid": 2.95, "ask": 3.05, "vol": 0.33, "delta": -0.34}]
+
+    out = od.fetch_puts(["AAPL"], date(2022, 9, 1), cache_dir=tmp_path, query=fake_query)
+    assert set(out) == {"AAPL"} and out["AAPL"][0]["delta"] == -0.34
+    assert "call_put='Put'" in seen["sql"] and "delta BETWEEN -0.60 AND -0.05" in seen["sql"]
+    assert (tmp_path / "2022-09-01.put.parquet").exists()        # separate cache file from calls
+
+
 def test_premium_yield():
     assert abs(od.premium_yield({"mid": 2.0}, 100.0) - 0.02) < 1e-12
     assert abs(od.premium_yield({"mid": 2.0}, 100.0, slippage=0.05) - 0.019) < 1e-12

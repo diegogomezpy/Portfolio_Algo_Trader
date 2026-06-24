@@ -45,14 +45,14 @@ def _dte(exp: str | date, as_of: date) -> int:
     return (e - as_of).days
 
 
-def select_call(chain: Sequence[Mapping], as_of: date, *, target_delta: float = 0.30,
-                dte_min: int = 30, dte_max: int = 45) -> dict | None:
-    """Pick the call nearest ``target_delta`` whose expiration is in the DTE window.
+def _select(chain: Sequence[Mapping], as_of: date, target_delta: float,
+            dte_min: int, dte_max: int, *, use_abs: bool) -> dict | None:
+    """Pick the contract nearest ``target_delta`` whose expiration is in the DTE window.
 
     ``chain`` is a list of contract dicts (``expiration, strike, bid, ask, vol, delta``) for one
     underlying on one date. Prefers expirations in ``[dte_min, dte_max]``; if none, falls back to
-    the expiration with DTE closest to the window. Returns the chosen contract enriched with
-    ``mid`` and ``dte``, or ``None`` if the chain is empty / has no usable quote.
+    the expiration with DTE closest to the window. ``use_abs`` matches on |delta| (puts carry a
+    negative delta). Returns the chosen contract enriched with ``mid`` and ``dte``, or ``None``.
     """
     rows = [c for c in chain if c.get("delta") is not None and c.get("bid") is not None
             and c.get("ask") is not None and float(c["ask"]) > 0]
@@ -66,9 +66,22 @@ def select_call(chain: Sequence[Mapping], as_of: date, *, target_delta: float = 
         best_exp = min({str(c["expiration"])[:10] for c in rows},
                        key=lambda e: abs(_dte(e, as_of) - mid_dte))
         pool = [c for c in rows if str(c["expiration"])[:10] == best_exp]
-    chosen = min(pool, key=lambda c: abs(float(c["delta"]) - target_delta))
+    norm = (lambda d: abs(d)) if use_abs else (lambda d: d)
+    chosen = min(pool, key=lambda c: abs(norm(float(c["delta"])) - target_delta))
     bid, ask = float(chosen["bid"]), float(chosen["ask"])
     return {**chosen, "mid": (bid + ask) / 2.0, "dte": _dte(chosen["expiration"], as_of)}
+
+
+def select_call(chain: Sequence[Mapping], as_of: date, *, target_delta: float = 0.30,
+                dte_min: int = 30, dte_max: int = 45) -> dict | None:
+    """Pick the call nearest ``target_delta`` whose expiration is in the DTE window."""
+    return _select(chain, as_of, target_delta, dte_min, dte_max, use_abs=False)
+
+
+def select_put(chain: Sequence[Mapping], as_of: date, *, target_delta: float = 0.30,
+               dte_min: int = 30, dte_max: int = 45) -> dict | None:
+    """Pick the put nearest ``target_delta`` in |delta| within the DTE window (puts have δ<0)."""
+    return _select(chain, as_of, target_delta, dte_min, dte_max, use_abs=True)
 
 
 def premium_yield(contract: Mapping, spot: float, *, slippage: float = 0.0) -> float | None:
@@ -141,23 +154,25 @@ def _coerce(rows: list[dict]) -> pd.DataFrame:
 
 
 def fetch_calls(symbols: Iterable[str], target: date, *, max_offset: int = 3,
-                dte_min: int = 30, dte_max: int = 45,
+                dte_min: int = 30, dte_max: int = 45, right: str = "Call",
                 cache_dir: Path | None = None, query=_query) -> dict[str, list[dict]]:
-    """Real call chains for ``symbols`` near ``target`` (nearest available trading day, ±max_offset).
+    """Real option chains for ``symbols`` near ``target`` (nearest available trading day, ±max_offset).
 
     One API query per requested date covering all (candidate dates × missing symbols), narrowed
-    server-side to a call/expiration/delta band to stay under the API timeout. Each symbol then
-    resolves to the candidate date closest to ``target`` that actually has data. Cached per
-    ``target`` (rows parquet + attempted-symbols manifest) so a re-run hits disk, not the network.
+    server-side to a ``right`` (``Call``/``Put``) / expiration / delta band to stay under the API
+    timeout. Each symbol resolves to the candidate date closest to ``target`` that actually has
+    data. Cached per ``(target, right)`` (rows parquet + attempted-symbols manifest) so a re-run
+    hits disk, not the network. Puts carry a negative delta, so the band flips sign accordingly.
 
     Returns ``{symbol: [contract dicts]}`` (only symbols with data; empty list omitted). ``query``
-    is injectable for tests.
+    is injectable for tests. (Name kept ``fetch_calls`` for back-compat; ``right`` selects puts.)
     """
     symbols = sorted({s.upper() for s in symbols})
     cdir = cache_dir or _CACHE_DIR
     cdir.mkdir(parents=True, exist_ok=True)
-    rows_path = cdir / f"{target.isoformat()}.parquet"
-    manifest_path = cdir / f"{target.isoformat()}.attempted.json"
+    tag = "" if right == "Call" else f".{right.lower()}"      # calls keep the original filename
+    rows_path = cdir / f"{target.isoformat()}{tag}.parquet"
+    manifest_path = cdir / f"{target.isoformat()}{tag}.attempted.json"
 
     cached = _coerce([]) if not rows_path.exists() else pd.read_parquet(rows_path)
     attempted = set(json.loads(manifest_path.read_text())) if manifest_path.exists() else set()
@@ -169,10 +184,11 @@ def fetch_calls(symbols: Iterable[str], target: date, *, max_offset: int = 3,
         sym_list = ",".join(f"'{s}'" for s in missing)
         exp_lo = (target + timedelta(days=dte_min - 7)).isoformat()
         exp_hi = (target + timedelta(days=dte_max + 7)).isoformat()
+        delta_band = "delta BETWEEN -0.60 AND -0.05" if right == "Put" else "delta BETWEEN 0.05 AND 0.60"
         sql = (f"SELECT date, act_symbol, expiration, strike, bid, ask, vol, delta "
                f"FROM option_chain WHERE date IN ({in_list}) AND act_symbol IN ({sym_list}) "
-               f"AND call_put='Call' AND expiration BETWEEN '{exp_lo}' AND '{exp_hi}' "
-               f"AND delta BETWEEN 0.05 AND 0.60")
+               f"AND call_put='{right}' AND expiration BETWEEN '{exp_lo}' AND '{exp_hi}' "
+               f"AND {delta_band}")
         fetched = _coerce(query(sql))
         # resolve each symbol to its nearest-to-target available date
         rank = {c: i for i, c in enumerate(cands)}             # 0 = target, then nearest
@@ -196,6 +212,11 @@ def fetch_calls(symbols: Iterable[str], target: date, *, max_offset: int = 3,
             if not g.empty:
                 out[sym] = g.to_dict("records")
     return out
+
+
+def fetch_puts(symbols: Iterable[str], target: date, **kw) -> dict[str, list[dict]]:
+    """Real put chains near ``target`` (see :func:`fetch_calls`; sets ``right='Put'``)."""
+    return fetch_calls(symbols, target, right="Put", **kw)
 
 
 def optionable_underlyings(symbols: Iterable[str], *, probe=None,

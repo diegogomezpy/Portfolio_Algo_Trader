@@ -88,9 +88,15 @@ def _check_universe(weights: pd.Series, universe: Iterable[str]) -> list[str]:
     return [f"off-universe symbol: {s}" for s in weights.index if s not in approved]
 
 
-def _check_covered_calls(option_orders, equity_positions, as_of) -> list[str]:
-    """No naked calls and no expired contracts. Each order: ``underlying``, ``contracts``,
-    optional ``contract_size`` (default 100), ``expiration`` (ISO/date)."""
+def check_covered_call_coverage(option_orders, equity_positions, as_of=None) -> list[str]:
+    """No naked calls and no expired contracts (public; reusable as a pre-submit guard).
+
+    Each order: ``underlying``, ``contracts``, optional ``contract_size`` (default 100),
+    ``expiration`` (ISO/date). Returns a list of failure strings (empty == all covered).
+    The covered-call write path calls this on its plan as defense-in-depth before any
+    sell-to-open reaches the broker, independent of the by-construction ``floor(shares/100)``
+    sizing — the same gate the pre-trade risk check applies.
+    """
     if not option_orders:
         return []
     held = {str(k): float(v) for k, v in (equity_positions or {}).items()}
@@ -139,7 +145,7 @@ def check_pretrade(
     if leverage is not None:
         failures += _check_leverage_cap(leverage, float(getattr(p, "max_leverage", 1.0)))
     failures += _check_universe(w, universe)
-    failures += _check_covered_calls(option_orders, equity_positions, as_of)
+    failures += check_covered_call_coverage(option_orders, equity_positions, as_of)
 
     result = RiskCheckResult(approved=not failures, failures=failures)
     if not result.approved:

@@ -84,6 +84,7 @@ snapshots = Table(
     Column("ts", DateTime, nullable=False, index=True),
     Column("nav", Float),
     Column("cash", Float),
+    Column("last_equity", Float),  # Alpaca prior-trading-day close equity → true intraday P&L basis
     Column("weights", JSON),       # {symbol: weight}
     Column("positions", JSON),     # {symbol: qty}
     Column("drift", Float),
