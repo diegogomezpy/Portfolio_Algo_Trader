@@ -120,6 +120,7 @@ def collect(settings) -> dict:
     prev_w = pd.Series(dtype=float)
     labels, net_l, cost_l, turn_l, bench_l = [], [], [], [], []
     nnames_l, cash_l, buys_l, sells_l = [], [], [], []
+    date_isos: list[str] = []                       # rebalance d1 dates, for benchmark alignment
     sector_series = {s: [] for s in SECTOR_ORDER}
     holdings_by_month: list[list[str]] = []
     contrib: dict[str, float] = {}
@@ -155,6 +156,7 @@ def collect(settings) -> dict:
             contrib[str(sym)] = contrib.get(str(sym), 0.0) + float(w[sym] * fwd.get(sym, 0.0))
 
         labels.append(label)
+        date_isos.append(d1.date().isoformat())
         net_l.append(float((w * fwd).sum()) - eq.transaction_cost(prev_w, w, adv, **cost_kw))
         cost_l.append(eq.transaction_cost(prev_w, w, adv, **cost_kw))
         turn_l.append(eq.turnover(prev_w, w))
@@ -191,6 +193,7 @@ def collect(settings) -> dict:
         "_tickers": sorted(tickers),
         "meta": {"start": labels[0], "end": labels[-1], "months": len(labels), "nav": nav},
         "labels": labels,
+        "date_isos": date_isos,
         "equity": {
             "cagr": _r(m["ann_return"], 4), "sharpe": _r(m["sharpe"], 3), "vol": _r(m["ann_vol"], 4),
             "maxdd": _r(m["max_drawdown"], 4), "calmar": _r(m["calmar"], 3),
@@ -357,6 +360,32 @@ def wheel_block(settings) -> dict:
     }
 
 
+def benchmark_block(settings, date_isos) -> dict:
+    """CBOE BXMD / BXRD 30-delta buy-write benchmarks aligned to the monthly rebalance dates.
+
+    SPY is already in :func:`collect` (from the price panel); this adds the option-selling indices
+    from CBOE's CDN so the Backtest tab compares the strategy to the *same* covered-call strategy on
+    the S&P 500 (BXMD) and Russell 2000 (BXRD). Monthly returns → ``eq.portfolio_metrics`` (×12
+    annualized), consistent with the strategy/SPY metrics. Best-effort: a feed miss omits the series.
+    """
+    from engine import benchmarks
+    syms = [s for s in getattr(getattr(settings, "dashboard", None), "live_benchmarks",
+                               ["SPY", "BXMD", "BXRD"]) if s != "SPY"]
+    raw = benchmarks.fetch_closes(syms, date_isos[0])
+    series = {}
+    for sym in syms:
+        aligned = benchmarks.align(raw.get(sym, {}), date_isos)
+        if not aligned or not aligned[0] or any(v is None for v in aligned):
+            continue
+        vals = pd.Series(aligned, dtype=float)
+        m = eq.portfolio_metrics(vals.pct_change().dropna())
+        series[sym] = {"cum": [_r(v / aligned[0], 5) for v in aligned], **benchmarks.describe(sym),
+                       "total": _r(aligned[-1] / aligned[0] - 1, 4), "ann": _r(m["ann_return"], 4),
+                       "vol": _r(m["ann_vol"], 4), "sharpe": _r(m["sharpe"], 3),
+                       "maxdd": _r(m["max_drawdown"], 4)}
+    return {"series": series, "spy": benchmarks.describe("SPY")}
+
+
 def main() -> None:
     settings = load_settings()
     data = collect(settings)
@@ -368,9 +397,11 @@ def main() -> None:
     data["adr"] = {t: (t in foreign or _is_adr(raw_names.get(t, ""))) for t in tickers}
     data["tsec"] = {t: str(sector_map.get(t, "Unknown")) for t in tickers}
     data["sleeves"] = sleeves_block(settings)
-    data["overlay"] = overlay_block(settings)
-    data["vrp"] = vrp_block(settings)        # real premiums + variance risk premium (D33)
-    data["wheel"] = wheel_block(settings)    # optional cash-secured-put wheel sleeve
+    data["vrp"] = vrp_block(settings)        # real premiums + variance risk premium (D33);
+                                             # also feeds the whole-portfolio headline curve.
+    data["benchmarks"] = benchmark_block(settings, data["date_isos"])   # SPY + CBOE BXMD/BXRD
+    # NOTE: the covered-call IV-assumption sweep (overlay_block) and the put-wheel (wheel_block)
+    # were removed from the Backtest tab per Diego — those functions are retained but unused.
 
     DATA_OUT.parent.mkdir(parents=True, exist_ok=True)
     DATA_OUT.write_text(json.dumps(data))

@@ -61,6 +61,13 @@
   <div><h2>Rolling 12-month Sharpe</h2><div id="roll"></div></div>
 </div>
 
+<div class="sec">Strategy vs benchmarks</div>
+<h2>Growth since inception — strategy vs SPY &amp; CBOE 30Δ buy-writes (normalized)</h2>
+<div class="lg" id="bmklegend"></div>
+<div id="bmkchart"></div>
+<table id="bmktbl"><thead><tr><th>Series</th><th>Total return</th><th>Ann.</th><th>Vol</th><th>Sharpe</th><th>Max DD</th></tr></thead><tbody></tbody></table>
+<div class="note" id="bmkdesc"></div>
+
 <div class="sec">Portfolio composition over time</div>
 <h2>Sector exposure (% of NAV, stacked)</h2>
 <div class="lg" id="seclegend"></div>
@@ -88,36 +95,16 @@
   <div><h2>Top detractors</h2><table id="detract"></table></div>
 </div>
 
-<div class="sec">Covered-call overlay</div>
-<h2>Growth at different IV-premium assumptions</h2>
-<div class="lg" id="ovlegend"></div>
-<div id="ovgrowth"></div>
-<h2>Option delta optimization — Sharpe vs delta</h2>
-<div class="lg"><span><i class="sw" style="background:var(--spy,#8c99ad)"></i>realized-vol floor</span><span><i class="sw" style="background:var(--accent,#5b9dff)"></i>market-implied IV</span><span style="color:var(--amber,#f5b73d)">assignment caps delta near 0.35</span></div>
-<div id="deltachart"></div>
-<div class="note" id="deltanote"></div>
-<p class="sub" style="margin:14px 0 8px;">Upside given up is exact (real prices); premium is modeled with Black-Scholes at an assumed implied vol, sensitivity-tested. Engine validated against CBOE&rsquo;s ^BXM (corr 0.79).</p>
-<table id="overlay"><thead><tr><th>Implied-vol assumption</th><th>Sharpe</th><th>Ann. return</th><th>Volatility</th><th>Max drawdown</th><th>Premium/yr</th><th>Assigned</th></tr></thead><tbody></tbody></table>
-<div class="call" id="breakeven"></div>
-
 <div class="sec">Variance risk premium &amp; real option premiums</div>
 <p class="sub" id="vrpsub" style="margin:2px 0 4px;"></p>
 <div class="kpis" id="vrpkpis"></div>
 <h2>Implied vol (sold) vs realized vol (over the hold)</h2>
 <div class="lg"><span><i class="sw" style="background:var(--accent,#5b9dff)"></i>implied vol — what we sold at</span><span><i class="sw" style="background:var(--spy,#8c99ad)"></i>realized vol — what the names did</span></div>
 <div id="vrpchart"></div>
+<h2>The edge: implied − realized vol (the variance risk premium, by month)</h2>
+<div class="lg"><span><i class="sw" style="background:var(--green,#3ddc97)"></i>positive — sold vol richer than it realized (we got paid)</span><span><i class="sw" style="background:var(--red,#ff5d6c)"></i>negative — realized &gt; implied (a crash month)</span></div>
+<div id="vrpdiff"></div>
 <div class="note" id="vrpnote"></div>
-
-<div class="sec" id="wheelsec">Cash-secured put wheel — optional overlay</div>
-<p class="sub" id="wheelsub" style="margin:2px 0 4px;"></p>
-<div class="kpis" id="wheelkpis"></div>
-<h2>Growth of $100,000 — equity vs covered-call vs wheel</h2>
-<div class="lg"><span><i class="sw" style="background:var(--spy,#8c99ad)"></i>equity only</span><span><i class="sw" style="background:var(--green,#3ddc97)"></i>covered-call</span><span><i class="sw" style="background:var(--accent,#5b9dff)"></i>wheel (cc + puts)</span></div>
-<div id="wheelgrowth"></div>
-<h2>Put: implied vol (sold) vs realized vol (over the hold)</h2>
-<div class="lg"><span><i class="sw" style="background:var(--accent,#5b9dff)"></i>put implied vol</span><span><i class="sw" style="background:var(--spy,#8c99ad)"></i>realized vol</span></div>
-<div id="wheelchart"></div>
-<div class="note" id="wheelnote"></div>
 
 <p class="foot" id="foot"></p>
 </div>
@@ -155,6 +142,17 @@ const DATA = /*__DASHBOARD_DATA__*/null;
     series.forEach(se=>{let pts=[],n=se.data.length;se.data.forEach((v,i)=>{if(v!=null)pts.push([sx(f,i,n),sy(f,v,lo,hi)]);});
       if(o.area){const base=sy(f,Math.max(lo,0),lo,hi);s+=`<path d="${path(pts)} L${pts[pts.length-1][0].toFixed(1)} ${base.toFixed(1)} L${pts[0][0].toFixed(1)} ${base.toFixed(1)} Z" fill="${se.color}" fill-opacity="0.14" stroke="none"/>`;}
       s+=`<path d="${path(pts)}" fill="none" stroke="${se.color}" stroke-width="${se.w||2}" ${se.dash?`stroke-dasharray="${se.dash}"`:""} stroke-linejoin="round"/>`;});
+    put(id,s);
+  }
+  function signedBars(id,labels,vals,fmtY){
+    const f=frame(180,44),clean=vals.filter(v=>v!=null);
+    let lo=Math.min(0,...clean),hi=Math.max(0,...clean);const pad=(hi-lo)*0.1||0.01;hi+=pad;lo-=pad;
+    const n=vals.length,slot=f.plotW/n,zero=sy(f,0,lo,hi);
+    let s=open(f)+yaxis(f,lo,hi,fmtY);
+    vals.forEach((v,i)=>{if(v==null)return;const x=f.padL+i*slot,y=sy(f,v,lo,hi);
+      s+=`<rect x="${(x+1).toFixed(1)}" y="${Math.min(y,zero).toFixed(1)}" width="${Math.max(slot-2,1).toFixed(1)}" height="${Math.max(Math.abs(y-zero),0.6).toFixed(1)}" rx="1" fill="${v>=0?C.teal:C.red}"/>`;});
+    s+=`<line x1="${f.padL}" y1="${zero.toFixed(1)}" x2="${f.w-f.padR}" y2="${zero.toFixed(1)}" stroke="${C.faint}" stroke-width="1"/>`;
+    for(let i=0;i<n;i+=Math.max(1,Math.round(n/6))){s+=`<text x="${(f.padL+i*slot+slot/2).toFixed(1)}" y="${f.h-7}" text-anchor="middle" font-size="11" fill="${C.mut}">${labels[i]}</text>`;}
     put(id,s);
   }
   function stacked(id,labels,order,smap,h){
@@ -227,6 +225,26 @@ const DATA = /*__DASHBOARD_DATA__*/null;
   lineChart("dd",DATA.labels,[{data:E.dd,color:C.red,w:1.6}],{h:175,area:true,hi:0,fmtY:v=>(v*100).toFixed(0)+"%"});
   lineChart("roll",DATA.labels,[{data:E.roll_sharpe,color:C.blue,w:2}],{h:175,fmtY:v=>v.toFixed(1),refs:[{v:0,c:C.faint},{v:1,c:"#cdd6cf"}]});
 
+  // Strategy vs SPY + CBOE 30Δ buy-writes (BXMD = S&P 500, BXRD = Russell 2000), normalized.
+  const BM=DATA.benchmarks||{}, BS=BM.series||{};
+  if(Object.keys(BS).length){
+    const PB=(DATA.vrp&&DATA.vrp.cc_cum)?DATA.vrp:null, bmCol={SPY:C.spy,BXMD:C.blue,BXRD:C.amber};
+    const nrm=a=>{const b=(a&&a[0])||1; return a.map(v=>v/b);};
+    const bseries=[{data:nrm(PB?PB.cc_cum:E.cum),color:C.teal,w:2.4,name:"strategy"},
+                   {data:nrm(E.spy_cum),color:C.spy,w:1.8,dash:"5 4",name:"SPY"}];
+    Object.keys(BS).forEach(sym=>bseries.push({data:nrm(BS[sym].cum),color:bmCol[sym]||C.amber,w:1.8,name:sym}));
+    document.getElementById("bmklegend").innerHTML=bseries.map(s=>`<span><i class="sw" style="background:${s.color}"></i>${s.name}</span>`).join("");
+    lineChart("bmkchart",DATA.labels,bseries,{h:240,fmtY:v=>((v-1)*100).toFixed(0)+"%"});
+    const brow=(name,tot,ann,vol,sh,dd)=>`<tr><td>${name}</td><td class="${tot>=0?'pos':'neg'}">${pct(tot)}</td><td>${pct(ann)}</td><td>${pct(vol,0)}</td><td style="font-weight:600">${sh==null?'—':sh.toFixed(2)}</td><td class="neg">${pct(dd,0)}</td></tr>`;
+    let brows=brow("Strategy (equity + calls)", PB?PB.cc_cum[PB.cc_cum.length-1]-1:E.total_return, PB?PB.ann:E.cagr, PB?PB.vol:E.vol, PB?PB.sharpe:E.sharpe, PB?PB.maxdd:E.maxdd);
+    brows+=brow("SPY", S.total_return, S.cagr, S.vol, S.sharpe, S.maxdd);
+    Object.keys(BS).forEach(sym=>brows+=brow(sym, BS[sym].total, BS[sym].ann, BS[sym].vol, BS[sym].sharpe, BS[sym].maxdd));
+    document.querySelector("#bmktbl tbody").innerHTML=brows;
+    document.getElementById("bmkdesc").innerHTML=`<b style="font-weight:600">What these are:</b><br>`+
+      `<b style="color:${C.spy}">${(BM.spy&&BM.spy.name)||'S&P 500 (SPY)'}</b> — ${(BM.spy&&BM.spy.desc)||''}<br>`+
+      Object.keys(BS).map(sym=>`<b style="color:${bmCol[sym]||C.amber}">${BS[sym].name}</b> — ${BS[sym].desc}`).join("<br>");
+  }
+
   const secOrder=CO.sectors_order.concat(["Cash"]),smap=Object.assign({},CO.sectors,{Cash:CO.cash});
   document.getElementById("seclegend").innerHTML=secOrder.map(s=>`<span><i class="dot" style="background:${SECCOL[s]}"></i>${s}</span>`).join("");
   stacked("sectors",DATA.labels,secOrder,smap,250);
@@ -249,51 +267,25 @@ const DATA = /*__DASHBOARD_DATA__*/null;
     arr.map(x=>`<tr><td><b style="font-weight:500">${x.sym}</b></td><td>${nm(x.sym)}</td><td class="${sign}" style="font-weight:500">${pct(x.v)}</td></tr>`).join("")+"</tbody>";
   ctbl("contrib",DATA.contributors,"pos");ctbl("detract",DATA.detractors,"neg");
 
-  const ivShade={realized:"#3f6ea5",iv110:"#5b9dff",iv120:"#86b9ff",market:"#bcd6ff"},ivName={realized:"realized (floor)",iv110:"IV 1.10×",iv120:"IV 1.20×",market:"market"};
-  document.getElementById("ovlegend").innerHTML='<span><i class="sw" style="background:var(--green,#3ddc97)"></i>equity only</span>'+Object.keys(ivShade).map(k=>`<span><i class="sw" style="background:${ivShade[k]}"></i>+ calls @ ${ivName[k]}</span>`).join("");
-  lineChart("ovgrowth",DATA.labels,[{data:(O.eq_cum||E.cum).map(v=>v*1e5),color:C.teal,w:2,dash:"5 4"}].concat(Object.keys(ivShade).map(k=>({data:(O.cums&&O.cums[k]||[]).map(v=>v*1e5),color:ivShade[k],w:1.8}))),{h:230,fmtY:v=>"$"+Math.round(v/1000)+"k"});
-  const ds=O.delta_sweep||[];
-  lineChart("deltachart",ds.map(r=>r.delta.toFixed(2)),[{data:ds.map(r=>r.sharpe_floor),color:C.spy,w:2},{data:ds.map(r=>r.sharpe_market),color:C.blue,w:2}],{h:180,fmtY:v=>v.toFixed(1)});
-  const bd=ds.find(r=>r.delta===O.best_delta)||ds[0];
-  document.getElementById("deltanote").innerHTML=`<b style="font-weight:500">Delta optimization:</b> at the realized-vol floor, Sharpe is flat (~${ds[0].sharpe_floor.toFixed(2)}) across delta — delta only pays off if implied vol exceeds realized (the premise of selling calls). At market IV, Sharpe climbs ${ds[0].sharpe_market.toFixed(2)}→${ds[ds.length-1].sharpe_market.toFixed(2)} with delta, but assignment crosses 30% near 0.35. Best feasible (assignment &lt; 30%): <b style="font-weight:500">delta ${O.best_delta}</b> — market Sharpe ${bd.sharpe_market.toFixed(2)}, ${(bd.assign*100).toFixed(0)}% assigned, ${(bd.premium*100).toFixed(0)}%/yr premium. Current setting: ${O.current_delta}.`;
-  document.querySelector("#overlay tbody").innerHTML=O.rows.map(r=>{const win=r.sharpe>=E.sharpe;
-    return `<tr><td>${r.label}</td><td style="font-weight:600;${win?'color:'+C.teal:''}">${r.sharpe.toFixed(2)}</td><td>${pct(r.ann)}</td><td>${pct(r.vol,0)}</td><td>${pct(r.maxdd,0)}</td><td>${pct(r.premium,0)}</td><td>${(r.assign*100).toFixed(0)}%</td></tr>`;}).join("");
-  document.getElementById("breakeven").innerHTML=`<b style="font-weight:500">Verdict:</b> the overlay cuts volatility ${(E.vol*100).toFixed(0)}%→~${(O.rows[3].vol*100).toFixed(0)}% and drawdowns <i>unconditionally</i>. It beats the equity-only Sharpe of ${E.sharpe.toFixed(2)} once implied vol exceeds <b style="font-weight:500">${O.breakeven_mult}× realized</b> — single-name options realistically trade ~1.05–1.20× realized, so a Sharpe improvement (beating SPY&rsquo;s ${S.sharpe.toFixed(2)}) is the likely outcome.`;
   const VRP=DATA.vrp;
   if(VRP){
-    const mkt=O.rows[O.rows.length-1];                 // VIX-scaled (market) modeled overlay
     const pp=(v,d=0)=>v==null?"—":(v*100).toFixed(d)+"%";
     document.getElementById("vrpsub").textContent=`Premiums priced from REAL historical chains (DoltHub) where available — ${pp(VRP.real_coverage)} of name-months — Black-Scholes-imputed for optionable data gaps, and ${pp(VRP.unhedged_weight,1)} of NAV left unhedged where no listed options exist (DECISIONS D33).`;
     document.getElementById("vrpkpis").innerHTML=[
-      {l:"Sharpe (real)",v:VRP.sharpe.toFixed(2),d:`modeled ${mkt.sharpe.toFixed(2)} · equity ${E.sharpe.toFixed(2)}`},
-      {l:"Premium/yr (real)",v:pp(VRP.premium),d:`modeled ${pp(mkt.premium)}`},
+      {l:"Sharpe (w/ calls)",v:VRP.sharpe.toFixed(2),d:`equity-only ${E.sharpe.toFixed(2)}`},
+      {l:"Premium/yr (real)",v:pp(VRP.premium),d:"collected, real chains"},
       {l:"Sold @ implied vol",v:pp(VRP.implied_vol),d:`realized ${pp(VRP.realized_vol)}`},
       {l:"Variance risk premium",v:(VRP.vrp_vol>=0?"+":"")+(VRP.vrp_vol*100).toFixed(1)+" pts",d:`IV/RV ${VRP.ratio.toFixed(2)}`},
       {l:"IV > RV",v:pp(VRP.hit_rate),d:"of months"},
       {l:"Real coverage",v:pp(VRP.real_coverage),d:`${pp(VRP.unhedged_weight,1)} unhedged`},
     ].map(k=>`<div class="kpi"><div class="l">${k.l}</div><div class="v">${k.v}</div><div class="d">${k.d}</div></div>`).join("");
     lineChart("vrpchart",VRP.labels,[{data:VRP.iv,color:C.blue,w:2},{data:VRP.rv,color:C.spy,w:2}],{h:200,lo:0,fmtY:v=>(v*100).toFixed(0)+"%"});
+    // The edge made explicit: IV − RV per month (green = we got paid, red = a crash month).
+    const diff=VRP.iv.map((v,i)=>(v==null||VRP.rv[i]==null)?null:v-VRP.rv[i]);
+    signedBars("vrpdiff",VRP.labels,diff,v=>(v*100).toFixed(0));
     const tail=VRP.vrp_var==null?"":(VRP.vrp_var>=0?`positive (+${VRP.vrp_var.toFixed(3)})`:`slightly negative (${VRP.vrp_var.toFixed(3)}) — tail-dominated: a few large single-name moves spike realized variance`);
-    document.getElementById("vrpnote").innerHTML=`<b style="font-weight:600">Variance risk premium:</b> sold calls at ${pp(VRP.implied_vol)} implied vol vs ${pp(VRP.realized_vol)} realized — a <b style="font-weight:600">+${(VRP.vrp_vol*100).toFixed(1)} vol-point</b> edge, implied &gt; realized in ${pp(VRP.hit_rate)} of months (IV/RV ${VRP.ratio.toFixed(2)}). In variance terms (IV²−RV²) it is ${tail}. The 0.30-delta strike caps that tail, so the real-premium overlay (Sharpe ${VRP.sharpe.toFixed(2)}) still beats equity-only (${E.sharpe.toFixed(2)}). Real chains for ${pp(VRP.real_coverage)} of name-months; BS-imputed for optionable gaps; ${pp(VRP.unhedged_weight,1)} of NAV unhedged (non-optionable on Alpaca).`;
+    document.getElementById("vrpnote").innerHTML=`<b style="font-weight:600">Variance risk premium:</b> sold calls at ${pp(VRP.implied_vol)} implied vol vs ${pp(VRP.realized_vol)} realized — a <b style="font-weight:600">+${(VRP.vrp_vol*100).toFixed(1)} vol-point</b> edge, implied &gt; realized in ${pp(VRP.hit_rate)} of months (IV/RV ${VRP.ratio.toFixed(2)}). The bars above show it month by month: mostly green (we sold vol richer than it realized), with red spikes where a name's realized vol blew past what we sold. In variance terms (IV²−RV²) it is ${tail}. The 0.30-delta strike caps that tail, so the with-calls book (Sharpe ${VRP.sharpe.toFixed(2)}) still beats equity-only (${E.sharpe.toFixed(2)}).`;
   }
-  const WH=DATA.wheel;
-  if(WH){
-    const pp=(v,d=0)=>v==null?"—":(v*100).toFixed(d)+"%";
-    const sh=m=>m&&m.sharpe!=null?m.sharpe.toFixed(2):"—";
-    document.getElementById("wheelsub").innerHTML=`Sell ${WH.delta.toFixed(2)}Δ OTM puts on the ranked names; assignment buys the stock at a discount, then write a covered call (the wheel). Sized at <b style="font-weight:600">${pp(WH.budget)} of gross</b> — puts <b>displace</b> equity within the 2× cap, never stack on it. ${WH.source==='model'?'Modeled put premiums (DoltHub unavailable).':'Real DoltHub put premiums.'} ${WH.enabled?'':'<b style="color:var(--amber,#f5b73d)">Toggle OFF</b> (puts.enabled=false) — backtest sleeve only, not yet live.'}`;
-    document.getElementById("wheelkpis").innerHTML=[
-      {l:"Wheel Sharpe",v:sh(WH.wheel),d:`cc ${sh(WH.cc)} · eq ${sh(WH.eq)}`},
-      {l:"Wheel maxDD",v:pp(WH.wheel.maxdd,0),d:`cc ${pp(WH.cc.maxdd,0)} · eq ${pp(WH.eq.maxdd,0)}`},
-      {l:"Put sleeve Sharpe",v:sh(WH.put),d:`maxDD ${pp(WH.put.maxdd,0)} (1×)`},
-      {l:"Put premium/yr",v:pp(WH.put_premium),d:`assigned ${pp(WH.put_assign,0)}`},
-      {l:"Put VRP",v:(WH.vrp_vol>=0?"+":"")+(WH.vrp_vol*100).toFixed(1)+" pts",d:`IV ${pp(WH.implied_vol)} vs RV ${pp(WH.realized_vol)}`},
-      {l:"Put IV²−RV²",v:WH.vrp_var==null?"—":(WH.vrp_var>=0?"+":"")+WH.vrp_var.toFixed(3),d:WH.vrp_var>=0?"left tail paid":"tail-dominated"},
-    ].map(k=>`<div class="kpi"><div class="l">${k.l}</div><div class="v">${k.v}</div><div class="d">${k.d}</div></div>`).join("");
-    lineChart("wheelgrowth",WH.labels,[{data:WH.eq_cum.map(v=>v*1e5),color:C.spy,w:2,dash:"5 4"},{data:WH.cc_cum.map(v=>v*1e5),color:C.teal,w:2},{data:WH.wheel_cum.map(v=>v*1e5),color:C.blue,w:2.3}],{h:230,fmtY:v=>"$"+Math.round(v/1000)+"k"});
-    if(WH.iv&&WH.iv.length) lineChart("wheelchart",WH.vlabels,[{data:WH.iv,color:C.blue,w:2},{data:WH.rv,color:C.spy,w:2}],{h:200,lo:0,fmtY:v=>(v*100).toFixed(0)+"%"});
-    const tail=WH.vrp_var==null?"":(WH.vrp_var>=0?`positive (+${WH.vrp_var.toFixed(3)}) — the premium paid for the left tail`:`negative (${WH.vrp_var.toFixed(3)}) — crash-dominated, the left tail was NOT fully paid for`);
-    document.getElementById("wheelnote").innerHTML=`<b style="font-weight:600">Read:</b> the put sleeve sells ${WH.delta.toFixed(2)}Δ puts at ${pp(WH.implied_vol)} implied vol vs ${pp(WH.realized_vol)} realized (a +${(WH.vrp_vol*100).toFixed(1)} vol-pt edge), assigned ${pp(WH.put_assign,0)} of months. Blended at ${pp(WH.budget)} of gross the wheel posts Sharpe ${sh(WH.wheel)} vs covered-call ${sh(WH.cc)} and equity-only ${sh(WH.eq)}. In variance terms (IV²−RV²) the put premium is ${tail}. <b style="font-weight:600">Caveat:</b> 1× basis — at the book's 2× leverage the put sleeve is long-delta, so its drawdown ~doubles; that interaction is the real risk to weigh before turning the toggle on.`;
-  }
-  document.getElementById("foot").textContent="sharpe-engine · factor equity (quality/value/momentum/low-vol, ~19 names, equal-weight, λ=0 alpha-driven) + 0.30-delta covered-call overlay (+ optional cash-secured-put wheel) · paper-trading research backtest on free IEX history from mid-2020. Not investment advice.";
+  document.getElementById("foot").textContent="sharpe-engine · factor equity (quality/value/momentum/low-vol, ~19 names, equal-weight, λ=0 alpha-driven) + 0.30-delta covered-call overlay · paper-trading research backtest on free IEX history from mid-2020. Not investment advice.";
 })();
 </script>

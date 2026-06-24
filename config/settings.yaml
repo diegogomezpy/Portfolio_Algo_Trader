@@ -156,3 +156,10 @@ alerts:
                              # SMTP_PASSWORD. Alerts now email (and still record to the alerts
                              # table + show on the dashboard). Set false to return to dry-run.
   staleness_threshold_pct: 0.10
+
+dashboard:
+  # Track-record + backtest benchmarks (defined in engine/benchmarks.py with descriptions).
+  # SPY = S&P 500 beta; BXMD = CBOE S&P 500 30-delta BuyWrite (the direct analog of our 0.30Δ
+  # covered calls, from CBOE's CDN); BXRD = CBOE Russell 2000 30-delta BuyWrite (small-cap
+  # covered-call reference). Add a symbol here only after registering it in engine/benchmarks.py.
+  live_benchmarks: [SPY, BXMD, BXRD]

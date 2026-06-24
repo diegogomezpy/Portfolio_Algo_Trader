@@ -148,6 +148,57 @@ def test_api_alerts_recent():
     assert al[0]["type"] == "rebalance_completed" and al[0]["delivered"] is False
 
 
+def test_series_stats_pure():
+    s = data.series_stats([100, 110])
+    assert abs(s["total_return"] - 0.10) < 1e-12 and s["max_drawdown"] == 0.0
+    s2 = data.series_stats([100, 90, 99])
+    assert abs(s2["total_return"] - (-0.01)) < 1e-12 and abs(s2["max_drawdown"] - (-0.10)) < 1e-12
+    assert data.series_stats([100])["total_return"] is None        # <2 points → insufficient
+
+
+def test_api_track_record_curve_and_premium():
+    eng = _engine()
+    with eng.begin() as c:
+        for i, nv in enumerate([100_000.0, 100_500.0, 99_800.0, 101_200.0]):
+            c.execute(insert(db.snapshots).values(
+                ts=datetime(2026, 6, 1 + i, 16), nav=nv, cash=5_000.0, last_equity=100_000.0,
+                weights={}, positions={}, drift=0.0))
+        c.execute(insert(db.options_lifecycle).values(
+            ts=datetime(2026, 6, 1), event_type="write", underlying="AAPL",
+            option_symbol="AAPLX", strike=100.0, contracts=1, premium=300.0))
+    tr = data.api_track_record(eng)
+    assert tr["available"] and tr["days"] == 4 and tr["mature"] is False     # <10 days
+    assert tr["nav0"] == 100_000.0 and tr["nav_now"] == 101_200.0
+    assert abs(tr["total_return"] - 0.012) < 1e-9 and tr["premium_collected"] == 300.0
+    assert tr["norm"][0] == 1.0 and abs(tr["max_drawdown"] - (99_800.0 / 100_500.0 - 1)) < 1e-9
+
+
+def test_api_track_record_empty():
+    tr = data.api_track_record(_engine())
+    assert tr["available"] is False and tr["dates"] == [] and tr["premium_collected"] == 0.0
+
+
+def test_api_slippage_signs_and_aggregate():
+    eng = _engine()
+    with eng.begin() as c:
+        # buy filled BELOW limit → favorable (negative bps); sell filled ABOVE limit → favorable
+        c.execute(insert(db.orders).values(id="b1", symbol="AAPL", side="buy", qty=100,
+                  order_type="limit", status="filled", limit_price=100.0, filled_qty=100,
+                  filled_avg_price=99.90))
+        c.execute(insert(db.orders).values(id="s1", symbol="MSFT", side="sell", qty=10,
+                  order_type="limit", status="filled", limit_price=200.0, filled_qty=10,
+                  filled_avg_price=200.40))
+        c.execute(insert(db.orders).values(id="m1", symbol="KO", side="buy", qty=5,
+                  order_type="market", status="filled", limit_price=None, filled_qty=5,
+                  filled_avg_price=60.0))                                    # market → excluded
+    sl = data.api_slippage(eng)
+    assert sl["n_fills"] == 2                                                # market order excluded
+    by = {f["symbol"]: f for f in sl["fills"]}
+    assert by["AAPL"]["slippage_bps"] == -10.0 and by["AAPL"]["slippage_usd"] == -10.0  # favorable
+    assert by["MSFT"]["slippage_bps"] == -20.0                              # sell above limit = good
+    assert sl["total_slippage_usd"] == -14.0                                # -10 + (-4)
+
+
 def test_empty_db_is_safe():
     eng = _engine()
     s = data.api_state(eng)

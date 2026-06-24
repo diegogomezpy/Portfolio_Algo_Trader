@@ -55,12 +55,15 @@ def _load_meta(env: str, settings) -> dict:
             settings = None
     pf = getattr(settings, "portfolio", None)
     cc = getattr(settings, "covered_calls", None)
+    dash = getattr(settings, "dashboard", None)
     return {
         "env": env,
         "leverage_cap": getattr(pf, "max_leverage", 2.0) if pf else 2.0,
         "target_leverage": getattr(pf, "target_leverage", 2.0) if pf else 2.0,
         "max_single_name_pct": getattr(pf, "max_single_name_pct", 0.05) if pf else 0.05,
         "target_delta": getattr(cc, "target_delta", 0.30) if cc else 0.30,
+        "live_benchmarks": list(getattr(dash, "live_benchmarks", ["SPY", "XYLD", "JEPI"]))
+        if dash else ["SPY", "XYLD", "JEPI"],
     }
 
 
@@ -102,6 +105,41 @@ def _live_orders(client, limit: int) -> list[dict]:
              "type": o.get("type"), "status": o.get("status"), "filled_qty": o.get("filled_qty"),
              "filled_avg_price": o.get("filled_avg_price"),
              "submitted_at": o.get("submitted_at")} for o in orders]
+
+
+def _align(closes: dict, dates: list[str]) -> list[float]:
+    """Reindex a {date: close} map onto ``dates``, forward-filling the most recent prior close."""
+    import bisect
+    items = sorted(closes.items())
+    keys, vals = [k for k, _ in items], [v for _, v in items]
+    out = []
+    for d in dates:
+        i = bisect.bisect_right(keys, d) - 1
+        out.append(vals[i] if i >= 0 else (vals[0] if vals else None))
+    return out
+
+
+def _benchmark_curves(symbols: list[str], start: str, strat_dates: list[str]) -> dict:
+    """Per-benchmark normalized curve (aligned to ``strat_dates``, start=1.0) + stats + label.
+
+    Sources come from :mod:`engine.benchmarks` (SPY via yfinance, BXMD/BXRD from CBOE's CDN),
+    cached + best-effort, so this never breaks the page if a feed is down.
+    """
+    if not symbols or not strat_dates:
+        return {}
+    from engine import benchmarks
+    raw = benchmarks.fetch_closes(symbols, start)
+    out = {}
+    for sym in symbols:
+        series = _align(raw.get(sym, {}), strat_dates)
+        if not series or not series[0]:
+            continue
+        stats = data.series_stats(series)
+        out[sym] = {"norm": [v / series[0] for v in series],
+                    **benchmarks.describe(sym),
+                    **{k: stats[k] for k in ("total_return", "ann_return", "ann_vol",
+                                             "sharpe", "max_drawdown")}}
+    return out
 
 
 def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None,
@@ -185,5 +223,18 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
     @app.get("/api/alerts")
     def alerts(limit: int = 50) -> list:
         return data.api_alerts(db_engine, limit)
+
+    @app.get("/api/track_record")
+    def track_record() -> dict:
+        """Realized paper performance since inception + SPY/covered-call-ETF benchmarks."""
+        tr = data.api_track_record(db_engine)
+        if not tr.get("available"):
+            return {**tr, "benchmarks": {}}
+        benchmarks = _benchmark_curves(meta.get("live_benchmarks", []), tr["inception"], tr["dates"])
+        return {**tr, "benchmarks": benchmarks}
+
+    @app.get("/api/slippage")
+    def slippage() -> dict:
+        return data.api_slippage(db_engine)
 
     return app

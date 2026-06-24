@@ -8,11 +8,14 @@ wraps them in FastAPI routes. Tested directly against in-memory sqlite — no HT
 
 from __future__ import annotations
 
+import math
 import re
 
 from sqlalchemy import desc, func, select
 
 from engine import db
+
+_TRADING_DAYS = 252.0
 
 # OCC option symbols end in YYMMDD + C/P + an 8-digit strike (e.g. AAPL260821C00215000).
 # Used to keep the leverage gauge and position count equity-only once the overlay writes
@@ -153,3 +156,110 @@ def api_alerts(db_engine, limit: int = 50) -> list[dict]:
             select(db.alerts).order_by(desc(db.alerts.c.ts)).limit(limit)).mappings().all()
     return [{"ts": str(r["ts"]), "type": r["alert_type"], "message": r["message"],
              "delivered": r["delivered"]} for r in rows]
+
+
+# ====================================================================== #
+# Live track record — realized paper performance since inception (Phase 5.6)
+# ====================================================================== #
+def series_stats(values: list[float]) -> dict:
+    """Performance stats from a daily value series. Pure; reused for strategy + benchmarks.
+
+    Annualized figures use 252 trading days and ddof=1 vol. With < 2 points everything is
+    ``None`` (insufficient history); annualized numbers are noisy until ~10+ days, which the
+    caller flags via ``mature`` rather than hiding here.
+    """
+    n = len(values)
+    base = {"total_return": None, "ann_return": None, "ann_vol": None, "sharpe": None,
+            "max_drawdown": None, "n": n}
+    if n < 2 or not values[0]:
+        return base
+    rets = [values[i] / values[i - 1] - 1 for i in range(1, n) if values[i - 1]]
+    total = values[-1] / values[0] - 1
+    ann_ret = (1 + total) ** (_TRADING_DAYS / len(rets)) - 1 if rets else None
+    if len(rets) > 1:
+        mean = sum(rets) / len(rets)
+        sd = math.sqrt(sum((r - mean) ** 2 for r in rets) / (len(rets) - 1))
+    else:
+        sd = 0.0
+    ann_vol = sd * math.sqrt(_TRADING_DAYS)
+    sharpe = (ann_ret / ann_vol) if (ann_vol and ann_ret is not None) else None
+    peak = values[0]
+    mdd = 0.0
+    for v in values:
+        peak = max(peak, v)
+        mdd = min(mdd, v / peak - 1) if peak else mdd
+    return {"total_return": total, "ann_return": ann_ret, "ann_vol": ann_vol,
+            "sharpe": sharpe, "max_drawdown": mdd, "n": n}
+
+
+def _daily_nav(rows) -> tuple[list[str], list[float]]:
+    """(ts, nav) rows (asc) → (ISO dates, last-NAV-per-day) — the daily equity curve."""
+    by_day: dict = {}
+    for ts, nav in rows:
+        if nav is None:
+            continue
+        d = ts.date() if hasattr(ts, "date") else str(ts)[:10]
+        by_day[d] = float(nav)
+    days = sorted(by_day)
+    return [d.isoformat() if hasattr(d, "isoformat") else str(d) for d in days], \
+           [by_day[d] for d in days]
+
+
+def api_track_record(db_engine) -> dict:
+    """Realized paper performance since inception, from the ``snapshots`` equity curve.
+
+    Returns the daily NAV series + normalized curve + stats (return/vol/Sharpe/drawdown) and
+    lifetime premium collected. ``available`` is False until the monitor has written snapshots;
+    ``mature`` gates the annualized numbers (noisy with < ~10 days). Benchmark comparison is
+    layered on in the route (needs Alpaca), so this stays Postgres-only + unit-testable.
+    """
+    with db_engine.connect() as conn:
+        rows = conn.execute(
+            select(db.snapshots.c.ts, db.snapshots.c.nav).order_by(db.snapshots.c.ts)).all()
+        premium = conn.execute(
+            select(func.coalesce(func.sum(db.options_lifecycle.c.premium), 0.0))).scalar()
+    rows = [(ts, nav) for ts, nav in rows if nav is not None]
+    if not rows:
+        return {"available": False, "days": 0, "dates": [], "nav": [], "norm": [],
+                "premium_collected": float(premium or 0.0)}
+    dates, navs = _daily_nav(rows)
+    stats = series_stats(navs)
+    norm = [v / navs[0] for v in navs] if navs[0] else navs
+    return {"available": True, "inception": dates[0], "days": len(dates),
+            "mature": len(dates) >= 10, "nav0": navs[0], "nav_now": navs[-1],
+            "premium_collected": float(premium or 0.0), "dates": dates, "nav": navs,
+            "norm": norm, **stats}
+
+
+def api_slippage(db_engine) -> dict:
+    """Execution quality from filled orders: realized fill vs the intended (limit/mid) price.
+
+    Per filled limit order, ``slippage = (fill − intended)`` signed so **positive = adverse**
+    (paid more on a buy / received less on a sell), in bps of the intended price and in dollars.
+    Market orders carry no intended price (limit None) and are excluded. Aggregates are
+    notional-weighted. The dollar total is the realized execution cost vs decision-time mid.
+    """
+    with db_engine.connect() as conn:
+        rows = conn.execute(
+            select(db.orders).where(db.orders.c.status == "filled")
+            .order_by(desc(db.orders.c.created_at))).mappings().all()
+    fills: list[dict] = []
+    tot_usd = tot_notional = wbps = 0.0
+    for r in rows:
+        intended, filled, fq = r["limit_price"], r["filled_avg_price"], (r["filled_qty"] or 0)
+        if not intended or not filled or not fq:
+            continue
+        adverse = (filled - intended) if str(r["side"]).lower() == "buy" else (intended - filled)
+        bps = adverse / intended * 1e4
+        usd, notional = adverse * fq, filled * fq
+        tot_usd += usd
+        tot_notional += notional
+        wbps += bps * notional
+        fills.append({"symbol": r["symbol"], "side": str(r["side"]).lower(), "qty": fq,
+                      "intended": round(float(intended), 2), "filled": round(float(filled), 2),
+                      "slippage_bps": round(bps, 1), "slippage_usd": round(usd, 2),
+                      "filled_at": str(r["filled_at"]) if r["filled_at"] else None})
+    avg_bps = (wbps / tot_notional) if tot_notional else None
+    return {"n_fills": len(fills),
+            "avg_slippage_bps": round(avg_bps, 1) if avg_bps is not None else None,
+            "total_slippage_usd": round(tot_usd, 2), "fills": fills[:30]}

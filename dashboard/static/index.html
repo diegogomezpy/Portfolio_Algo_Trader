@@ -97,6 +97,7 @@
   </div>
   <nav class="tabs">
     <button class="tab active" data-view="live">Live</button>
+    <button class="tab" data-view="track">Track record</button>
     <button class="tab" data-view="backtest">Backtest</button>
   </nav>
   <div class="right">
@@ -143,6 +144,35 @@
   </div>
 </div>
 
+<div id="track-view" style="display:none">
+  <div class="wrap">
+    <div class="se-panel" id="trackempty" style="display:none;text-align:center;color:var(--muted);padding:38px 20px">
+      No live track record yet — this tab fills in automatically once the strategy starts trading and
+      the monitor records NAV snapshots. (It compares the paper book to SPY and covered-call ETFs,
+      and reports realized slippage from your fills.)
+    </div>
+    <div id="trackbody" style="display:none">
+      <div class="kpis" id="trackkpis"></div>
+      <div class="grid">
+        <div class="se-panel span2">
+          <h2>Growth since inception — strategy vs benchmarks <span class="panel-sub" id="tracksub"></span></h2>
+          <div class="spark-meta" id="tracklegend"></div>
+          <div id="trackchart"></div>
+        </div>
+        <div class="se-panel span2">
+          <h2>Benchmark comparison <span class="panel-sub">paper, since go-live</span></h2>
+          <div class="body" id="trackbench"></div>
+          <div id="benchdesc"></div>
+        </div>
+        <div class="se-panel span2">
+          <h2>Execution quality / slippage <span class="panel-sub" id="slipsub"></span></h2>
+          <div class="body" id="slippage"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="backtest-view"><iframe id="bt" title="backtest dashboard"></iframe></div>
 
 <script>
@@ -164,13 +194,89 @@ document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   activeView = t.dataset.view;
   document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
   $("live-view").style.display = activeView === "live" ? "" : "none";
+  $("track-view").style.display = activeView === "track" ? "block" : "none";
   $("backtest-view").style.display = activeView === "backtest" ? "block" : "none";
   const bt = $("bt");
   if (activeView === "backtest" && !bt.src) bt.src = "/backtest";   // lazy-load once
   if (activeView === "live") refresh();
+  if (activeView === "track") loadTrack();
 });
 
 async function get(p){ try { const r = await fetch(p); return r.ok ? await r.json() : null; } catch { return null; } }
+
+// ---- Track record (live paper performance vs benchmarks + slippage) -------
+const cssv = (n,f) => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || f;
+const BENCH_VAR = {SPY:"--spy", XYLD:"--accent", JEPI:"--amber", QYLD:"--purple", DIVO:"--pink"};
+function bcol(sym,i){ const palette=["--spy","--accent","--amber","--purple"]; return cssv(BENCH_VAR[sym]||palette[i%palette.length], "#8c99ad"); }
+
+function trackChart(dates, series){
+  const W=720,H=240,pl=52,pr=14,pt=12,pb=24,pw=W-pl-pr,ph=H-pt-pb;
+  let all=[]; series.forEach(s=>s.data.forEach(v=>{ if(v!=null) all.push(v); }));
+  if(all.length<2) return '<div class="se-empty">one data point so far — the curve appears after a second day</div>';
+  let lo=Math.min(...all),hi=Math.max(...all); const pad=(hi-lo)*0.08||0.01; lo-=pad; hi+=pad;
+  const n=dates.length, sx=i=>pl+(n<=1?0:i/(n-1)*pw), sy=v=>pt+(hi===lo?0:(hi-v)/(hi-lo)*ph);
+  const grid=cssv('--line-soft','#19212f'), mut=cssv('--muted','#7c8a9e');
+  let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" style="display:block">`;
+  for(let k=0;k<=4;k++){ const v=lo+(hi-lo)*k/4, y=sy(v).toFixed(1);
+    s+=`<line x1="${pl}" y1="${y}" x2="${W-pr}" y2="${y}" stroke="${grid}"/><text x="${pl-7}" y="${(+y+3.5).toFixed(1)}" text-anchor="end" font-size="11" fill="${mut}">${((v-1)*100).toFixed(0)}%</text>`; }
+  const step=Math.max(1,Math.round(n/6));
+  for(let i=0;i<n;i+=step){ s+=`<text x="${sx(i).toFixed(1)}" y="${H-7}" text-anchor="middle" font-size="11" fill="${mut}">${String(dates[i]).slice(5)}</text>`; }
+  series.forEach(se=>{ let p=""; se.data.forEach((v,i)=>{ if(v!=null) p+=(p?"L":"M")+sx(i).toFixed(1)+" "+sy(v).toFixed(1); });
+    s+=`<path d="${p}" fill="none" stroke="${se.color}" stroke-width="${se.w||2}" stroke-linejoin="round"/>`; });
+  return s+"</svg>";
+}
+
+async function loadTrack(){
+  const [tr, slip] = [await get("/api/track_record"), await get("/api/slippage")];
+  if(!tr || !tr.available){ $("trackempty").style.display="block"; $("trackbody").style.display="none"; return; }
+  $("trackempty").style.display="none"; $("trackbody").style.display="block";
+  const star = tr.mature ? "" : "*";
+  $("trackkpis").innerHTML = [
+    kpi("Days live", fmt(tr.days), tr.inception),
+    kpi("Since inception", `<span class="${sgn(tr.total_return)}">${spct(tr.total_return)}</span>`, "paper, net of costs"),
+    kpi("Ann. return"+star, tr.mature?spct(tr.ann_return):"—", tr.mature?"annualized":"needs ≥10 days"),
+    kpi("Live Sharpe"+star, tr.mature&&tr.sharpe!=null?tr.sharpe.toFixed(2):"—", tr.mature?"annualized":"needs ≥10 days"),
+    kpi("Max drawdown", `<span class="${sgn(tr.max_drawdown)}">${pct(tr.max_drawdown)}</span>`, "since go-live"),
+    kpi("Premium collected", usd(tr.premium_collected), "covered calls"),
+    kpi("Avg slippage", slip&&slip.avg_slippage_bps!=null?slip.avg_slippage_bps.toFixed(1)+" bps":"—",
+        slip&&slip.n_fills?`${susd(-slip.total_slippage_usd)} vs mid`:"vs intended price"),
+  ].join("");
+
+  const green=cssv('--green','#3ddc97');
+  const series=[{name:"strategy", data:tr.norm, color:green, w:2.4}];
+  const bsyms=Object.keys(tr.benchmarks||{});
+  bsyms.forEach((sym,i)=>series.push({name:sym, data:tr.benchmarks[sym].norm, color:bcol(sym,i), w:1.8}));
+  $("trackchart").innerHTML = trackChart(tr.dates, series);
+  $("tracklegend").innerHTML = series.map(s=>`<span style="display:inline-flex;align-items:center;gap:5px;margin-right:13px;font-size:12px;color:var(--muted)"><i style="width:13px;height:3px;border-radius:2px;background:${s.color};display:inline-block"></i>${s.name}</span>`).join("");
+  $("tracksub").textContent = `${tr.dates[0]} → ${tr.dates[tr.dates.length-1]}`;
+
+  const row=(name,m)=>`<tr><td>${name}</td><td class="${sgn(m.total_return)}">${spct(m.total_return)}</td>`+
+    `<td>${tr.mature&&m.ann_return!=null?spct(m.ann_return):"—"}</td><td>${m.ann_vol!=null?pct(m.ann_vol):"—"}</td>`+
+    `<td>${tr.mature&&m.sharpe!=null?m.sharpe.toFixed(2):"—"}</td><td class="${sgn(m.max_drawdown)}">${pct(m.max_drawdown)}</td></tr>`;
+  let bench=`<table class="se-table"><thead><tr><th>Series</th><th>Return</th><th>Ann.</th><th>Vol</th><th>Sharpe</th><th>MaxDD</th></tr></thead><tbody>`+
+    row("Strategy (this book)", tr) + bsyms.map(sym=>row(sym, tr.benchmarks[sym])).join("") + "</tbody></table>";
+  if(!tr.mature) bench += `<div class="se-empty" style="margin-top:8px">* Annualized return &amp; Sharpe appear once ≥10 trading days of live history accumulate (currently ${tr.days}).</div>`;
+  if(!bsyms.length) bench += `<div class="se-empty" style="margin-top:8px">Benchmarks unavailable (data feed offline) — retries on the next load.</div>`;
+  $("trackbench").innerHTML = bench;
+  $("benchdesc").innerHTML = bsyms.length
+    ? `<div style="font-size:11.5px;color:var(--muted);margin-top:12px;line-height:1.55">`
+      + `<div style="text-transform:uppercase;letter-spacing:.05em;font-size:10px;margin-bottom:5px">What these benchmarks are</div>`
+      + bsyms.map((sym,i)=>`<div style="margin-bottom:4px"><b style="color:${bcol(sym,i)}">${tr.benchmarks[sym].name||sym}</b> — ${tr.benchmarks[sym].desc||""}</div>`).join("")
+      + `</div>`
+    : "";
+
+  if(slip && slip.n_fills){
+    $("slipsub").textContent = `${slip.n_fills} filled limit orders · positive bps = paid up vs mid`;
+    $("slippage").innerHTML = table(slip.fills, [
+      {h:"Symbol", f:r=>r.symbol}, {h:"Side", f:r=>r.side}, {h:"Qty", f:r=>fmt(r.qty)},
+      {h:"Intended", f:r=>usd2(r.intended)}, {h:"Filled", f:r=>usd2(r.filled)},
+      {h:"Slippage", f:r=>`<span class="${r.slippage_bps>0?'neg':'pos'}">${r.slippage_bps>0?'+':''}${r.slippage_bps} bps</span>`},
+      {h:"Cost", f:r=>`<span class="${r.slippage_usd>0?'neg':'pos'}">${susd(-r.slippage_usd)}</span>`},
+    ]);
+  } else {
+    $("slippage").innerHTML = '<div class="se-empty">No filled limit orders yet — this compares each fill to its intended (mid) price once the strategy trades.</div>';
+  }
+}
 
 function table(rows, cols){
   if(!rows || !rows.length) return '<div class="se-empty">none</div>';
