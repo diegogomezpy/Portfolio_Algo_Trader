@@ -199,8 +199,25 @@ so it's never exposed publicly. Two ways in:
   `gcloud compute start-iap-tunnel "$VM" 8000 --local-host-port=localhost:8000 --zone="$ZONE"`
   (grant yourself `roles/iap.tunnelResourceAccessor`; no SSH key juggling).
 
-Do **not** open port 8000 to `0.0.0.0` — the app has no login. If you ever want a real URL, put it
-behind an IAP-secured HTTPS load balancer (auth at the edge) rather than exposing the port.
+Do **not** open port 8000 to `0.0.0.0` — the app has no login. To share it, use the password +
+Funnel setup below rather than exposing the port directly.
+
+### Share it publicly (Tailscale Funnel + password)
+
+A free, stable, HTTPS public URL with no domain required — `https://<host>.<tailnet>.ts.net` —
+with a password gate (Caddy basic auth) in front of the auth-less dashboard. Run on the VM:
+
+```bash
+cd ~/Portfolio_Algo_Trader && bash deploy/setup_funnel.sh   # installs Caddy+Tailscale, sets the password
+sudo tailscale up                                            # sign into a free Tailscale account (browser link)
+sudo tailscale funnel --bg 8080                              # enable Funnel/HTTPS if it prompts, then re-run
+tailscale funnel status                                      # prints your public URL
+```
+
+Chain: `Funnel (public HTTPS) → Caddy :8080 (basic auth, user "viewer") → dashboard :8000`. Share the
+URL + the password; viewers need no Tailscale account. **In the Tailscale admin, disable key expiry on
+this machine** so the URL doesn't lapse (~180 days default). To take it offline:
+`sudo tailscale funnel --https=443 off`. To rotate the password, re-run `setup_funnel.sh`.
 
 ## Ongoing operations
 

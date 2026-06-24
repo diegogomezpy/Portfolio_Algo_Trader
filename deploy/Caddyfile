@@ -1,0 +1,13 @@
+# Caddy reverse proxy that puts HTTP Basic Auth in front of the (auth-less) dashboard so it can
+# be safely exposed to the public internet via `tailscale funnel 8080`. Tailscale Funnel
+# terminates TLS and forwards to this local :8080; Caddy adds the password gate and proxies to
+# the dashboard on :8000.
+#
+# Replace __BCRYPT_HASH__ with the output of:  caddy hash-password --plaintext '<password>'
+# (deploy/setup_funnel.sh does this for you.) Viewers log in as user "viewer".
+:8080 {
+	basic_auth {
+		viewer __BCRYPT_HASH__
+	}
+	reverse_proxy localhost:8000
+}
