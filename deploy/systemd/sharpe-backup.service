@@ -1,0 +1,11 @@
+[Unit]
+# Nightly Postgres dump -> GCS (paired with sharpe-backup.timer). Addresses the
+# "DB backup before go-live" requirement.
+Description=sharpe-engine Postgres backup to GCS
+
+[Service]
+Type=oneshot
+User=__APP_USER__
+WorkingDirectory=__APP_DIR__
+Environment=SHARPE_BACKUP_BUCKET=__BACKUP_BUCKET__
+ExecStart=__APP_DIR__/deploy/backup.sh

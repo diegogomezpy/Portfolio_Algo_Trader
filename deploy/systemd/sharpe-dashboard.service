@@ -1,0 +1,18 @@
+[Unit]
+# sharpe-engine dashboard (FastAPI/uvicorn). Bound to localhost ONLY — the app has
+# no auth, so reach it via an IAP/SSH tunnel, never a public firewall rule.
+Description=sharpe-engine dashboard (paper)
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=__APP_USER__
+WorkingDirectory=__APP_DIR__
+ExecStart=__APP_DIR__/.venv/bin/python scripts/run_dashboard.py --env paper --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

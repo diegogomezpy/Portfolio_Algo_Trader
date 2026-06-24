@@ -1,0 +1,25 @@
+[Unit]
+# sharpe-engine rebalance scheduler (run_eod --serve): weekday 16:10-ET branch
+# (first-trading-day-of-month = full rebalance + covered-call overlay, else
+# reconcile+monitor) plus the 60s monitor tick. The app pins its own timezone
+# (America/New_York via pytz), so the VM clock is irrelevant.
+Description=sharpe-engine EOD rebalance scheduler (paper)
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=__APP_USER__
+WorkingDirectory=__APP_DIR__
+# Relative paths in the code (config/, data/, logs/) resolve against WorkingDirectory.
+ExecStart=__APP_DIR__/.venv/bin/python scripts/run_eod.py --serve --env paper
+Restart=always
+RestartSec=10
+# The app installs a SIGTERM handler that finishes the current stage then cancels
+# open orders before exiting 0 — give it room to do that on stop/restart.
+KillSignal=SIGTERM
+TimeoutStopSec=150
+
+[Install]
+WantedBy=multi-user.target

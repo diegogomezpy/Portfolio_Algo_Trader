@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the sharpe-engine Postgres backup nightly
+
+[Timer]
+# 06:30 UTC — well after the US market close + the EOD rebalance job.
+OnCalendar=*-*-* 06:30:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
