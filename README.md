@@ -13,6 +13,9 @@ combined with a volatility-risk-premium harvest via covered calls.
 > here is investment advice. The execution layer is intentionally gated behind a
 > validated backtest — see [docs/BUILD_ORDER.md](docs/BUILD_ORDER.md).
 
+📊 **Live dashboard:** **https://sharpe-engine.tailc7136e.ts.net** (password-gated, user `viewer`).
+Hosting details in [deploy/DEPLOY.md](deploy/DEPLOY.md#share-it-publicly-tailscale-funnel--password).
+
 ---
 
 ## Strategy at a glance

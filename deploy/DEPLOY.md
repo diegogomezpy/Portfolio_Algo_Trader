@@ -204,6 +204,10 @@ Funnel setup below rather than exposing the port directly.
 
 ### Share it publicly (Tailscale Funnel + password)
 
+> **Live deployment:** **https://sharpe-engine.tailc7136e.ts.net** — log in as user `viewer`
+> with the password set during `setup_funnel.sh` (Tailscale node IP `100.91.143.85`). Keep
+> Tailscale key-expiry disabled on the node or the URL lapses (~180 days default).
+
 A free, stable, HTTPS public URL with no domain required — `https://<host>.<tailnet>.ts.net` —
 with a password gate (Caddy basic auth) in front of the auth-less dashboard. Run on the VM:
 
