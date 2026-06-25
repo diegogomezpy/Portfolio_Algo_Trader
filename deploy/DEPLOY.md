@@ -8,7 +8,7 @@ built for a long-running host (APScheduler + SIGTERM handling).
 ```
 ┌─────────────────────────  GCE VM  (e2-small, Ubuntu 24.04, us-east4)  ─────────────────────────┐
 │  systemd (Restart=always):                                                                      │
-│    • sharpe-eod.service        run_eod.py --serve   (16:10-ET rebalance branch + 60s monitor)   │
+│    • sharpe-eod.service        run_eod.py --serve   (15:00-ET rebalance branch + 60s monitor)   │
 │    • sharpe-dashboard.service  run_dashboard.py     (FastAPI on 127.0.0.1:8000, localhost only)  │
 │    • sharpe-backup.timer       nightly pg_dump → GCS                                             │
 │  Postgres (local, peer auth)   +   data/ Parquet store   +   .venv                              │
@@ -138,7 +138,7 @@ This renders the unit files for this host (user/dir/bucket), enables and starts
 ```bash
 # on the VM:
 systemctl status sharpe-eod sharpe-dashboard --no-pager
-journalctl -u sharpe-eod -n 40 --no-pager        # should show "scheduler started ... EOD 16:10 ET"
+journalctl -u sharpe-eod -n 40 --no-pager        # should show "scheduler started ... EOD 15:00 ET"
 curl -s localhost:8000/api/state | head -c 300   # dashboard answering
 systemctl list-timers sharpe-backup sharpe-watchdog --no-pager   # both timers scheduled
 ```

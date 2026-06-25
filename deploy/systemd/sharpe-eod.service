@@ -1,5 +1,5 @@
 [Unit]
-# sharpe-engine rebalance scheduler (run_eod --serve): weekday 16:10-ET branch
+# sharpe-engine rebalance scheduler (run_eod --serve): weekday 15:00-ET branch
 # (first-trading-day-of-month = full rebalance + covered-call overlay, else
 # reconcile+monitor) plus the 60s monitor tick. The app pins its own timezone
 # (America/New_York via pytz), so the VM clock is irrelevant.

@@ -159,7 +159,7 @@ The Alpaca client is **paper-only** regardless of `--env`.
 # Run exactly one rebalance cycle now
 ./.venv/bin/python scripts/run_eod.py --once --env paper
 
-# Run the continuous scheduler (daily 16:10-ET branch + 60s monitor; Ctrl-C / SIGTERM to stop)
+# Run the continuous scheduler (daily 15:00-ET branch + 60s monitor; Ctrl-C / SIGTERM to stop)
 ./.venv/bin/python scripts/run_eod.py --serve --env paper
 ```
 

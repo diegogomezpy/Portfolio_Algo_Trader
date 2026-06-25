@@ -8,7 +8,7 @@ Two modes:
 
 * ``--once`` (3.6) — run exactly one cycle now (what the Phase 3 gate exercises:
   "first paper rebalance executes").
-* ``--serve`` (3.7) — the continuous APScheduler process: a daily 16:10-ET job that
+* ``--serve`` (3.7) — the continuous APScheduler process: a daily 15:00-ET job that
   gates on the market calendar, ingests, then **branches** — a full rebalance on the
   first trading day of the month, otherwise a lightweight reconcile+monitor pass — plus a
   60-second monitor loop, plus a SIGTERM handler that finishes the current stage and
@@ -247,14 +247,32 @@ def is_first_trading_day_of_month(client, as_of: date) -> bool:
     return bool(days) and days[0] == as_of.isoformat()
 
 
-def approved_rebalance_this_month(db_engine, as_of: date) -> bool:
-    """True if an *approved* (risk-gate-passed) rebalance was already logged this calendar month.
+def _book_has_equity_positions(db_engine) -> bool:
+    """True if the latest snapshot shows the book actually holds equity — i.e. a rebalance's
+    orders *filled*. A gate pass whose orders never filled (e.g. submitted into a closed market
+    and cancelled at session end) leaves an empty book, which must not count as 'rebalanced'."""
+    if db_engine is None:
+        return False
+    from sqlalchemy import desc, select
+    from engine.db import snapshots
+    with db_engine.connect() as conn:
+        row = conn.execute(
+            select(snapshots.c.positions).order_by(desc(snapshots.c.ts)).limit(1)).first()
+    pos = (row[0] if row else None) or {}
+    # equity symbols are short tickers; OCC option symbols are long — count only nonzero equity legs
+    return any(q for s, q in pos.items() if q and len(str(s)) <= 5)
 
-    Drives the catch-up: a trading day where this is False means the month's rebalance hasn't
-    landed yet (the scheduled run was missed, the process was down, or the gate blocked). Reads the
-    latest passed ``rebalance_log`` row and compares its month to ``as_of`` in Python — ``ts`` is
-    stamped UTC and the EOD run is afternoon-ET, so the calendar month matches; this avoids any
-    SQL timezone-comparison footgun. A blocked-only or last-month row therefore returns False.
+
+def rebalance_established_this_month(db_engine, as_of: date) -> bool:
+    """True only if this calendar month's rebalance has actually *landed*: an approved
+    (risk-gate-passed) ``rebalance_log`` row **and** the book currently holds equity positions.
+
+    Drives the catch-up. Keying on real positions — not merely the gate pass — means a rebalance
+    whose orders were submitted but never filled (cancelled into a closed market, an outage
+    mid-fill, …) does **not** falsely count as done; the catch-up keeps retrying until fills land,
+    so the book can't sit empty for a month. The month check compares the latest passed row's
+    ``ts`` to ``as_of`` in Python (ts is stamped UTC, the run is afternoon-ET ⇒ same calendar
+    month) to dodge any SQL timezone footgun. A blocked-only or last-month row returns False.
     """
     if db_engine is None:
         return False
@@ -269,7 +287,9 @@ def approved_rebalance_this_month(db_engine, as_of: date) -> bool:
     ts = row[0]
     if isinstance(ts, str):                                  # sqlite may hand back a string
         ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    return (ts.year, ts.month) == (as_of.year, as_of.month)
+    if (ts.year, ts.month) != (as_of.year, as_of.month):
+        return False
+    return _book_has_equity_positions(db_engine)             # …and the orders actually filled
 
 
 def daily_job(
@@ -294,8 +314,10 @@ def daily_job(
     enabled) on the **first trading day of the month** — or, if that run was missed/blocked
     (process down, Alpaca/data hiccup, or a risk-gate block), on the **next trading day(s) until
     one lands** (a *catch-up*, so a single bad day can't skip a whole month's rebalance). The
-    trigger is anchored on "no approved rebalance yet this month" (:func:`approved_rebalance_this_month`),
-    so it never rebalances twice in a month. Any other trading day does a lightweight reconcile +
+    trigger is anchored on "this month's rebalance hasn't established positions yet"
+    (:func:`rebalance_established_this_month`) — keyed on real fills, not just a gate pass — so it
+    never rebalances twice in a month yet won't be fooled by a pass whose orders never filled. Any
+    other trading day does a lightweight reconcile +
     monitor pass; non-trading days are skipped. A rebalance that raises is caught, alerted, and
     retried next trading day rather than killing the scheduler. ``ingest_fn`` (default ``None`` =
     skip, so tests never hit the network) refreshes the day's data first.
@@ -308,7 +330,7 @@ def daily_job(
         ingest_fn(as_of.isoformat())
 
     first_of_month = first_trading_day_fn or is_first_trading_day_of_month
-    done_this_month = rebalanced_this_month_fn or approved_rebalance_this_month
+    done_this_month = rebalanced_this_month_fn or rebalance_established_this_month
 
     if not done_this_month(db_engine, as_of):
         trigger = "monthly" if first_of_month(client, as_of) else "monthly_catchup"
@@ -374,11 +396,18 @@ def graceful_shutdown(scheduler, broker) -> None:
 
 
 def serve(*, env: str, settings, client, broker, db_engine, alert=None,
-          hour: int = 16, minute: int = 10) -> None:
+          hour: int = 15, minute: int = 0) -> None:
     """Run the continuous APScheduler process (blocks until SIGTERM/SIGINT).
 
     Two jobs: a weekday EOD job at ``hour:minute`` America/New_York (the holiday gate +
     rebalance/monitor branch live inside :func:`daily_job`), and a 60s monitor tick.
+
+    Default **15:00 ET** (mid-afternoon) is deliberate: it runs *inside* market hours so DAY
+    orders fill in-session (submitting after the 16:00 close would queue them for the next open
+    and they'd be cancelled at session end). 15:00 also sits in the empirical intraday spread
+    trough — spreads are U-shaped, widest at the 9:30 open and widening again into the close
+    auction, narrowest mid-afternoon — so the rebalance executes when bid/ask is tightest, with
+    a full hour of runway before the close.
     """
     import signal
 

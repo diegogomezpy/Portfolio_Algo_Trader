@@ -277,23 +277,31 @@ def test_daily_job_alerts_and_survives_when_rebalance_raises():
     assert _rows(eng, db.orders) == []                   # nothing traded
 
 
-def test_approved_rebalance_this_month():
+def test_rebalance_established_this_month():
     from datetime import datetime
     from sqlalchemy import insert
     eng = _engine()
-    assert run_eod.approved_rebalance_this_month(eng, date(2026, 7, 2)) is False   # empty → False
+    est = run_eod.rebalance_established_this_month
+    assert est(eng, date(2026, 7, 2)) is False           # empty → False
     with eng.begin() as c:
         # a blocked (passed=False) attempt this month does NOT count as rebalanced
         c.execute(insert(db.rebalance_log).values(
             ts=datetime(2026, 7, 1, 20, 10), trigger_reason="monthly",
             target_weights={"AAPL": 0.05}, risk_gate_passed=False, risk_gate_reason="blocked"))
-    assert run_eod.approved_rebalance_this_month(eng, date(2026, 7, 2)) is False
-    with eng.begin() as c:                               # an approved one this month → True
+        # an APPROVED row this month, but the orders never filled → the book is still empty
         c.execute(insert(db.rebalance_log).values(
             ts=datetime(2026, 7, 1, 20, 10), trigger_reason="monthly",
             target_weights={"AAPL": 0.05}, risk_gate_passed=True, risk_gate_reason="ok"))
-    assert run_eod.approved_rebalance_this_month(eng, date(2026, 7, 2)) is True
-    assert run_eod.approved_rebalance_this_month(eng, date(2026, 8, 3)) is False   # next month → False
+        c.execute(insert(db.snapshots).values(
+            ts=datetime(2026, 7, 1, 20, 11), nav=100_000.0, cash=100_000.0, last_equity=100_000.0,
+            weights={}, positions={}, drift=None))       # empty book
+    assert est(eng, date(2026, 7, 2)) is False           # gate passed but no positions → NOT done
+    with eng.begin() as c:                               # now the orders fill → book holds equity
+        c.execute(insert(db.snapshots).values(
+            ts=datetime(2026, 7, 1, 20, 12), nav=100_000.0, cash=5_000.0, last_equity=100_000.0,
+            weights={"AAPL": 0.25}, positions={"AAPL": 100}, drift=0.0))
+    assert est(eng, date(2026, 7, 2)) is True            # approved + positions established → done
+    assert est(eng, date(2026, 8, 3)) is False           # next month → False
 
 
 def test_daily_job_skips_non_trading_day():

@@ -340,7 +340,7 @@ Increments: 3.1 `risk.py` tested; 3.2 `broker.py` (Alpaca write client); 3.3 `ex
 (pure `plan_orders` + idempotent `submit_and_track` with fill poll / session-end cancel);
 3.4 `reconcile.py` (diff vs DB, correct to Alpaca, block if unreachable); 3.5 `monitor.py`
 (NAV / L1-drift telemetry / snapshots); 3.6 `run_eod.py --once` single-cycle driver; 3.7
-`run_eod.py --serve` APScheduler wrapper (daily 16:10-ET branch rebalance/monitor, 60s
+`run_eod.py --serve` APScheduler wrapper (daily 15:00-ET branch rebalance/monitor, 60s
 monitor loop, SIGTERM finish-stage-then-cancel). 193 tests pass; all logic is unit/
 integration-tested via the pure-fn + injected-I/O split. **Pending (needs a live paper
 account + Postgres, for Diego to run):** first paper rebalance fills in the Alpaca
