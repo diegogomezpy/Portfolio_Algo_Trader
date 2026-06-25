@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 import re
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import desc, func, select
 
@@ -21,6 +22,17 @@ _TRADING_DAYS = 252.0
 # Used to keep the leverage gauge and position count equity-only once the overlay writes
 # options into the same snapshot (a short call carries negative market value).
 _OCC_SUFFIX = re.compile(r"\d{6}[CP]\d{8}$")
+
+# Engine-heartbeat thresholds (seconds). The monitor writes a snapshot every ~60s regardless
+# of market hours, so a growing gap means the monitor/engine process is wedged — not a quiet
+# market. < live: healthy; live..stale: degraded; beyond stale (or no data): down.
+_HB_LIVE_S = 180
+_HB_STALE_S = 600
+# Per-name |weight − target| above this counts a name as "drifting" in the reconciliation tile.
+_DRIFT_NAME_EPS = 0.005
+# Alert severity from the alert_type string (mirrors the dashboard's front-end classifier).
+_ALERT_ERR = re.compile(r"block|error|fail|breach|halt", re.I)
+_ALERT_WARN = re.compile(r"warn|stale|drift", re.I)
 
 
 def _is_option(symbol: str) -> bool:
@@ -90,6 +102,28 @@ def api_state(db_engine) -> dict:
             "n_positions": sum(1 for s, q in positions.items() if q and not _is_option(s))}
 
 
+def held_symbols(db_engine) -> list[str]:
+    """Every equity symbol the dashboard might label: held positions, last target book,
+    today's factor names, and covered-call underlyings. Option (OCC) symbols are excluded.
+
+    Used to scope the instrument-reference lookup (name/sector) to the names actually on
+    screen, rather than the whole universe.
+    """
+    with db_engine.connect() as conn:
+        snap = _latest_snapshot(conn)
+        reb = _latest_rebalance(conn)
+        latest_fd = conn.execute(select(func.max(db.factor_scores.c.date))).scalar()
+        fsyms = ([r[0] for r in conn.execute(
+            select(db.factor_scores.c.symbol).where(db.factor_scores.c.date == latest_fd)).all()]
+            if latest_fd is not None else [])
+        unders = [r[0] for r in conn.execute(select(db.options_lifecycle.c.underlying)).all()]
+    syms = set((snap or {}).get("positions") or {})
+    syms |= set((reb or {}).get("target_weights") or {})
+    syms |= set(fsyms)
+    syms |= {u for u in unders if u}
+    return sorted(s for s in syms if s and not _is_option(s))
+
+
 def api_nav_history(db_engine, limit: int = 120) -> list[dict]:
     """Recent NAV (and cash) snapshots, oldest-first, for the live equity sparkline."""
     with db_engine.connect() as conn:
@@ -156,6 +190,132 @@ def api_alerts(db_engine, limit: int = 50) -> list[dict]:
             select(db.alerts).order_by(desc(db.alerts.c.ts)).limit(limit)).mappings().all()
     return [{"ts": str(r["ts"]), "type": r["alert_type"], "message": r["message"],
              "delivered": r["delivered"]} for r in rows]
+
+
+# ====================================================================== #
+# Operational health — the live "is it alive" panel (Phase 5.7)
+# ====================================================================== #
+def _as_utc(ts) -> datetime | None:
+    """Coerce a stored timestamp (naive-UTC datetime or ISO string) to an aware-UTC datetime.
+
+    Writers stamp ``datetime.now(timezone.utc)`` and the Postgres session is pinned to UTC, so
+    a naive value read back is UTC wall-clock — we just attach the tzinfo. Returns ``None`` for
+    anything unparseable (so age math degrades to "unknown" rather than crashing the panel).
+    """
+    if ts is None:
+        return None
+    if isinstance(ts, str):
+        try:
+            ts = datetime.fromisoformat(ts)
+        except ValueError:
+            return None
+    if not isinstance(ts, datetime):
+        return None
+    return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts.astimezone(timezone.utc)
+
+
+def _alert_severity(alert_type: str) -> str:
+    t = alert_type or ""
+    if _ALERT_ERR.search(t):
+        return "error"
+    if _ALERT_WARN.search(t):
+        return "warn"
+    return "info"
+
+
+def _first_weekday(year: int, month: int) -> date:
+    """First Mon–Fri of ``year``-``month`` (weekend-rolled, holiday-agnostic)."""
+    d = date(year, month, 1)
+    while d.weekday() >= 5:          # Sat=5, Sun=6 → roll forward to Monday
+        d += timedelta(days=1)
+    return d
+
+
+def _next_rebalance_estimate(today: date) -> date:
+    """Deterministic estimate of the next monthly rebalance: first weekday of the coming month.
+
+    The cadence is the first *trading* day of each month (DECISIONS D31). This is the
+    Postgres-only fallback — holiday collisions (e.g. Jan 1 / Jul 4 landing on the first
+    weekday) are corrected by the live NYSE-calendar refinement in the route.
+    """
+    this_month = _first_weekday(today.year, today.month)
+    if this_month > today:
+        return this_month
+    ny, nm = (today.year + 1, 1) if today.month == 12 else (today.year, today.month + 1)
+    return _first_weekday(ny, nm)
+
+
+def api_health(db_engine, *, now: datetime | None = None) -> dict:
+    """Operational health for the live dashboard's "System health" panel (Postgres-only).
+
+    Reports the engine heartbeat (latest snapshot age — the monitor writes every ~60s, so a
+    gap means the process is wedged), the last rebalance + risk-gate result, reconciliation
+    drift vs the last target book, 24h alert counts by severity, data-freshness timestamps,
+    and a deterministic *estimate* of the next rebalance. Market open/closed and a
+    holiday-correct next-rebalance date need the Alpaca calendar/clock, so the route layers
+    those on (``market`` is absent here) — keeping this pure and unit-testable on sqlite.
+    """
+    now = now or datetime.now(timezone.utc)
+    today = now.date()
+    with db_engine.connect() as conn:
+        snap = _latest_snapshot(conn)
+        reb = _latest_rebalance(conn)
+        last_order_ts = conn.execute(select(func.max(db.orders.c.submitted_at))).scalar()
+        last_factor_date = conn.execute(select(func.max(db.factor_scores.c.date))).scalar()
+        alert_rows = conn.execute(select(db.alerts.c.alert_type, db.alerts.c.ts)).all()
+
+    # --- engine heartbeat (snapshot freshness) ---
+    snap_ts = _as_utc(snap.get("ts")) if snap else None
+    age = (now - snap_ts).total_seconds() if snap_ts else None
+    if age is None:
+        eng_status = "down"
+    elif age < _HB_LIVE_S:
+        eng_status = "live"
+    elif age < _HB_STALE_S:
+        eng_status = "stale"
+    else:
+        eng_status = "down"
+
+    # --- reconciliation drift vs the last target book ---
+    weights = (snap or {}).get("weights") or {}
+    targets = (reb or {}).get("target_weights") or {}
+    devs = {s: float(weights.get(s, 0.0)) - float(targets.get(s, 0.0))
+            for s in (set(weights) | set(targets)) if not _is_option(s)}
+    n_drifting = sum(1 for v in devs.values() if abs(v) > _DRIFT_NAME_EPS)
+    max_name, max_dev = None, 0.0
+    for s, v in devs.items():
+        if abs(v) > abs(max_dev):
+            max_name, max_dev = s, v
+
+    # --- alerts in the last 24h, by severity ---
+    since = now - timedelta(hours=24)
+    sev = [_alert_severity(t) for t, ts in alert_rows
+           if (_as_utc(ts) is not None and _as_utc(ts) >= since)]
+    errs, warns = sev.count("error"), sev.count("warn")
+
+    reb_ts = _as_utc((reb or {}).get("ts")) if reb else None
+    est = _next_rebalance_estimate(today)
+    return {
+        "now": now.isoformat(),
+        "engine": {"status": eng_status,
+                   "snapshot_ts": str(snap.get("ts")) if snap else None,
+                   "age_s": round(age) if age is not None else None},
+        "last_rebalance": None if not reb else {
+            "ts": str(reb.get("ts")),
+            "date": reb_ts.date().isoformat() if reb_ts else None,
+            "trigger": reb.get("trigger_reason"),
+            "gate_passed": reb.get("risk_gate_passed"),
+            "gate_reason": reb.get("risk_gate_reason")},
+        "next_rebalance": {"date": est.isoformat(), "source": "estimated",
+                           "days_until": (est - today).days},
+        "drift": {"l1": (snap or {}).get("drift"), "n_drifting": n_drifting,
+                  "max_name": max_name, "max_dev": (max_dev if max_name else None)},
+        "alerts_24h": {"total": len(sev), "errors": errs, "warnings": warns,
+                       "worst": ("error" if errs else "warn" if warns else "ok")},
+        "freshness": {"snapshot_ts": str(snap.get("ts")) if snap else None,
+                      "last_order_ts": str(last_order_ts) if last_order_ts else None,
+                      "factors_date": str(last_factor_date) if last_factor_date else None},
+    }
 
 
 # ====================================================================== #

@@ -10,12 +10,54 @@
   /* ---- live-tab layout (components live in /static/theme.css) -------------- */
   .wrap { max-width: 1320px; margin: 0 auto; padding: 0 22px; }
 
+  #topwrap { position: sticky; top: 0; z-index: 20; }
   header.topbar {
-    position: sticky; top: 0; z-index: 20;
+    position: relative;
     display: flex; align-items: center; gap: 18px;
     padding: 11px 22px; background: rgba(10,14,21,.82); backdrop-filter: blur(10px);
     border-bottom: 1px solid var(--line);
   }
+  /* global status bar — the "big important" health signals, pinned on every tab */
+  .statusbar { display: flex; align-items: center; gap: 14px; padding: 7px 22px;
+               background: rgba(12,17,26,.92); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line);
+               overflow-x: auto; }
+  .sbchips { display: flex; align-items: center; gap: 7px 18px; flex-wrap: wrap; }
+  .sbchip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; }
+  .sbchip .sbk { color: var(--muted); }
+  .sbchip .sbv { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .sbtoggle { margin-left: auto; flex: none; background: var(--panel-2); border: 1px solid var(--line);
+              color: var(--muted); border-radius: 7px; padding: 4px 11px; font: inherit; font-size: 11.5px;
+              font-weight: 600; cursor: pointer; white-space: nowrap; transition: all .15s var(--ease); }
+  .sbtoggle:hover { color: var(--fg); border-color: var(--accent); }
+
+  /* tooltips — any element carrying a data-tip attribute */
+  [data-tip] { cursor: help; }
+  th[data-tip] { text-decoration: underline dotted var(--faint); text-underline-offset: 3px; }
+  #tip { position: fixed; z-index: 100; display: none; max-width: 280px; pointer-events: none;
+         background: var(--panel-3); color: var(--fg-dim); border: 1px solid var(--line);
+         border-radius: 8px; padding: 8px 11px; font-size: 11.5px; line-height: 1.5;
+         box-shadow: 0 10px 30px -10px rgba(0,0,0,.75); }
+
+  /* instrument identity: ticker chip + company name + sector */
+  .sym-cell { display: inline-flex; align-items: center; gap: 10px; }
+  .tkrchip { display: inline-flex; align-items: center; padding: 3px 7px; border-radius: 6px; flex: none;
+             font-size: 11px; font-weight: 700; letter-spacing: .02em; font-variant-numeric: tabular-nums; }
+  .sym-meta { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+  .sym-meta .nm  { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 230px; }
+  .sym-meta .sec { font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+  .callmark { color: var(--amber); font-weight: 700; margin-left: 4px; }
+
+  /* allocation bar — current weight (fill) vs target (tick) */
+  .alloc { display: flex; align-items: center; gap: 9px; min-width: 116px; }
+  .alloc-track { position: relative; flex: 1; height: 6px; border-radius: 3px; background: var(--panel-3); }
+  .alloc-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--accent), var(--green)); }
+  .alloc-tick { position: absolute; top: -2px; width: 2px; height: 10px; background: var(--fg-dim); border-radius: 1px; }
+  .alloc-val { font-variant-numeric: tabular-nums; color: var(--fg-dim); min-width: 44px; }
+
+  /* holdings legend */
+  .leglane { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; margin: 2px 0 6px;
+             font-size: 11.5px; color: var(--muted); }
+  .legitem { display: inline-flex; align-items: center; gap: 7px; }
   .brand { display: flex; align-items: center; gap: 10px; flex: none; }
   .brand svg { width: 26px; height: 26px; display: block; flex: none; }
   .brand .name { font-size: 15px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
@@ -27,6 +69,13 @@
          cursor: pointer; transition: all .15s var(--ease); }
   .tab:hover { color: var(--fg); background: var(--panel-2); }
   .tab.active { color: var(--fg); background: var(--panel-2); border-color: var(--line); }
+  /* second-level sub-tabs (Portfolio: Holdings/Activity · Performance: Returns/Execution) */
+  .subtabs { display: flex; gap: 4px; margin: 16px 0 2px; }
+  .subtab { background: transparent; color: var(--muted); border: 1px solid transparent;
+            border-radius: 7px; padding: 5px 13px; font: inherit; font-size: 12.5px; font-weight: 600;
+            cursor: pointer; transition: all .15s var(--ease); }
+  .subtab:hover { color: var(--fg); background: var(--panel-2); }
+  .subtab.active { color: var(--fg); background: var(--panel-2); border-color: var(--line); }
   .topbar .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
   .refresh { background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
              border-radius: 8px; width: 30px; height: 30px; cursor: pointer; display: grid;
@@ -53,6 +102,18 @@
   .kpi-lev .gauge { margin-top: 9px; height: 6px; border-radius: 3px; background: var(--panel-3); overflow: hidden; position: relative; }
   .kpi-lev .gauge i { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--accent), var(--green)); transition: width .5s var(--ease); }
   .kpi-lev .gauge.over i { background: linear-gradient(90deg, var(--amber), var(--red)); }
+
+  /* system-health panel */
+  .health { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1px; background: var(--line); border-radius: 9px; overflow: hidden; }
+  .htile { background: var(--panel); padding: 11px 14px; min-width: 0; }
+  .htile .hk { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .htile .hv { font-size: 15px; font-weight: 650; margin-top: 4px; display: flex; align-items: center;
+               gap: 7px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .htile .hs { font-size: 11px; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hdot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .hdot.ok { background: var(--green); } .hdot.warn { background: var(--amber); }
+  .hdot.bad { background: var(--red); } .hdot.mut { background: var(--faint); }
 
   /* main grid */
   .grid { display: grid; grid-template-columns: 1.25fr 1fr; gap: 16px; padding-bottom: 32px; }
@@ -87,6 +148,7 @@
 </style>
 </head>
 <body>
+<div id="topwrap">
 <header class="topbar">
   <div class="brand">
     <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#121925"/>
@@ -96,8 +158,9 @@
     <span class="tag">factor equity + covered-call overlay</span>
   </div>
   <nav class="tabs">
-    <button class="tab active" data-view="live">Live</button>
-    <button class="tab" data-view="track">Track record</button>
+    <button class="tab active" data-view="overview">Overview</button>
+    <button class="tab" data-view="portfolio">Portfolio</button>
+    <button class="tab" data-view="performance">Performance</button>
     <button class="tab" data-view="backtest">Backtest</button>
   </nav>
   <div class="right">
@@ -108,18 +171,47 @@
     </button>
   </div>
 </header>
+<div class="statusbar" id="statusbar" style="display:none">
+  <div class="sbchips" id="sbchips"></div>
+  <button class="sbtoggle" id="sbtoggle" aria-expanded="false">Details ▾</button>
+</div>
+</div>
 
-<div id="live-view">
+<div id="healthpanel" style="display:none">
+  <div class="wrap" style="padding-top:14px">
+    <div class="se-panel">
+      <h2>System health <span class="panel-sub" id="healthsub"></span></h2>
+      <div class="health" id="healthtiles"></div>
+    </div>
+  </div>
+</div>
+
+<div id="overview-view">
   <div class="wrap">
     <div class="gatebar" id="gatebar"></div>
     <div class="kpis" id="kpis"></div>
-    <div class="grid">
-      <div class="se-panel span2">
-        <h2>Net asset value <span class="panel-sub" id="navrange"></span></h2>
-        <div class="spark-meta" id="sparkmeta"></div>
-        <div id="navspark"></div>
+    <div class="se-panel" style="margin-top:16px">
+      <h2>Net asset value <span class="panel-sub" id="navrange"></span></h2>
+      <div class="spark-meta" id="sparkmeta"></div>
+      <div id="navspark"></div>
+    </div>
+    <div class="footstrip" id="footstrip"></div>
+  </div>
+</div>
+
+<div id="portfolio-view" style="display:none">
+  <div class="wrap">
+    <div class="subtabs" data-group="portfolio">
+      <button class="subtab active" data-sub="holdings">Holdings</button>
+      <button class="subtab" data-sub="activity">Activity</button>
+    </div>
+    <div class="subview grid" id="sub-holdings">
+      <div class="leglane span2">
+        <span class="legitem"><span class="tkrchip" style="background:hsl(210 42% 24%);color:hsl(210 72% 78%)">TICK</span> ticker — chip colour encodes the sector</span>
+        <span class="legitem"><span class="callmark">· covered call</span> short call written on the underlying</span>
+        <span class="legitem">hover any value for a definition</span>
       </div>
-      <div class="se-panel">
+      <div class="se-panel span2">
         <h2>Positions vs target <span class="panel-sub" id="possub"></span></h2>
         <div class="body" id="positions"></div>
       </div>
@@ -131,7 +223,9 @@
         <h2>Factor scores <span class="panel-sub">held names</span></h2>
         <div class="body" id="factors"></div>
       </div>
-      <div class="se-panel">
+    </div>
+    <div class="subview grid" id="sub-activity" style="display:none">
+      <div class="se-panel span2">
         <h2>Recent orders</h2>
         <div class="body" id="orders"></div>
       </div>
@@ -140,34 +234,38 @@
         <div class="body" id="alerts"></div>
       </div>
     </div>
-    <div class="footstrip" id="footstrip"></div>
   </div>
 </div>
 
-<div id="track-view" style="display:none">
+<div id="performance-view" style="display:none">
   <div class="wrap">
-    <div class="se-panel" id="trackempty" style="display:none;text-align:center;color:var(--muted);padding:38px 20px">
-      No live track record yet — this tab fills in automatically once the strategy starts trading and
-      the monitor records NAV snapshots. (It compares the paper book to SPY and covered-call ETFs,
-      and reports realized slippage from your fills.)
+    <div class="subtabs" data-group="performance">
+      <button class="subtab active" data-sub="returns">Returns</button>
+      <button class="subtab" data-sub="execution">Execution</button>
     </div>
-    <div id="trackbody" style="display:none">
-      <div class="kpis" id="trackkpis"></div>
-      <div class="grid">
-        <div class="se-panel span2">
+    <div class="subview" id="sub-returns">
+      <div class="se-panel" id="trackempty" style="display:none;text-align:center;color:var(--muted);padding:38px 20px">
+        No live track record yet — this fills in automatically once the strategy starts trading and the
+        monitor records NAV snapshots. (It compares the paper book to SPY and covered-call ETF benchmarks.)
+      </div>
+      <div id="trackbody" style="display:none">
+        <div class="kpis" id="trackkpis"></div>
+        <div class="se-panel span2" style="margin-top:16px">
           <h2>Growth since inception — strategy vs benchmarks <span class="panel-sub" id="tracksub"></span></h2>
           <div class="spark-meta" id="tracklegend"></div>
           <div id="trackchart"></div>
         </div>
-        <div class="se-panel span2">
+        <div class="se-panel" style="margin-top:16px">
           <h2>Benchmark comparison <span class="panel-sub">paper, since go-live</span></h2>
           <div class="body" id="trackbench"></div>
           <div id="benchdesc"></div>
         </div>
-        <div class="se-panel span2">
-          <h2>Execution quality / slippage <span class="panel-sub" id="slipsub"></span></h2>
-          <div class="body" id="slippage"></div>
-        </div>
+      </div>
+    </div>
+    <div class="subview" id="sub-execution" style="display:none">
+      <div class="se-panel">
+        <h2>Execution quality / slippage <span class="panel-sub" id="slipsub"></span></h2>
+        <div class="body" id="slippage"></div>
       </div>
     </div>
   </div>
@@ -188,19 +286,77 @@ const SKEL = '<div class="skel-rows"><div class="skel"></div><div class="skel"><
 
 let META = {env:"paper", leverage_cap:2.0, target_delta:0.30};
 
-// ---- tabs -----------------------------------------------------------------
-let activeView = "live";
+// ---- graphical instrument helpers (ticker chip + company name + sector) ----
+let REF = {};   // {TICKER: {name, sector, industry}} — instrument labels, loaded once on boot
+// Chip colour ENCODES the GICS sector, so the book groups visually by sector at a glance.
+const SECTOR_HUE = {
+  "Information Technology":210, "Communication Services":280, "Health Care":350,
+  "Financials":158, "Consumer Discretionary":22, "Consumer Staples":122, "Energy":42,
+  "Industrials":250, "Materials":92, "Utilities":188, "Real Estate":320,
+};
+function sectorStyle(sec){ const h=SECTOR_HUE[sec];
+  return h==null ? "background:hsl(220 8% 26%);color:hsl(220 12% 72%)"      // unknown → neutral grey
+                 : `background:hsl(${h} 42% 24%);color:hsl(${h} 72% 78%)`; }
+function tkrChip(sym, sec){ return `<span class="tkrchip" style="${sectorStyle(sec)}">${sym}</span>`; }
+function symCell(sym, type){
+  sym = String(sym);
+  const r = REF[sym.toUpperCase()] || {};
+  const nm = r.name || sym;
+  const sec = r.sector || "—";
+  const mark = type==="call" ? ` <span class="callmark">· covered call</span>` : "";
+  const tip = [r.name, r.industry].filter(Boolean).join(" — ") || sym;
+  return `<span class="sym-cell" data-tip="${esc(tip)}">${tkrChip(sym, r.sector)}`+
+    `<span class="sym-meta"><span class="nm">${nm}</span><span class="sec">${sec}${mark}</span></span></span>`;
+}
+function allocBar(w, t, max){
+  const W=Math.max(0,Math.min(100,(w||0)/max*100)), T=Math.max(0,Math.min(100,(t||0)/max*100));
+  return `<div class="alloc" data-tip="Current weight (bar) vs target (tick). Weight = position market value ÷ NAV.">`+
+    `<div class="alloc-track"><div class="alloc-fill" style="width:${W.toFixed(0)}%"></div>`+
+    `<div class="alloc-tick" style="left:${T.toFixed(0)}%"></div></div><span class="alloc-val">${pct(w)}</span></div>`;
+}
+
+// ---- tooltips: one floating element shown for any [data-tip] (avoids table clipping) ----
+const TIP = document.createElement("div"); TIP.id = "tip"; document.body.appendChild(TIP);
+let tipEl = null;
+function posTip(e){ const pad=14, w=TIP.offsetWidth, h=TIP.offsetHeight;
+  let x=e.clientX+pad, y=e.clientY+pad;
+  if(x+w>innerWidth-8) x=e.clientX-w-pad;
+  if(y+h>innerHeight-8) y=e.clientY-h-pad;
+  TIP.style.left=Math.max(8,x)+"px"; TIP.style.top=Math.max(8,y)+"px"; }
+document.addEventListener("mouseover", e=>{ const t=e.target.closest("[data-tip]"); tipEl=t;
+  if(t){ TIP.textContent=t.getAttribute("data-tip"); TIP.style.display="block"; posTip(e); } else TIP.style.display="none"; });
+document.addEventListener("mousemove", e=>{ if(tipEl) posTip(e); });
+
+// ---- two-level nav: top tabs + sub-tabs -----------------------------------
+const VIEWS = ["overview","portfolio","performance","backtest"];
+const SUBS  = {portfolio:["holdings","activity"], performance:["returns","execution"]};
+let activeView = "overview";
+const activeSub = {portfolio:"holdings", performance:"returns"};
+
 document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   activeView = t.dataset.view;
   document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
-  $("live-view").style.display = activeView === "live" ? "" : "none";
-  $("track-view").style.display = activeView === "track" ? "block" : "none";
-  $("backtest-view").style.display = activeView === "backtest" ? "block" : "none";
+  VIEWS.forEach(v => $(v+"-view").style.display = activeView === v ? "block" : "none");
   const bt = $("bt");
   if (activeView === "backtest" && !bt.src) bt.src = "/backtest";   // lazy-load once
-  if (activeView === "live") refresh();
-  if (activeView === "track") loadTrack();
+  loadActive();
 });
+
+document.querySelectorAll(".subtab").forEach(t => t.onclick = () => {
+  const group = t.closest(".subtabs").dataset.group, sub = t.dataset.sub;
+  activeSub[group] = sub;
+  t.closest(".subtabs").querySelectorAll(".subtab").forEach(x => x.classList.toggle("active", x === t));
+  SUBS[group].forEach(s => $("sub-"+s).style.display = sub === s ? "" : "none");
+  loadActive();
+});
+
+async function loadGlobal(){ renderHealth(await get("/api/health")); }   // global status bar — every tab
+function loadActive(){
+  loadGlobal();
+  if (activeView === "overview") loadOverview();
+  else if (activeView === "portfolio") loadPortfolio();
+  else if (activeView === "performance") loadPerformance();
+}
 
 async function get(p){ try { const r = await fetch(p); return r.ok ? await r.json() : null; } catch { return null; } }
 
@@ -226,8 +382,14 @@ function trackChart(dates, series){
   return s+"</svg>";
 }
 
-async function loadTrack(){
-  const [tr, slip] = [await get("/api/track_record"), await get("/api/slippage")];
+async function loadPerformance(){
+  const [tr, slip] = await Promise.all([get("/api/track_record"), get("/api/slippage")]);
+  lastFetch = Date.now(); tickFreshness();
+  renderReturns(tr, slip);     // Returns sub-view
+  renderExecution(slip);       // Execution sub-view
+}
+
+function renderReturns(tr, slip){
   if(!tr || !tr.available){ $("trackempty").style.display="block"; $("trackbody").style.display="none"; return; }
   $("trackempty").style.display="none"; $("trackbody").style.display="block";
   const star = tr.mature ? "" : "*";
@@ -253,7 +415,12 @@ async function loadTrack(){
   const row=(name,m)=>`<tr><td>${name}</td><td class="${sgn(m.total_return)}">${spct(m.total_return)}</td>`+
     `<td>${tr.mature&&m.ann_return!=null?spct(m.ann_return):"—"}</td><td>${m.ann_vol!=null?pct(m.ann_vol):"—"}</td>`+
     `<td>${tr.mature&&m.sharpe!=null?m.sharpe.toFixed(2):"—"}</td><td class="${sgn(m.max_drawdown)}">${pct(m.max_drawdown)}</td></tr>`;
-  let bench=`<table class="se-table"><thead><tr><th>Series</th><th>Return</th><th>Ann.</th><th>Vol</th><th>Sharpe</th><th>MaxDD</th></tr></thead><tbody>`+
+  let bench=`<table class="se-table"><thead><tr><th>Series</th>`+
+    `<th data-tip="Total return since inception (paper, net of costs).">Return</th>`+
+    `<th data-tip="Annualized return — shown once ≥10 trading days of history accumulate.">Ann.</th>`+
+    `<th data-tip="Annualized volatility of daily returns.">Vol</th>`+
+    `<th data-tip="Annualized return ÷ annualized volatility.">Sharpe</th>`+
+    `<th data-tip="Largest peak-to-trough decline over the window.">MaxDD</th></tr></thead><tbody>`+
     row("Strategy (this book)", tr) + bsyms.map(sym=>row(sym, tr.benchmarks[sym])).join("") + "</tbody></table>";
   if(!tr.mature) bench += `<div class="se-empty" style="margin-top:8px">* Annualized return &amp; Sharpe appear once ≥10 trading days of live history accumulate (currently ${tr.days}).</div>`;
   if(!bsyms.length) bench += `<div class="se-empty" style="margin-top:8px">Benchmarks unavailable (data feed offline) — retries on the next load.</div>`;
@@ -265,22 +432,29 @@ async function loadTrack(){
       + `</div>`
     : "";
 
+}
+
+function renderExecution(slip){
   if(slip && slip.n_fills){
     $("slipsub").textContent = `${slip.n_fills} filled limit orders · positive bps = paid up vs mid`;
     $("slippage").innerHTML = table(slip.fills, [
-      {h:"Symbol", f:r=>r.symbol}, {h:"Side", f:r=>r.side}, {h:"Qty", f:r=>fmt(r.qty)},
-      {h:"Intended", f:r=>usd2(r.intended)}, {h:"Filled", f:r=>usd2(r.filled)},
-      {h:"Slippage", f:r=>`<span class="${r.slippage_bps>0?'neg':'pos'}">${r.slippage_bps>0?'+':''}${r.slippage_bps} bps</span>`},
-      {h:"Cost", f:r=>`<span class="${r.slippage_usd>0?'neg':'pos'}">${susd(-r.slippage_usd)}</span>`},
+      {h:"Symbol", cls:()=>"sym", f:r=>symCell(r.symbol)}, {h:"Side", tip:"Buy or sell.", f:r=>r.side}, {h:"Qty", tip:"Filled quantity.", f:r=>fmt(r.qty)},
+      {h:"Intended", tip:"Decision-time reference price (the order's limit / mid).", f:r=>usd2(r.intended)},
+      {h:"Filled", tip:"Actual average fill price.", f:r=>usd2(r.filled)},
+      {h:"Slippage", tip:"Fill vs intended, in basis points. Positive = paid up (adverse); negative = price improvement.",
+        f:r=>`<span class="${r.slippage_bps>0?'neg':'pos'}">${r.slippage_bps>0?'+':''}${r.slippage_bps} bps</span>`},
+      {h:"Cost", tip:"Dollar execution cost vs the intended price (negative = saved money).",
+        f:r=>`<span class="${r.slippage_usd>0?'neg':'pos'}">${susd(-r.slippage_usd)}</span>`},
     ]);
   } else {
     $("slippage").innerHTML = '<div class="se-empty">No filled limit orders yet — this compares each fill to its intended (mid) price once the strategy trades.</div>';
   }
 }
 
+const esc = s => String(s).replace(/"/g,"&quot;");
 function table(rows, cols){
   if(!rows || !rows.length) return '<div class="se-empty">none</div>';
-  const head = "<thead><tr>"+cols.map(c=>`<th>${c.h}</th>`).join("")+"</tr></thead>";
+  const head = "<thead><tr>"+cols.map(c=>`<th${c.tip?` data-tip="${esc(c.tip)}"`:""}>${c.h}</th>`).join("")+"</tr></thead>";
   const body = "<tbody>"+rows.map(r=>"<tr>"+cols.map(c=>`<td class="${c.cls?c.cls(r):''}">${c.f(r)}</td>`).join("")+"</tr>").join("")+"</tbody>";
   return `<table class="se-table">${head}${body}</table>`;
 }
@@ -289,29 +463,98 @@ function bar(frac, color){   // 0..1 micro-bar
   return `<span class="se-bartrack"><span class="se-bar" style="width:${w.toFixed(0)}%;background:${color||'var(--accent)'}"></span></span>`;
 }
 
+// ---- system health panel --------------------------------------------------
+const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const WD  = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+function mdy(iso){ if(!iso) return "–"; const d=new Date(String(iso).slice(0,10)+"T00:00:00"); return MON[d.getMonth()]+" "+d.getDate(); }
+function clockHM(iso){ if(!iso) return ""; const d=new Date(iso); let h=d.getHours(),m=d.getMinutes(); const ap=h<12?"am":"pm"; h=h%12||12; return h+(m?":"+String(m).padStart(2,"0"):"")+ap; }
+function tsMs(s){ if(!s) return null; const t=new Date(String(s).replace(" ","T")+(/[zZ]|\+/.test(s)?"":"Z")).getTime(); return isNaN(t)?null:t; }
+function ageOf(s){ const t=tsMs(s); return t==null?"–":humanAge((Date.now()-t)/1000)+" ago"; }
+function htile(k, dot, val, sub){
+  return `<div class="htile"><div class="hk">${k}</div><div class="hv">${dot?`<span class="hdot ${dot}"></span>`:""}${val}</div><div class="hs">${sub||""}</div></div>`;
+}
+function sbChip(dot, label, val, tip){
+  return `<span class="sbchip"${tip?` data-tip="${esc(tip)}"`:""}><span class="hdot ${dot}"></span><span class="sbk">${label}</span><span class="sbv">${val}</span></span>`;
+}
+function renderHealth(h){
+  if(!h) return;
+  $("statusbar").style.display = "flex";
+  const e=h.engine||{}, m=h.market, lr=h.last_rebalance, nr=h.next_rebalance||{}, dr=h.drift||{}, a=h.alerts_24h||{};
+  const gate = lr ? lr.gate_passed : null;
+  // --- condensed global status bar (the "big important" signals, pinned on every tab) ---
+  $("sbchips").innerHTML = [
+    sbChip({live:"ok",stale:"warn",down:"bad"}[e.status]||"bad", "Engine",
+           {live:"Live",stale:"Stale",down:"Down"}[e.status]||"Down",
+           "Monitor heartbeat from the latest snapshot. Live = <3 min old, Stale = 3–10 min, Down = older / no data."),
+    sbChip(m?(m.is_open?"ok":"mut"):"mut", "Market", m?(m.is_open?"Open":"Closed"):"—",
+           "US equity market open/closed, from Alpaca's clock."),
+    sbChip("ok", "Next rebalance",
+           `${mdy(nr.date)}${nr.days_until==null?"":nr.days_until<=0?" · today":" · "+nr.days_until+"d"}`,
+           "Next monthly rebalance (first trading day of the month). 'confirmed' = matched to the live NYSE calendar."),
+    sbChip(gate==null?"mut":gate?"ok":"bad", "Risk gate", gate==null?"—":gate?"Pass":"Blocked",
+           "Result of the last rebalance's pre-trade risk checks (leverage, single-name caps, covered-call coverage)."),
+    sbChip(dr.l1==null?"mut":dr.l1>0.10?"warn":"ok", "Drift", dr.l1==null?"—":pct(dr.l1),
+           "L1 distance between the live book and the last target weights. Telemetry only — drift never triggers a trade."),
+    sbChip({ok:"ok",warn:"warn",error:"bad"}[a.worst]||"ok", "Alerts 24h",
+           a.errors?`${a.errors} err`:a.warnings?`${a.warnings} warn`:"clear",
+           "Alerts raised in the last 24 hours, coloured by worst severity."),
+  ].join("");
+  // --- full detail tiles (hidden behind the Details toggle) ---
+  $("healthtiles").innerHTML = [
+    htile("Engine", {live:"ok",stale:"warn",down:"bad"}[e.status]||"bad",
+      {live:"Live",stale:"Stale",down:"Down"}[e.status]||"Down",
+      e.age_s==null?"no snapshots yet":`monitor · data ${humanAge(e.age_s)} old`),
+    m ? htile("Market", m.is_open?"ok":"mut", m.is_open?"Open":"Closed",
+          m.is_open ? (m.next_close?`closes ${clockHM(m.next_close)}`:"")
+                    : (m.next_open?`opens ${WD[new Date(m.next_open).getDay()]} ${clockHM(m.next_open)}`:""))
+      : htile("Market","mut","—","live clock offline"),
+    lr ? htile("Last rebalance", lr.gate_passed?"ok":"bad", `${mdy(lr.date)} · ${lr.trigger||"—"}`,
+          lr.gate_passed?"risk gate ✓ passed":`gate ✗ ${lr.gate_reason||"blocked"}`)
+      : htile("Last rebalance","mut","none yet","first run pending"),
+    htile("Next rebalance","ok", mdy(nr.date),
+      `${nr.days_until==null?"":nr.days_until<=0?"today":"in "+nr.days_until+" day"+(nr.days_until===1?"":"s")} · ${nr.source||""}`),
+    dr.l1==null ? htile("Drift vs target","mut","–","no target book yet")
+      : htile("Drift vs target", dr.l1>0.10?"warn":"ok", pct(dr.l1)+" L1",
+          dr.n_drifting?`${dr.n_drifting} name${dr.n_drifting===1?"":"s"} off-target`:"on target"),
+    htile("Alerts (24h)", {ok:"ok",warn:"warn",error:"bad"}[a.worst]||"ok",
+      a.errors?`${a.errors} error${a.errors===1?"":"s"}`:a.warnings?`${a.warnings} warning${a.warnings===1?"":"s"}`:"all clear",
+      a.total?`${a.total} in last 24h`:"none in 24h"),
+  ].join("");
+  const fr=h.freshness||{}, bits=[];
+  if(e.snapshot_ts) bits.push(`snapshot ${String(e.snapshot_ts).replace("T"," ").slice(0,19)} UTC`);
+  if(fr.factors_date) bits.push(`factors ${mdy(fr.factors_date)}`);
+  if(fr.last_order_ts) bits.push(`last order ${ageOf(fr.last_order_ts)}`);
+  $("healthsub").textContent = bits.join(" · ");
+}
+
 // ---- KPI strip ------------------------------------------------------------
 function kpis(s){
   const lev = s.leverage, cap = META.leverage_cap||2.0, over = lev!=null && lev>cap+1e-9;
   const cards = [];
   cards.push(kpi("Net asset value", usd(s.nav),
-    s.day_pnl_pct==null ? "" : `<span class="${sgn(s.day_pnl_pct)}">${spct(s.day_pnl_pct)} today</span>`));
+    s.day_pnl_pct==null ? "" : `<span class="${sgn(s.day_pnl_pct)}">${spct(s.day_pnl_pct)} today</span>`,
+    "Total account equity (cash + positions), live from Alpaca."));
   cards.push(kpi("Day P&amp;L",
     `<span class="${sgn(s.day_pnl)}">${susd(s.day_pnl)}</span>`,
-    s.day_pnl_pct==null ? "" : `<span class="${sgn(s.day_pnl_pct)}">${spct(s.day_pnl_pct)} vs prior</span>`));
-  cards.push(`<div class="se-kpi kpi-lev"><div class="label">Leverage</div>
+    s.day_pnl_pct==null ? "" : `<span class="${sgn(s.day_pnl_pct)}">${spct(s.day_pnl_pct)} vs prior</span>`,
+    "Change in equity vs the prior trading day's close."));
+  cards.push(`<div class="se-kpi kpi-lev" data-tip="Gross equity exposure ÷ account equity. The book runs ~2× on paper to lift covered-call coverage; the risk gate hard-caps it."><div class="label">Leverage</div>
       <div class="val ${over?'neg':''}">${lev==null?"–":lev.toFixed(2)+"×"}</div>
       <div class="gauge ${over?'over':''}"><i style="width:${lev==null?0:Math.min(100,lev/cap*100).toFixed(0)}%"></i></div>
       <div class="sub">cap ${cap.toFixed(1)}× · gross ${usd(s.gross_exposure)}</div></div>`);
   cards.push(kpi("Cash", usd(s.cash),
-    (s.cash!=null && s.nav) ? `${pct(s.cash/s.nav)} of NAV` : ""));
+    (s.cash!=null && s.nav) ? `${pct(s.cash/s.nav)} of NAV` : "",
+    "Uninvested cash balance."));
   cards.push(kpi("Premium collected", usd(s.premium_collected),
-    (s.premium_collected && s.nav) ? `${pct(s.premium_collected/s.nav)} of NAV` : "lifetime"));
+    (s.premium_collected && s.nav) ? `${pct(s.premium_collected/s.nav)} of NAV` : "lifetime",
+    "Lifetime premium income from writing covered calls."));
   cards.push(kpi("Positions", fmt(s.n_positions),
-    `drift (L1) <span class="${s.drift>0.1?'warn':'mut'}">${s.drift==null?"–":pct(s.drift)}</span>`));
+    `drift (L1) <span class="${s.drift>0.1?'warn':'mut'}">${s.drift==null?"–":pct(s.drift)}</span>`,
+    "Number of equity names held (options excluded)."));
   $("kpis").innerHTML = cards.join("");
 }
-function kpi(label, val, sub){
-  return `<div class="se-kpi"><div class="label">${label}</div><div class="val">${val}</div>${sub?`<div class="sub">${sub}</div>`:""}</div>`;
+function kpi(label, val, sub, tip){
+  return `<div class="se-kpi"${tip?` data-tip="${esc(tip)}"`:""}><div class="label">${label}</div><div class="val">${val}</div>${sub?`<div class="sub">${sub}</div>`:""}</div>`;
 }
 
 // ---- NAV sparkline (SVG) --------------------------------------------------
@@ -353,45 +596,61 @@ function sparkline(hist){
 // ---- covered-call helpers -------------------------------------------------
 function dte(exp){ if(!exp) return null; const d=Math.round((new Date(exp+"T00:00:00")-Date.now())/864e5); return d; }
 
-// ---- main refresh ---------------------------------------------------------
-let firstLoad = true, snapTs = null, lastFetch = 0, backendDown = false;
-async function refresh(){
-  if (activeView !== "live") return;
-  if (firstLoad){ ["positions","calls","factors","orders","alerts"].forEach(id=>$(id).innerHTML=SKEL); }
-  const [s, hist, orders, calls, factors, alerts] = await Promise.all(
-    ["/api/state","/api/nav_history","/api/orders","/api/calls","/api/factors","/api/alerts"].map(get));
-  firstLoad = false;
+// ---- loaders + shared freshness bookkeeping -------------------------------
+let snapTs = null, lastFetch = 0, backendDown = false, portfolioFirst = true;
+function noteFresh(s){
+  backendDown = !s;
+  if(s) snapTs = s.ts ? new Date(s.ts.replace(" ","T")+(/[zZ]|\+/.test(s.ts)?"":"Z")).getTime() : null;
+  lastFetch = Date.now();
+  tickFreshness();
+}
 
-  if(!s){
-    backendDown = true; lastFetch = Date.now(); tickFreshness();
-    ["positions","calls","factors","orders","alerts"].forEach(id=>$(id).innerHTML =
+// Overview — System health + risk gate + KPIs + NAV (the daily glance)
+async function loadOverview(){
+  const [s, hist] = await Promise.all(["/api/state","/api/nav_history"].map(get));
+  noteFresh(s);
+  if(!s){ $("kpis").innerHTML =
+      '<div class="errbox"><div class="big">Backend unreachable</div>Postgres or the dashboard API is not responding.</div>';
+    return; }
+  renderGate(s); kpis(s); sparkline(hist); renderFootstrip(s);
+}
+
+// Portfolio — Holdings (positions/calls/factors) + Activity (orders/alerts)
+async function loadPortfolio(){
+  if(portfolioFirst){ ["positions","calls","factors","orders","alerts"].forEach(id=>$(id).innerHTML=SKEL); portfolioFirst=false; }
+  const [s, orders, calls, factors, alerts] = await Promise.all(
+    ["/api/state","/api/orders","/api/calls","/api/factors","/api/alerts"].map(get));
+  noteFresh(s);
+  if(!s){ ["positions","calls","factors","orders","alerts"].forEach(id=>$(id).innerHTML =
       '<div class="errbox"><div class="big">Backend unreachable</div>Postgres or the dashboard API is not responding.</div>');
-    return;
-  }
-  backendDown = false;
+    return; }
+  renderPositions(s); renderCalls(s, calls); renderFactors(factors); renderOrders(orders); renderAlerts(alerts);
+}
 
-  // risk-gate banner
+function renderGate(s){
   const g = s.risk_gate_passed, gb = $("gatebar");
-  if(g==null){ gb.style.display="none"; }
-  else { gb.style.display="flex"; gb.className = "gatebar "+(g?"ok":"bad");
-    gb.innerHTML = g ? `<span>●</span> Risk gate passed — pre-trade checks clear`
-                     : `<span>●</span> Risk gate BLOCKED <span class="reason">${s.risk_gate_reason||""}</span>`; }
+  if(g==null){ gb.style.display="none"; return; }
+  gb.style.display="flex"; gb.className = "gatebar "+(g?"ok":"bad");
+  gb.innerHTML = g ? `<span>●</span> Risk gate passed — pre-trade checks clear`
+                   : `<span>●</span> Risk gate BLOCKED <span class="reason">${s.risk_gate_reason||""}</span>`;
+}
 
-  kpis(s);
-  sparkline(hist);
-
-  // positions
+function renderPositions(s){
+  const rows = s.positions || [];
+  const maxW = Math.max(0.0001, ...rows.map(r=>r.weight||0));
   $("possub").textContent = s.gross_exposure!=null ? `gross ${usd(s.gross_exposure)}` : "";
-  $("positions").innerHTML = table(s.positions, [
-    {h:"Symbol", cls:()=>"sym", f:r=>r.symbol},
-    {h:"Qty", f:r=>fmt(r.qty)},
-    {h:"Mkt value", f:r=>usd(r.market_value)},
-    {h:"Weight", f:r=>pct(r.weight)},
-    {h:"Target", f:r=>pct(r.target_weight)},
-    {h:"Δ vs tgt", cls:r=>sgn((r.weight||0)-(r.target_weight||0)), f:r=>spct((r.weight||0)-(r.target_weight||0))},
+  $("positions").innerHTML = table(rows, [
+    {h:"Symbol", cls:()=>"sym", f:r=>symCell(r.symbol, "stock")},
+    {h:"Qty", tip:"Shares held.", f:r=>fmt(r.qty)},
+    {h:"Mkt value", tip:"Position market value = weight × NAV.", f:r=>usd(r.market_value)},
+    {h:"Allocation", tip:"Current weight (bar) vs target (tick). Weight = market value ÷ NAV.",
+      f:r=>allocBar(r.weight, r.target_weight, maxW)},
+    {h:"Δ vs tgt", tip:"Current weight minus target. Green = overweight, red = underweight.",
+      cls:r=>sgn((r.weight||0)-(r.target_weight||0)), f:r=>spct((r.weight||0)-(r.target_weight||0))},
   ]);
+}
 
-  // covered calls + coverage summary
+function renderCalls(s, calls){
   const totShares = (s.positions||[]).reduce((a,r)=>a+(r.qty||0),0);
   const coveredShares = (calls||[]).reduce((a,r)=>a+(r.contracts||0)*100,0);
   const coverable = (s.positions||[]).filter(r=>(r.qty||0)>=100).length;
@@ -399,36 +658,42 @@ async function refresh(){
     ? `${calls.length} open · ${fmt(coveredShares)} sh covered${totShares?` (${pct(coveredShares/totShares)})`:""}`
     : (coverable?`0 open · ${coverable} names coverable`:"");
   $("calls").innerHTML = table(calls, [
-    {h:"Under.", cls:()=>"sym", f:r=>r.underlying},
-    {h:"Contr.", f:r=>fmt(r.contracts)},
-    {h:"Strike", f:r=>usd2(r.strike)},
-    {h:"Expiry", f:r=>r.expiration||"–"},
-    {h:"DTE", cls:r=>{const d=dte(r.expiration); return d!=null&&d<=7?"warn":"";}, f:r=>{const d=dte(r.expiration); return d==null?"–":d+"d";}},
-    {h:"Δ / P(assign)", f:r=>r.delta==null?"–":r.delta.toFixed(2)},
-    {h:"Premium", cls:()=>"pos", f:r=>usd(r.premium)},
+    {h:"Under.", cls:()=>"sym", f:r=>symCell(r.underlying, "call")},
+    {h:"Contr.", tip:"Contracts written. Each contract = 100 shares of coverage.", f:r=>fmt(r.contracts)},
+    {h:"Strike", tip:"Strike price — shares can be called away above this.", f:r=>usd2(r.strike)},
+    {h:"Expiry", tip:"Option expiration date.", f:r=>r.expiration||"–"},
+    {h:"DTE", tip:"Days to expiration (amber ≤ 7 days).",
+      cls:r=>{const d=dte(r.expiration); return d!=null&&d<=7?"warn":"";}, f:r=>{const d=dte(r.expiration); return d==null?"–":d+"d";}},
+    {h:"Δ / P(assign)", tip:"Option delta ≈ probability of finishing in-the-money (assignment). Target 0.30.",
+      f:r=>r.delta==null?"–":r.delta.toFixed(2)},
+    {h:"Premium", tip:"Premium collected for writing the call.", cls:()=>"pos", f:r=>usd(r.premium)},
   ]);
+}
 
-  // factors
+function renderFactors(factors){
   $("factors").innerHTML = table(factors, [
-    {h:"Symbol", cls:()=>"sym", f:r=>r.symbol},
-    {h:"Composite", cls:r=>sgn(r.composite), f:r=>r.composite==null?"–":r.composite.toFixed(2)},
-    {h:"Qual", cls:r=>sgn(r.quality), f:r=>r.quality==null?"–":r.quality.toFixed(2)},
-    {h:"Val", cls:r=>sgn(r.value), f:r=>r.value==null?"–":r.value.toFixed(2)},
-    {h:"Mom", cls:r=>sgn(r.momentum), f:r=>r.momentum==null?"–":r.momentum.toFixed(2)},
-    {h:"LowVol", cls:r=>sgn(r.lowvol), f:r=>r.lowvol==null?"–":r.lowvol.toFixed(2)},
+    {h:"Symbol", cls:()=>"sym", f:r=>symCell(r.symbol)},
+    {h:"Composite", tip:"Blended factor score — equal-weight Quality/Value/Momentum/Low-Vol. Higher = more attractive.",
+      cls:r=>sgn(r.composite), f:r=>r.composite==null?"–":r.composite.toFixed(2)},
+    {h:"Qual", tip:"Quality factor z-score (profitability, balance-sheet strength).", cls:r=>sgn(r.quality), f:r=>r.quality==null?"–":r.quality.toFixed(2)},
+    {h:"Val", tip:"Value factor z-score (cheapness on fundamentals).", cls:r=>sgn(r.value), f:r=>r.value==null?"–":r.value.toFixed(2)},
+    {h:"Mom", tip:"Momentum factor z-score (12-month return, skipping the last month).", cls:r=>sgn(r.momentum), f:r=>r.momentum==null?"–":r.momentum.toFixed(2)},
+    {h:"LowVol", tip:"Low-volatility factor z-score (lower realized vol scores higher).", cls:r=>sgn(r.lowvol), f:r=>r.lowvol==null?"–":r.lowvol.toFixed(2)},
   ]);
+}
 
-  // orders
+function renderOrders(orders){
   $("orders").innerHTML = table(orders, [
-    {h:"Symbol", cls:()=>"sym", f:r=>r.symbol},
-    {h:"Side", cls:r=>r.side==="buy"?"pos":"neg", f:r=>`<span class="se-pill ${r.side==='buy'?'ok':'bad'}" style="font-size:10px">${r.side}</span>`},
-    {h:"Qty", f:r=>fmt(r.qty)},
-    {h:"Type", cls:()=>"mut", f:r=>r.type},
-    {h:"Status", f:r=>r.status},
-    {h:"Fill px", f:r=>r.filled_avg_price==null?"–":usd2(r.filled_avg_price)},
+    {h:"Symbol", cls:()=>"sym", f:r=>symCell(r.symbol)},
+    {h:"Side", tip:"Buy or sell.", cls:r=>r.side==="buy"?"pos":"neg", f:r=>`<span class="se-pill ${r.side==='buy'?'ok':'bad'}" style="font-size:10px">${r.side}</span>`},
+    {h:"Qty", tip:"Order quantity (shares).", f:r=>fmt(r.qty)},
+    {h:"Type", tip:"Order type — the engine places limit orders.", cls:()=>"mut", f:r=>r.type},
+    {h:"Status", tip:"Order lifecycle status (new, filled, canceled…).", f:r=>r.status},
+    {h:"Fill px", tip:"Average price the order filled at.", f:r=>r.filled_avg_price==null?"–":usd2(r.filled_avg_price)},
   ]);
+}
 
-  // alerts (severity colour from type)
+function renderAlerts(alerts){
   const sev = t => /block|error|fail|breach|halt/i.test(t||"") ? "bad" : /warn|stale|drift/i.test(t||"") ? "warn" : "info";
   $("alertssub").textContent = alerts && alerts.length ? `${alerts.length} recent` : "";
   $("alerts").innerHTML = table(alerts, [
@@ -437,13 +702,9 @@ async function refresh(){
     {h:"Message", cls:()=>"mut", f:r=>r.message},
     {h:"Emailed", cls:r=>r.delivered?"pos":"mut", f:r=>r.delivered?"✓ sent":"dry-run"},
   ]);
+}
 
-  // freshness + health — record when we fetched and how old the snapshot DATA is.
-  // "checked" = page poll (the ↻ button / 30s loop reset it); "data" = snapshot age,
-  // which only moves when the monitor (run_eod --serve, 60s) writes a new snapshot.
-  snapTs = s.ts ? new Date(s.ts.replace(" ","T")+(/[zZ]|\+/.test(s.ts)?"":"Z")).getTime() : null;
-  lastFetch = Date.now();
-  tickFreshness();
+function renderFootstrip(s){
   const stale = snapTs!=null && (Date.now()-snapTs)/1000 > 360;
   const feed = META.live
     ? `<span class="se-pill ok" style="font-size:10px"><span class="dot"></span>live · Alpaca every ${META.monitor_interval||60}s</span>`
@@ -472,16 +733,25 @@ function tickFreshness(){
 
 // ---- boot -----------------------------------------------------------------
 async function boot(){
-  const m = await get("/api/meta"); if(m) META = Object.assign(META, m);
+  const [m, ref] = await Promise.all([get("/api/meta"), get("/api/reference")]);
+  if(m) META = Object.assign(META, m);
+  REF = ref || {};
   const eb = $("envbadge"); const live = (META.env||"paper")==="live";
   eb.textContent = (META.env||"paper").toUpperCase();
   eb.className = "se-pill " + (live ? "bad" : "warn");
   eb.title = live ? "LIVE trading — real money" : "paper trading — simulated";
-  refresh();
+  loadActive();
 }
-$("refreshbtn").onclick = () => { $("refreshbtn").classList.add("spin"); setTimeout(()=>$("refreshbtn").classList.remove("spin"),700); refresh(); };
+$("refreshbtn").onclick = () => { $("refreshbtn").classList.add("spin"); setTimeout(()=>$("refreshbtn").classList.remove("spin"),700); loadActive(); };
+let healthOpen = false;
+$("sbtoggle").onclick = () => {
+  healthOpen = !healthOpen;
+  $("healthpanel").style.display = healthOpen ? "block" : "none";
+  $("sbtoggle").setAttribute("aria-expanded", healthOpen);
+  $("sbtoggle").innerHTML = healthOpen ? "Hide ▴" : "Details ▾";
+};
 boot();
-setInterval(refresh, 30000);     // re-read Postgres every 30s
+setInterval(loadActive, 30000);   // re-read the active view every 30s
 setInterval(tickFreshness, 1000); // tick the "checked / data age" header every second
 </script>
 </body>

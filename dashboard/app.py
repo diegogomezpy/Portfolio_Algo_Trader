@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from datetime import date, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -142,6 +143,27 @@ def _benchmark_curves(symbols: list[str], start: str, strat_dates: list[str]) ->
     return out
 
 
+def _market_status(client) -> dict:
+    """Live market open/closed + next session from Alpaca's clock (operational tile)."""
+    c = client.market_clock()
+    return {"is_open": bool(c.get("is_open")), "next_open": c.get("next_open"),
+            "next_close": c.get("next_close"), "timestamp": c.get("timestamp")}
+
+
+def _confirm_next_rebalance(client, est_date: str) -> str | None:
+    """Holiday-correct first NYSE trading day of ``est_date``'s month, via the live calendar.
+
+    The data layer estimates the first *weekday*; the real first *trading* day can slip when a
+    holiday lands on it (e.g. Jul 4). We read the month's opening sessions and take the
+    earliest — which is exactly that holiday correction. Returns ``None`` if the feed is down.
+    """
+    d = date.fromisoformat(est_date)
+    month_start = d.replace(day=1)
+    cal = client.market_calendar(month_start.isoformat(), (month_start + timedelta(days=8)).isoformat())
+    days = sorted(str(x["date"])[:10] for x in cal if x.get("date"))
+    return days[0] if days else None
+
+
 def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None,
                live: bool = True, monitor_interval: int = 60) -> FastAPI:
     if db_engine is None:
@@ -236,5 +258,44 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
     @app.get("/api/slippage")
     def slippage() -> dict:
         return data.api_slippage(db_engine)
+
+    @app.get("/api/reference")
+    def reference() -> dict:
+        """Static instrument labels {symbol: {name, sector, industry}} for the held names.
+
+        Best-effort reference data (SEC company names + the cached SIC→GICS sector map), so the
+        front-end can show company name + sector beside each ticker. A missing cache / offline
+        SEC degrades to an empty map — the UI falls back to bare tickers. Read once on page boot.
+        """
+        try:
+            from engine import instruments
+            return instruments.reference_map(data.held_symbols(db_engine))
+        except Exception as exc:  # noqa: BLE001 — labels are cosmetic; never break the page
+            log.warning("reference build failed: %s", exc)
+            return {}
+
+    @app.get("/api/health")
+    def health() -> dict:
+        """Operational health: engine heartbeat, rebalance schedule, drift, alerts, market hours.
+
+        Postgres-only base (``data.api_health``) refined with the live Alpaca clock (market
+        open/closed) and the real NYSE calendar (holiday-correct next-rebalance date) when a
+        client is up. Both refinements are best-effort — a feed hiccup leaves the base intact.
+        """
+        h = data.api_health(db_engine)
+        if client is not None:
+            try:
+                h["market"] = _market_status(client)
+            except Exception as exc:  # noqa: BLE001 — never let a feed hiccup break the panel
+                log.warning("health: market clock read failed: %s", exc)
+            try:
+                confirmed = _confirm_next_rebalance(client, h["next_rebalance"]["date"])
+                if confirmed:
+                    today = date.fromisoformat(h["now"][:10])
+                    h["next_rebalance"] = {"date": confirmed, "source": "confirmed",
+                                           "days_until": (date.fromisoformat(confirmed) - today).days}
+            except Exception as exc:  # noqa: BLE001
+                log.warning("health: calendar refine failed: %s", exc)
+        return h
 
     return app

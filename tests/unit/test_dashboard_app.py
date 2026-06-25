@@ -22,6 +22,19 @@ class _FakeClient:
         return self._orders
 
 
+class _MarketClient(_FakeClient):
+    """FakeClient plus the clock + calendar surfaces the health route refines with."""
+
+    def market_clock(self):
+        return {"timestamp": "2026-06-24T12:00:00-04:00", "is_open": True,
+                "next_open": "2026-06-25T09:30:00-04:00", "next_close": "2026-06-24T16:00:00-04:00"}
+
+    def market_calendar(self, start, end):
+        # Always reports July 1–2 as the month's opening sessions (holiday-correct first day = Jul 1).
+        return [{"date": "2026-07-01", "open": "2026-07-01T09:30:00-04:00", "close": "2026-07-01T16:00:00-04:00"},
+                {"date": "2026-07-02", "open": "2026-07-02T09:30:00-04:00", "close": "2026-07-02T16:00:00-04:00"}]
+
+
 def _route(app, path):
     return next(r for r in app.routes if getattr(r, "path", None) == path).endpoint
 
@@ -33,7 +46,7 @@ def test_create_app_exposes_expected_routes():
     paths = {r.path for r in app.routes}
     assert {"/", "/backtest", "/favicon.svg", "/api/meta", "/api/state",
             "/api/nav_history", "/api/orders", "/api/calls", "/api/factors",
-            "/api/alerts"} <= paths
+            "/api/alerts", "/api/health", "/api/reference"} <= paths
     # the shared theme is mounted so both tabs reference one design system
     assert any(getattr(r, "path", "") == "/static" for r in app.routes)
 
@@ -69,6 +82,26 @@ def test_orders_route_uses_live_alpaca_when_client_present():
     # comes from Alpaca (a pending 'new' order the engine never wrote to Postgres)
     assert len(out) == 1 and out[0]["symbol"] == "AAPL" and out[0]["status"] == "new"
     assert _route(app, "/api/meta")()["live"] is True
+
+
+def test_health_route_postgres_only_omits_market():
+    eng = create_engine("sqlite://")
+    db.create_all(eng)
+    app = create_app(eng, live=False)
+    h = _route(app, "/api/health")()
+    # Postgres-only: heartbeat + schedule present, but no live market hours and an estimated date
+    assert "engine" in h and "drift" in h and "alerts_24h" in h
+    assert h["next_rebalance"]["source"] == "estimated" and "market" not in h
+
+
+def test_health_route_refines_with_live_client():
+    eng = create_engine("sqlite://")
+    db.create_all(eng)
+    app = create_app(eng, client=_MarketClient([]), live=True)
+    h = _route(app, "/api/health")()
+    # the live clock fills the market tile; the calendar confirms the holiday-correct rebalance day
+    assert h["market"]["is_open"] is True and h["market"]["next_close"]
+    assert h["next_rebalance"]["source"] == "confirmed" and h["next_rebalance"]["date"] == "2026-07-01"
 
 
 def test_orders_route_postgres_only_when_live_false():

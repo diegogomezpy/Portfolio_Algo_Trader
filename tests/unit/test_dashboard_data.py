@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 from sqlalchemy import create_engine, insert
 
 from dashboard import data
 from engine import db
+
+UTC = timezone.utc
 
 
 def _engine():
@@ -197,6 +199,69 @@ def test_api_slippage_signs_and_aggregate():
     assert by["AAPL"]["slippage_bps"] == -10.0 and by["AAPL"]["slippage_usd"] == -10.0  # favorable
     assert by["MSFT"]["slippage_bps"] == -20.0                              # sell above limit = good
     assert sl["total_slippage_usd"] == -14.0                                # -10 + (-4)
+
+
+def test_held_symbols_union_excludes_options():
+    eng = _engine()
+    _seed(eng)
+    syms = set(data.held_symbols(eng))
+    # positions (AAPL, MSFT) ∪ targets (AAPL, MSFT) ∪ today's factors (AAPL, OTHER) ∪ call underlyings (AAPL, XYZ)
+    assert syms == {"AAPL", "MSFT", "OTHER", "XYZ"}
+    assert all(not data._is_option(s) for s in syms)
+
+
+def test_next_rebalance_estimate_weekend_and_rollover():
+    # mid-month → first weekday of the coming month; Aug 1 2026 is a Saturday → rolls to Mon Aug 3
+    assert data._next_rebalance_estimate(date(2026, 6, 24)) == date(2026, 7, 1)
+    assert data._first_weekday(2026, 8) == date(2026, 8, 3)
+    assert data._next_rebalance_estimate(date(2026, 7, 1)) == date(2026, 8, 3)   # on rebalance day → next
+    assert data._next_rebalance_estimate(date(2026, 12, 15)) == date(2027, 1, 1)  # year rollover
+
+
+def test_api_health_live_schedule_and_drift():
+    eng = _engine()
+    _seed(eng)
+    # 'now' 30s after the latest snapshot (2026-07-01 16:00 UTC) → engine heartbeat is live
+    h = data.api_health(eng, now=datetime(2026, 7, 1, 16, 0, 30, tzinfo=UTC))
+    assert h["engine"]["status"] == "live" and h["engine"]["age_s"] == 30
+    assert h["last_rebalance"]["gate_passed"] is True and h["last_rebalance"]["trigger"] == "monthly"
+    # next rebalance estimate = first weekday of August (07-01 is past July's first trading day)
+    assert h["next_rebalance"] == {"date": "2026-08-03", "source": "estimated",
+                                   "days_until": (date(2026, 8, 3) - date(2026, 7, 1)).days}
+    # drift: MSFT 0.04 vs target 0.05 → one name off-target by >0.5%, L1 from the snapshot
+    assert h["drift"]["l1"] == 0.03 and h["drift"]["n_drifting"] == 1
+    assert h["drift"]["max_name"] == "MSFT" and abs(h["drift"]["max_dev"] + 0.01) < 1e-9
+    assert h["alerts_24h"]["total"] == 1 and h["alerts_24h"]["worst"] == "ok"
+    assert h["freshness"]["factors_date"] == "2026-07-01"
+    assert "market" not in h          # market hours are layered on by the route, not here
+
+
+def test_api_health_heartbeat_thresholds():
+    eng = _engine()
+    _seed(eng)                                                    # latest snapshot ts = 2026-07-01 16:00
+    assert data.api_health(eng, now=datetime(2026, 7, 1, 16, 5, tzinfo=UTC))["engine"]["status"] == "stale"
+    assert data.api_health(eng, now=datetime(2026, 7, 1, 16, 20, tzinfo=UTC))["engine"]["status"] == "down"
+
+
+def test_api_health_alert_severity_and_window():
+    eng = _engine()
+    with eng.begin() as c:
+        c.execute(insert(db.alerts).values(ts=datetime(2026, 7, 1, 15), alert_type="risk_gate_blocked",
+                  message="leverage breach", delivered=True))          # error, in-window
+        c.execute(insert(db.alerts).values(ts=datetime(2026, 7, 1, 15), alert_type="drift_warning",
+                  message="drift high", delivered=True))                # warn, in-window
+        c.execute(insert(db.alerts).values(ts=datetime(2026, 6, 1, 15), alert_type="error_old",
+                  message="stale", delivered=True))                     # >24h → excluded
+    a = data.api_health(eng, now=datetime(2026, 7, 1, 16, tzinfo=UTC))["alerts_24h"]
+    assert a == {"total": 2, "errors": 1, "warnings": 1, "worst": "error"}
+
+
+def test_api_health_empty_is_safe():
+    h = data.api_health(_engine(), now=datetime(2026, 7, 1, 12, tzinfo=UTC))
+    assert h["engine"]["status"] == "down" and h["engine"]["age_s"] is None
+    assert h["last_rebalance"] is None and h["drift"]["l1"] is None
+    assert h["next_rebalance"]["date"] and h["alerts_24h"]["total"] == 0
+    assert h["freshness"]["factors_date"] is None
 
 
 def test_empty_db_is_safe():
