@@ -238,9 +238,10 @@ this machine** so the URL doesn't lapse (~180 days default). To take it offline:
 | **Resume after a killswitch** | `sudo systemctl start sharpe-eod sharpe-watchdog.timer` |
 | **Stop everything** | `sudo systemctl stop sharpe-watchdog.timer sharpe-eod sharpe-dashboard` (stop the **watchdog first** or it revives them in ≤5 min; SIGTERM cancels open orders) |
 
-**Cadence reminder:** `--serve` only *rebalances* on the **first trading day of the month**; on
-other trading days it just reconciles + monitors (+ the covered-call safety pass). To trade
-sooner, use the "force a rebalance now" row.
+**Cadence reminder:** `--serve` *rebalances* on the **first trading day of the month**; if that
+run is missed/blocked it **catches up** on the next trading day(s) until one lands (never twice a
+month). Other trading days just reconcile + monitor (+ the covered-call safety pass). To trade
+sooner (e.g. a fresh mid-month launch), use the "force a rebalance now" row.
 
 **Cost:** e2-small ≈ \$13–15/mo + ~30 GB pd-balanced ≈ \$1.2/mo + minimal egress/storage. Stop
 the VM (`gcloud compute instances stop $VM`) to pause billing (engine stops too).

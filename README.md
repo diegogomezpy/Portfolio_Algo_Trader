@@ -60,6 +60,30 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 
 ---
 
+## Monitoring & operations
+
+A live **dashboard** (FastAPI + one dark-themed page) serves current state from Postgres and
+self-updates via an in-process Alpaca→Postgres monitor:
+
+- **Overview** — NAV, day P&L, leverage gauge, cash, premium, and a global health bar (engine
+  heartbeat, market clock, next rebalance, risk gate, drift, alerts).
+- **Portfolio** — holdings vs target with drift, a nested **sector/ticker donut** + concentration
+  metrics (HHI, effective names, sector caps), the **factor tilt** (book-weighted
+  Quality/Value/Momentum/Low-Vol vs the universe), covered calls, and recent activity.
+- **Performance** — growth vs SPY / covered-call-ETF benchmarks, a **Risk** sub-tab (drawdown,
+  volatility, 1-day 95% VaR, rolling volatility, leverage), and execution slippage.
+- **Backtest** — the static walk-forward + covered-call / variance-risk-premium analytics.
+
+Deployed on a GCP VM as `systemd` services, shared read-only behind a password (Tailscale Funnel
++ Caddy basic auth) — see [deploy/DEPLOY.md](deploy/DEPLOY.md).
+
+**Safety controls.** The monthly rebalance **catches up** automatically if a scheduled run is
+missed/blocked (never twice a month). An **emergency killswitch**
+(`scripts/killswitch.py --halt | --flatten`) stops the engine and cancels orders, or liquidates
+the whole book to cash — see [docs/CLI.md](docs/CLI.md).
+
+---
+
 ## Repository layout
 
 ```
@@ -67,8 +91,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 ├── docs/            # SPEC, ARCHITECTURE, DECISIONS, BUILD_ORDER, CLAUDE
 ├── engine/          # ingest, factors, optimize, covered_calls, execute,
 │                    #   risk, reconcile, monitor, alpaca_client, config, db
-├── scripts/         # backfill, init_db, run_eod, run_dashboard, backtest
+├── scripts/         # backfill, init_db, run_eod, run_dashboard, backtest, killswitch
 ├── dashboard/       # FastAPI backend + single-page HTML dashboard
+├── deploy/          # GCP VM systemd units, update/backup/watchdog, Tailscale funnel
 ├── tests/           # unit (per module) + integration (synthetic pipeline)
 ├── config/          # settings.yaml — all tuneable parameters
 └── requirements.txt

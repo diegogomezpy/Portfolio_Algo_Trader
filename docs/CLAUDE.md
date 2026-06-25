@@ -69,8 +69,9 @@ sharpe-engine/
 │   ├── backtest.py            ← walk-forward equity backtest (Phase 2 ✅)
 │   ├── backtest_covered_calls.py ← covered-call overlay + real-premium/VRP backtest (Phase 2b ✅, D33)
 │   ├── build_dashboard.py     ← regenerate the Backtest-tab analytics (Phase 5 ✅)
-│   ├── run_eod.py             ← rebalance driver: --once / --serve (Phase 3 ✅)
-│   └── run_dashboard.py       ← dashboard entry point, terminal 2 (Phase 5 ✅)
+│   ├── run_eod.py             ← rebalance driver: --once / --serve, monthly catch-up (Phase 3 ✅)
+│   ├── run_dashboard.py       ← dashboard entry point, terminal 2 (Phase 5 ✅)
+│   └── killswitch.py          ← emergency halt / flatten (cancel orders / liquidate to cash)
 ├── tests/
 │   ├── unit/                  ← one file per engine module
 │   └── integration/           ← full pipeline tests on synthetic data
@@ -92,7 +93,7 @@ sharpe-engine/
 | Factor weights | Equal weight initially, adjust after backtesting |
 | Objective | Max Sharpe, capital preservation mandate |
 | Constraints | Long-only, sector cap, min position size, leverage capped at `max_leverage` (risk gate) |
-| Rebalancing | Monthly only — first trading day; equities + covered calls together (DECISIONS D31). Drift is telemetry, not a trigger |
+| Rebalancing | Monthly only — first trading day (catches up on the next trading day if a run is missed/blocked); equities + covered calls together (DECISIONS D31). Drift is telemetry, not a trigger |
 | Covered calls | Delta = 0.30 (D29), 30-45 DTE, rewritten monthly — no mid-cycle roll (D31) |
 | Covered call rebalance | Close all calls before monthly rebalance, rewrite fresh after new weights set |
 | Earnings policy | Close calls before earnings date, rewrite after announcement |

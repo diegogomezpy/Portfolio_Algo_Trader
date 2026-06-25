@@ -172,6 +172,39 @@ The Alpaca client is **paper-only** regardless of `--env`.
 | `--skip-ingest` | off | Reuse the existing snapshot data instead of pulling first (`--once`). |
 | `--no-overlay` | off | Equities only — skip the covered-call close/write legs. |
 
+**Rebalance cadence + catch-up (`--serve`).** The scheduler rebalances on the **first trading
+day of the month**; if that run is missed/blocked (process down, Alpaca/data hiccup, or a
+risk-gate block), it **catches up on the next trading day(s) until one lands** — anchored on
+"no approved rebalance yet this month", so it never rebalances twice a month. A rebalance that
+raises is caught, alerted, and retried next day. To establish the book *now* (a fresh launch
+mid-month, or to skip waiting for the catch-up), run a one-shot during market hours:
+`scripts/run_eod.py --once --force --env paper`.
+
+---
+
+## `scripts/killswitch.py` — emergency halt / flatten
+
+One auditable command for emergencies (instead of juggling `systemctl` flags). Both actions
+record an alert (dashboard + `alerts` table); the Alpaca de-risk runs even if `systemctl`/sudo
+is unavailable. Orders are DAY, so a flatten while the market is closed fills next session.
+
+```bash
+# Halt: stop the engine + watchdog timer (so it stays down), cancel all open orders.
+./.venv/bin/python scripts/killswitch.py --halt --env paper
+
+# Flatten: halt AND liquidate every position to cash (equities + short options).
+./.venv/bin/python scripts/killswitch.py --flatten --env paper        # prompts: type FLATTEN
+
+# Resume after either:
+sudo systemctl start sharpe-eod sharpe-watchdog.timer
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--halt` / `--flatten` | — | **Required, mutually exclusive.** Halt (cancel orders, hold positions) or flatten (also sell to cash). |
+| `--env {paper,live}` | — | **Required.** Secrets file to load. |
+| `--yes` | off | Skip the typed `FLATTEN` confirmation (scripted/urgent use). |
+
 ---
 
 ## `scripts/run_dashboard.py` — live dashboard server
