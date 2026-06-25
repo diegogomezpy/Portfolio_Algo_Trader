@@ -233,7 +233,10 @@ this machine** so the URL doesn't lapse (~180 days default). To take it offline:
 | **Force a rebalance now** | `sudo systemctl stop sharpe-eod && ./.venv/bin/python scripts/run_eod.py --once --force --env paper && sudo systemctl start sharpe-eod` |
 | **Manual backup** | `SHARPE_BACKUP_BUCKET="$PROJECT-sharpe-backups" bash deploy/backup.sh` |
 | **Restore a backup** | `gcloud storage cp gs://$BUCKET/pg/<file>.sql.gz - | gunzip | psql sharpe_engine` |
-| **Stop everything** | `sudo systemctl stop sharpe-eod sharpe-dashboard` (SIGTERM cancels open orders first) |
+| **🛑 Halt (killswitch)** | `./.venv/bin/python scripts/killswitch.py --halt --env paper` — stops engine **+ watchdog** and cancels open orders; positions left as held |
+| **🛑 Flatten (killswitch)** | `./.venv/bin/python scripts/killswitch.py --flatten --env paper` — halt **and** liquidate every position to cash (type `FLATTEN`, or `--yes`) |
+| **Resume after a killswitch** | `sudo systemctl start sharpe-eod sharpe-watchdog.timer` |
+| **Stop everything** | `sudo systemctl stop sharpe-watchdog.timer sharpe-eod sharpe-dashboard` (stop the **watchdog first** or it revives them in ≤5 min; SIGTERM cancels open orders) |
 
 **Cadence reminder:** `--serve` only *rebalances* on the **first trading day of the month**; on
 other trading days it just reconciles + monitors (+ the covered-call safety pass). To trade

@@ -211,6 +211,25 @@ class Broker:
         log.info("cancelled all open orders", extra={"count": n})
         return n
 
+    def close_all_positions(self, *, cancel_orders: bool = True) -> int:
+        """Liquidate **every** open position to cash; return how many closes Alpaca acknowledged.
+
+        The emergency flatten (``scripts/killswitch.py --flatten``): submits a closing market
+        order for each open position — equities and short options alike — and, with
+        ``cancel_orders``, cancels working orders first. Orders are DAY, so a flatten while the
+        market is closed fills at the next session. Not part of the normal cycle.
+
+        Raises:
+            AlpacaAPIError: if the request fails.
+        """
+        try:
+            result = self._trading.close_all_positions(cancel_orders=cancel_orders)
+        except APIError as exc:
+            raise AlpacaAPIError(_NO_SYMBOL, "close_all_positions", str(exc)) from exc
+        n = len(result or [])
+        log.warning("liquidated all positions", extra={"count": n, "cancel_orders": cancel_orders})
+        return n
+
     @staticmethod
     def _side(side: str) -> OrderSide:
         s = str(side).lower()

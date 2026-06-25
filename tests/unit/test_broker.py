@@ -62,6 +62,11 @@ class _FakeTrading:
         self.cancel_all_calls += 1
         return [object(), object()]                     # two acks
 
+    def close_all_positions(self, cancel_orders=False):
+        self.close_all_calls = getattr(self, "close_all_calls", 0) + 1
+        self.close_all_cancel = cancel_orders
+        return [object(), object(), object()]           # three positions closed
+
 
 class _BoomTrading:
     """Every call fails the way Alpaca signals an API error."""
@@ -76,6 +81,9 @@ class _BoomTrading:
         raise APIError("boom")
 
     def cancel_orders(self):
+        raise APIError("boom")
+
+    def close_all_positions(self, cancel_orders=False):
         raise APIError("boom")
 
 
@@ -123,6 +131,14 @@ def test_get_cancel_and_cancel_all():
     b.cancel_order(out["id"])
     assert fake.cancelled == [out["id"]]
     assert b.cancel_all_orders() == 2 and fake.cancel_all_calls == 1
+
+
+def test_close_all_positions_liquidates_and_cancels():
+    fake = _FakeTrading()
+    n = Broker(client=fake).close_all_positions()                 # cancel_orders defaults True
+    assert n == 3 and fake.close_all_calls == 1 and fake.close_all_cancel is True
+    with pytest.raises(AlpacaAPIError):                           # API failure surfaces as AlpacaAPIError
+        Broker(client=_BoomTrading()).close_all_positions()
 
 
 def test_submit_option_order_sell_to_open_limit():
