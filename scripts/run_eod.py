@@ -198,8 +198,10 @@ def run_cycle(
 
     mon = monitor.monitor_once(client, db_engine, target_weights=weights.to_dict())
     if alert:
-        alert(f"rebalance {as_of.isoformat()} complete: {report.submitted} submitted, "
-              f"{report.filled} filled, {n_closed} calls closed, {n_written} written")
+        r = report
+        alert(f"rebalance {as_of.isoformat()} complete — equity: {r.filled}/{r.submitted} orders "
+              f"filled ({r.partial} partial, {r.rejected} rejected, {r.deferred} deferred); "
+              f"covered calls: {n_closed} closed, {n_written} written")
     log.info("cycle executed", extra={"date": as_of.isoformat(), "closed": n_closed,
                                       "written": n_written, **vars(report)})
     return CycleResult("executed", weights, rc, report, mon,

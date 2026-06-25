@@ -158,6 +158,12 @@ alerts:
   staleness_threshold_pct: 0.10
 
 dashboard:
+  # Public dashboard (Tailscale Funnel + Caddy basic auth). URL + user are NOT secret and feed
+  # the link in every alert email; the password is read from the DASHBOARD_PASSWORD env var
+  # (never committed) and appended so you can click through and log in. Blank public_url omits
+  # the footer.
+  public_url: "https://sharpe-engine.tailc7136e.ts.net"
+  public_user: "viewer"
   # Track-record + backtest benchmarks (defined in engine/benchmarks.py with descriptions).
   # SPY = S&P 500 beta; BXMD = CBOE S&P 500 30-delta BuyWrite (the direct analog of our 0.30Δ
   # covered calls, from CBOE's CDN); BXRD = CBOE Russell 2000 30-delta BuyWrite (small-cap

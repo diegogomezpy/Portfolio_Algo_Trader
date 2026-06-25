@@ -66,11 +66,11 @@ def make_alerter(db_engine, settings=None, *, send: Optional[Callable] = None,
             log.info("alert (dry-run)", extra={"type": atype, "text": message})
         else:
             try:
-                sender(message, atype, settings)
+                sender(_email_body(message, db_engine, settings), atype, settings)
                 delivered = True
             except Exception as exc:  # noqa: BLE001 — alerting must never break the pipeline
                 log.error("alert send failed", extra={"type": atype, "error": str(exc)})
-        _record(db_engine, atype, message, delivered)
+        _record(db_engine, atype, message, delivered)   # record the original (terse) message
 
     return alerter
 
@@ -84,6 +84,76 @@ def _record(db_engine, alert_type: str, message: str, delivered: bool) -> None:
         conn.execute(insert(alerts_t).values(
             ts=datetime.now(timezone.utc), alert_type=alert_type,
             message=message, delivered=delivered))
+
+
+def _usd(v) -> str:
+    try:
+        return ("-$" if float(v) < 0 else "$") + f"{abs(float(v)):,.0f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _portfolio_context(db_engine) -> str:
+    """A compact current-book snapshot for the email body (NAV, leverage, drift, last rebalance).
+
+    Best-effort and read-only: returns ``""`` if the DB is empty or any read fails — alerts must
+    never break the pipeline, so this can only *add* detail, never throw.
+    """
+    if db_engine is None:
+        return ""
+    try:
+        from sqlalchemy import desc, select
+        from engine.db import rebalance_log, snapshots
+        with db_engine.connect() as conn:
+            snap = conn.execute(
+                select(snapshots.c.nav, snapshots.c.cash, snapshots.c.weights,
+                       snapshots.c.positions, snapshots.c.drift)
+                .order_by(desc(snapshots.c.ts)).limit(1)).first()
+            reb = conn.execute(
+                select(rebalance_log.c.ts, rebalance_log.c.trigger_reason)
+                .where(rebalance_log.c.risk_gate_passed.is_(True))
+                .order_by(desc(rebalance_log.c.ts)).limit(1)).first()
+        if not snap:
+            return ""
+        nav, cash, weights, positions, drift = snap
+        weights, positions = (weights or {}), (positions or {})
+        lev = sum(float(v) for s, v in weights.items() if len(str(s)) <= 5)   # equity legs only
+        npos = sum(1 for s, q in positions.items() if q and len(str(s)) <= 5)
+        lines = ["— Portfolio —",
+                 f"  NAV         {_usd(nav)}",
+                 f"  Leverage    {lev:.2f}x  (gross {_usd((nav or 0) * lev)})",
+                 f"  Cash        {_usd(cash)}",
+                 f"  Positions   {npos}",
+                 f"  Drift (L1)  {('%.1f%%' % (drift * 100)) if drift is not None else '—'}"]
+        if reb:
+            lines.append(f"  Last rebal  {str(reb[0])[:10]}  ({reb[1] or 'monthly'})")
+        return "\n".join(lines)
+    except Exception:  # noqa: BLE001 — context is optional; never let it break the alert
+        return ""
+
+
+def _dashboard_footer(settings) -> str:
+    """Link + login for the public dashboard. URL/user come from ``settings.dashboard`` (not
+    secret); the password is read from the ``DASHBOARD_PASSWORD`` env var (never committed) and
+    appended when present. Returns ``""`` when no ``public_url`` is configured."""
+    d = getattr(settings, "dashboard", None)
+    url = str(getattr(d, "public_url", "") or "").strip()
+    if not url:
+        return ""
+    user = str(getattr(d, "public_user", "viewer") or "viewer").strip()
+    pw = os.environ.get("DASHBOARD_PASSWORD", "").strip()
+    login = f"  login: {user} / {pw}" if pw else f"  login: {user}"
+    return f"— Dashboard —\n  {url}\n{login}"
+
+
+def _email_body(message: str, db_engine, settings) -> str:
+    """The full alert email: the event message, then the portfolio snapshot, then the dashboard
+    link. Each section is best-effort — a missing DB or unconfigured dashboard just drops it."""
+    parts = [message]
+    for extra in (_portfolio_context(db_engine), _dashboard_footer(settings)):
+        if extra:
+            parts.append(extra)
+    return "\n\n".join(parts)
 
 
 def _send_email(message: str, subject: str, settings) -> None:

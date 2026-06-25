@@ -5,7 +5,10 @@ Fake SMTP transport + in-memory sqlite; no network.
 
 from __future__ import annotations
 
-from sqlalchemy import create_engine, select
+from datetime import datetime
+from types import SimpleNamespace
+
+from sqlalchemy import create_engine, insert, select
 
 from engine import alerts, db
 
@@ -68,3 +71,40 @@ def test_send_failure_records_undelivered_and_does_not_raise():
     alert("reconcile blocked: Alpaca unreachable")              # must not raise
     rows = _rows(eng)
     assert rows[0]["alert_type"] == "system_error" and rows[0]["delivered"] is False
+
+
+def _settings():
+    return SimpleNamespace(dashboard=SimpleNamespace(
+        public_url="https://sharpe-engine.example.ts.net", public_user="viewer"))
+
+
+def test_email_body_adds_portfolio_snapshot_and_dashboard_link(monkeypatch):
+    eng = _engine()
+    with eng.begin() as c:
+        c.execute(insert(db.snapshots).values(
+            ts=datetime(2026, 7, 1, 20, 11), nav=206_540.0, cash=11_230.0, last_equity=204_900.0,
+            weights={"AAPL": 0.25, "MSFT": 0.25}, positions={"AAPL": 100, "MSFT": 50}, drift=0.04))
+        c.execute(insert(db.rebalance_log).values(
+            ts=datetime(2026, 7, 1, 20, 10), trigger_reason="monthly",
+            target_weights={"AAPL": 0.25}, risk_gate_passed=True, risk_gate_reason="ok"))
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "s3cret")
+    sent = []
+    alert = alerts.make_alerter(eng, _settings(), send=lambda body, *_: sent.append(body), dry_run=False)
+    alert("rebalance 2026-07-01 complete — equity: 2/2 orders filled")
+    body = sent[0]
+    assert "rebalance 2026-07-01 complete" in body                       # the event message
+    assert "NAV" in body and "$206,540" in body                          # portfolio snapshot
+    assert "0.50x" in body and "Positions   2" in body and "4.0%" in body
+    assert "Last rebal  2026-07-01" in body
+    assert "https://sharpe-engine.example.ts.net" in body                # dashboard link…
+    assert "viewer / s3cret" in body                                     # …with the login
+    # the DB still stores the terse original, not the enriched email body
+    assert _rows(eng)[0]["message"] == "rebalance 2026-07-01 complete — equity: 2/2 orders filled"
+
+
+def test_dashboard_footer_omits_password_when_unset(monkeypatch):
+    monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
+    foot = alerts._dashboard_footer(_settings())
+    assert "https://sharpe-engine.example.ts.net" in foot and "login: viewer" in foot
+    assert " / " not in foot                                             # no password leaked
+    assert alerts._dashboard_footer(SimpleNamespace()) == ""             # no public_url → no footer
