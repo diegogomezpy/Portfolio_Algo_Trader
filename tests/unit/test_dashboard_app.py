@@ -6,7 +6,9 @@ against an injected engine and exposes the documented routes (no httpx/TestClien
 
 from __future__ import annotations
 
-from sqlalchemy import create_engine
+from datetime import datetime
+
+from sqlalchemy import create_engine, insert
 
 from dashboard.app import create_app
 from engine import db
@@ -46,7 +48,7 @@ def test_create_app_exposes_expected_routes():
     paths = {r.path for r in app.routes}
     assert {"/", "/backtest", "/favicon.svg", "/api/meta", "/api/state",
             "/api/nav_history", "/api/orders", "/api/calls", "/api/factors",
-            "/api/alerts", "/api/health", "/api/reference"} <= paths
+            "/api/alerts", "/api/health", "/api/reference", "/api/risk"} <= paths
     # the shared theme is mounted so both tabs reference one design system
     assert any(getattr(r, "path", "") == "/static" for r in app.routes)
 
@@ -103,6 +105,19 @@ def test_health_route_refines_with_live_client():
     # the live clock fills the market tile; the calendar confirms the holiday-correct rebalance day
     assert h["market"]["is_open"] is True and h["market"]["next_close"]
     assert h["next_rebalance"]["source"] == "confirmed" and h["next_rebalance"]["date"] == "2026-07-01"
+
+
+def test_risk_route_postgres_only():
+    eng = create_engine("sqlite://")
+    db.create_all(eng)
+    with eng.begin() as c:
+        for i, nv in enumerate([100_000.0, 101_000.0, 99_000.0, 102_000.0]):
+            c.execute(insert(db.snapshots).values(
+                ts=datetime(2026, 6, 1 + i, 16), nav=nv, cash=0.0, last_equity=100_000.0,
+                weights={}, positions={}, drift=0.0))
+    r = _route(create_app(eng, live=False), "/api/risk")()
+    assert r["available"] and r["days"] == 4 and "drawdown" in r
+    assert r["max_drawdown"] < 0 and r["var95_1d_pct"] > 0
 
 
 def test_orders_route_postgres_only_when_live_false():

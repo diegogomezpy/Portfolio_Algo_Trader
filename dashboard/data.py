@@ -391,6 +391,105 @@ def api_track_record(db_engine) -> dict:
             "norm": norm, **stats}
 
 
+# ====================================================================== #
+# Risk analytics — drawdown / volatility / VaR from the equity curve
+# ====================================================================== #
+_Z95 = 1.6448536269514722   # one-sided 95% standard-normal quantile (parametric VaR)
+
+
+def _percentile(asc: list[float], q: float):
+    """Linearly-interpolated quantile ``q`` ∈ [0,1] of an ascending list (``None`` if empty)."""
+    if not asc:
+        return None
+    if len(asc) == 1:
+        return asc[0]
+    idx = q * (len(asc) - 1)
+    lo, hi = math.floor(idx), math.ceil(idx)
+    if lo == hi:
+        return asc[int(idx)]
+    return asc[lo] + (asc[hi] - asc[lo]) * (idx - lo)
+
+
+def _drawdown_series(navs: list[float]) -> tuple[list[float], float, float, int, int]:
+    """Underwater curve ``vᵢ/peakᵢ − 1`` (≤ 0). Returns (series, current, max, max_idx, days_in_dd)."""
+    dd: list[float] = []
+    peak = navs[0] if navs else 0.0
+    mdd, mdd_idx = 0.0, 0
+    for i, v in enumerate(navs):
+        peak = max(peak, v)
+        d = (v / peak - 1.0) if peak else 0.0
+        dd.append(d)
+        if d < mdd:
+            mdd, mdd_idx = d, i
+    cur = dd[-1] if dd else 0.0
+    dci = 0
+    for d in reversed(dd):           # consecutive trailing days below the high-water mark
+        if d < -1e-9:
+            dci += 1
+        else:
+            break
+    return dd, cur, mdd, mdd_idx, dci
+
+
+def _rolling_vol(rets: list[float], window: int) -> list[float | None]:
+    """Annualized volatility over a trailing ``window`` of daily returns; ``None`` until it fills.
+
+    Chosen over a rolling *Sharpe* for the risk view: annualized Sharpe on a short window is wildly
+    unstable (a near-flat stretch sends it to ±∞), whereas rolling vol is bounded, always positive,
+    and reads directly as the book's volatility regime — it lifts as the equity curve gets choppy.
+    """
+    out: list[float | None] = []
+    for i in range(len(rets)):
+        if i + 1 < window:
+            out.append(None)
+            continue
+        w = rets[i + 1 - window: i + 1]
+        mean = sum(w) / len(w)
+        sd = math.sqrt(sum((r - mean) ** 2 for r in w) / (len(w) - 1)) if len(w) > 1 else 0.0
+        out.append(sd * math.sqrt(_TRADING_DAYS))
+    return out
+
+
+def api_risk(db_engine, *, window: int = 10) -> dict:
+    """Risk analytics from the ``snapshots`` equity curve (Postgres-only, unit-testable).
+
+    Everything derives from the daily NAV series: an underwater (drawdown) curve with the current
+    and worst peak-to-trough decline, annualized/daily volatility, a 1-day 95% VaR (both the
+    parametric-normal estimate and the empirical 5th-percentile of daily returns) plus its CVaR
+    tail average, a since-inception Sharpe, and a rolling Sharpe series. ``available`` is False
+    until the monitor writes snapshots; ``mature`` gates the noisy annualized figures (< ~10 days).
+    """
+    with db_engine.connect() as conn:
+        rows = conn.execute(
+            select(db.snapshots.c.ts, db.snapshots.c.nav).order_by(db.snapshots.c.ts)).all()
+    rows = [(ts, nav) for ts, nav in rows if nav is not None]
+    if not rows:
+        return {"available": False, "days": 0}
+    dates, navs = _daily_nav(rows)
+    stats = series_stats(navs)
+    dd, cur_dd, max_dd, mdd_idx, dci = _drawdown_series(navs)
+    rets = [navs[i] / navs[i - 1] - 1 for i in range(1, len(navs)) if navs[i - 1]]
+    nav_now = navs[-1]
+    daily_vol = (stats["ann_vol"] / math.sqrt(_TRADING_DAYS)) if stats["ann_vol"] is not None else None
+    var_param = (_Z95 * daily_vol) if daily_vol is not None else None
+    asc = sorted(rets)
+    q05 = _percentile(asc, 0.05) if asc else None        # 5th-pct daily return (≤ 0 in a loss)
+    var_hist = (-q05) if (q05 is not None and q05 < 0) else 0.0
+    tail = [r for r in asc if q05 is not None and r <= q05]
+    cvar = (-sum(tail) / len(tail)) if tail else var_hist
+    roll = [None] + _rolling_vol(rets, window)            # align to dates (first day has no return)
+    return {
+        "available": True, "mature": len(dates) >= 10, "days": len(dates),
+        "dates": dates, "drawdown": dd, "rolling_vol": roll, "rolling_window": window,
+        "current_drawdown": cur_dd, "max_drawdown": max_dd, "max_drawdown_date": dates[mdd_idx],
+        "days_in_drawdown": dci, "peak_nav": max(navs), "nav_now": nav_now,
+        "ann_vol": stats["ann_vol"], "daily_vol": daily_vol, "ann_return": stats["ann_return"],
+        "sharpe": stats["sharpe"], "var95_1d_pct": var_param,
+        "var95_1d_usd": (var_param * nav_now) if var_param is not None else None,
+        "hist_var95_1d_pct": var_hist, "cvar95_1d_pct": cvar,
+    }
+
+
 def api_slippage(db_engine) -> dict:
     """Execution quality from filled orders: realized fill vs the intended (limit/mid) price.
 

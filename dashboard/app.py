@@ -260,6 +260,11 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
     def slippage() -> dict:
         return data.api_slippage(db_engine)
 
+    @app.get("/api/risk")
+    def risk() -> dict:
+        """Drawdown / volatility / VaR analytics from the equity curve (Postgres-only)."""
+        return data.api_risk(db_engine)
+
     @app.get("/api/reference")
     def reference() -> dict:
         """Static instrument labels {symbol: {name, sector, industry}} for the held names.

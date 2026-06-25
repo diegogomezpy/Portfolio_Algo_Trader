@@ -180,6 +180,45 @@ def test_api_track_record_empty():
     assert tr["available"] is False and tr["dates"] == [] and tr["premium_collected"] == 0.0
 
 
+def _seed_curve(eng, navs):
+    with eng.begin() as c:
+        for i, nv in enumerate(navs):
+            c.execute(insert(db.snapshots).values(
+                ts=datetime(2026, 6, 1 + i, 16), nav=float(nv), cash=0.0, last_equity=float(navs[0]),
+                weights={}, positions={}, drift=0.0))
+
+
+def test_api_risk_drawdown_and_var():
+    eng = _engine()
+    _seed_curve(eng, [100, 110, 105, 120, 90, 100])     # peak 120, trough 90, recovering to 100
+    r = data.api_risk(eng)
+    assert r["available"] and r["days"] == 6 and r["mature"] is False
+    assert abs(r["max_drawdown"] - (-0.25)) < 1e-9 and r["max_drawdown_date"] == r["dates"][4]
+    assert abs(r["current_drawdown"] - (100 / 120 - 1)) < 1e-9       # still below the 120 high-water mark
+    assert r["days_in_drawdown"] == 2 and r["peak_nav"] == 120
+    assert len(r["drawdown"]) == 6 and r["drawdown"][0] == 0.0
+    # volatility / VaR are populated even pre-maturity; parametric VaR scales by today's NAV
+    assert r["ann_vol"] > 0 and r["daily_vol"] > 0 and r["var95_1d_pct"] > 0
+    assert abs(r["var95_1d_usd"] - r["var95_1d_pct"] * r["nav_now"]) < 1e-6
+    assert r["hist_var95_1d_pct"] >= 0 and r["cvar95_1d_pct"] >= r["hist_var95_1d_pct"] - 1e-9
+
+
+def test_api_risk_rolling_vol_alignment_and_mature():
+    eng = _engine()
+    _seed_curve(eng, [100 + i + (i % 3) for i in range(12)])   # 12 days → mature; some variation
+    r = data.api_risk(eng)
+    assert r["mature"] is True and r["rolling_window"] == 10
+    assert len(r["rolling_vol"]) == r["days"] and r["rolling_vol"][0] is None          # aligned to dates
+    assert r["rolling_vol"][1] is None
+    vals = [v for v in r["rolling_vol"] if v is not None]
+    assert vals and all(v >= 0 for v in vals)                                          # vol is non-negative
+
+
+def test_api_risk_empty_is_safe():
+    r = data.api_risk(_engine())
+    assert r["available"] is False and r["days"] == 0
+
+
 def test_api_slippage_signs_and_aggregate():
     eng = _engine()
     with eng.begin() as c:

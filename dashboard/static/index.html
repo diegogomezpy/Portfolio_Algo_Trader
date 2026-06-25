@@ -285,6 +285,7 @@
   <div class="wrap">
     <div class="subtabs" data-group="performance">
       <button class="subtab active" data-sub="returns">Returns</button>
+      <button class="subtab" data-sub="risk">Risk</button>
       <button class="subtab" data-sub="execution">Execution</button>
     </div>
     <div class="subview" id="sub-returns">
@@ -303,6 +304,23 @@
           <h2>Benchmark comparison <span class="panel-sub">paper, since go-live</span></h2>
           <div class="body" id="trackbench"></div>
           <div id="benchdesc"></div>
+        </div>
+      </div>
+    </div>
+    <div class="subview" id="sub-risk" style="display:none">
+      <div class="se-panel" id="riskempty" style="display:none;text-align:center;color:var(--muted);padding:38px 20px">
+        No risk history yet — this fills in automatically once the strategy starts trading and the
+        monitor records NAV snapshots. (Drawdown, volatility and VaR are derived from the equity curve.)
+      </div>
+      <div id="riskbody" style="display:none">
+        <div class="kpis" id="riskkpis"></div>
+        <div class="se-panel span2" style="margin-top:16px">
+          <h2>Drawdown <span class="panel-sub" id="ddsub"></span></h2>
+          <div id="ddchart"></div>
+        </div>
+        <div class="se-panel span2" style="margin-top:16px">
+          <h2>Rolling volatility <span class="panel-sub" id="rvsub"></span></h2>
+          <div id="rvchart"></div>
         </div>
       </div>
     </div>
@@ -373,7 +391,7 @@ document.addEventListener("mousemove", e=>{ if(tipEl) posTip(e); });
 
 // ---- two-level nav: top tabs + sub-tabs -----------------------------------
 const VIEWS = ["overview","portfolio","performance","backtest"];
-const SUBS  = {portfolio:["holdings","activity"], performance:["returns","execution"]};
+const SUBS  = {portfolio:["holdings","activity"], performance:["returns","risk","execution"]};
 let activeView = "overview";
 const activeSub = {portfolio:"holdings", performance:"returns"};
 
@@ -427,9 +445,11 @@ function trackChart(dates, series){
 }
 
 async function loadPerformance(){
-  const [tr, slip] = await Promise.all([get("/api/track_record"), get("/api/slippage")]);
+  const [tr, slip, risk, st] = await Promise.all(
+    ["/api/track_record","/api/slippage","/api/risk","/api/state"].map(get));
   lastFetch = Date.now(); tickFreshness();
   renderReturns(tr, slip);     // Returns sub-view
+  renderRisk(risk, st);        // Risk sub-view
   renderExecution(slip);       // Execution sub-view
 }
 
@@ -493,6 +513,89 @@ function renderExecution(slip){
   } else {
     $("slippage").innerHTML = '<div class="se-empty">No filled limit orders yet — this compares each fill to its intended (mid) price once the strategy trades.</div>';
   }
+}
+
+// ---- Risk sub-view: drawdown / volatility / VaR / leverage ----------------
+function renderRisk(risk, st){
+  if(!risk || !risk.available){ $("riskempty").style.display="block"; $("riskbody").style.display="none"; return; }
+  $("riskempty").style.display="none"; $("riskbody").style.display="block";
+  const star = risk.mature ? "" : "*";
+  const lev = st ? st.leverage : null, cap = META.leverage_cap||2.0, over = lev!=null && lev>cap+1e-9;
+  const dci = risk.days_in_drawdown||0;
+  const ddSub = dci>0 ? `${dci} day${dci>1?'s':''} below high-water mark` : "at a new high";
+  const varTip = `Parametric 1-day Value-at-Risk: with 95% confidence the one-day loss stays under this `+
+    `(≈ 1.65 × daily σ). Empirical 5th-pct VaR ${pct(risk.hist_var95_1d_pct)} · expected shortfall (CVaR) ${pct(risk.cvar95_1d_pct)}.`;
+  $("riskkpis").innerHTML = [
+    kpi("Max drawdown", `<span class="${sgn(risk.max_drawdown)}">${pct(risk.max_drawdown)}</span>`,
+        `worst, on ${String(risk.max_drawdown_date).slice(5)}`,
+        "Largest peak-to-trough decline of account equity since inception."),
+    kpi("Current drawdown", `<span class="${risk.current_drawdown<-1e-9?'neg':'mut'}">${pct(risk.current_drawdown)}</span>`, ddSub,
+        "How far below the running high-water mark the book sits right now."),
+    kpi("Volatility"+star, risk.mature&&risk.ann_vol!=null?pct(risk.ann_vol):"—",
+        risk.daily_vol!=null?`${pct(risk.daily_vol,2)} / day`:"needs ≥10 days",
+        "Annualized standard deviation of daily returns (the per-day figure is in the sub-line)."),
+    kpi("1-day VaR (95%)", risk.var95_1d_pct!=null?`<span class="neg">−${pct(risk.var95_1d_pct)}</span>`:"—",
+        risk.var95_1d_usd!=null?`≈ ${usd(risk.var95_1d_usd)} at today's NAV`:"parametric", varTip),
+    kpi("Live Sharpe"+star, risk.mature&&risk.sharpe!=null?risk.sharpe.toFixed(2):"—",
+        risk.mature?"annualized, since go-live":"needs ≥10 days",
+        "Annualized return ÷ annualized volatility since inception."),
+    `<div class="se-kpi kpi-lev" data-tip="Gross equity exposure ÷ account equity, against the risk-gate cap."><div class="label">Leverage</div>
+       <div class="val ${over?'neg':''}">${lev==null?"–":lev.toFixed(2)+"×"}</div>
+       <div class="gauge ${over?'over':''}"><i style="width:${lev==null?0:Math.min(100,lev/cap*100).toFixed(0)}%"></i></div>
+       <div class="sub">cap ${cap.toFixed(1)}× · gross ${usd(st?st.gross_exposure:null)}</div></div>`,
+  ].join("");
+  $("ddsub").textContent = `${risk.dates[0]} → ${risk.dates[risk.dates.length-1]} · 0% = high-water mark`;
+  $("ddchart").innerHTML = underwaterChart(risk.dates, risk.drawdown);
+  const rvPts = (risk.rolling_vol||[]).filter(v=>v!=null).length;
+  const rvPanel = $("rvchart").closest(".se-panel");
+  if(risk.mature && rvPts>=2){
+    rvPanel.style.display=""; $("rvsub").textContent = `${risk.rolling_window}-day window · annualized`;
+    $("rvchart").innerHTML = lineChart(risk.dates, risk.rolling_vol, {floor0:true, fmt:v=>pct(v,0), color:cssv('--amber','#f5b73d')});
+  } else { rvPanel.style.display="none"; }
+}
+
+// Underwater (drawdown) area chart: 0% at the top (high-water mark), losses shaded below.
+function underwaterChart(dates, dd){
+  const W=720,H=200,pl=52,pr=14,pt=12,pb=24,pw=W-pl-pr,ph=H-pt-pb;
+  const vals=(dd||[]).filter(v=>v!=null);
+  if(vals.length<2) return '<div class="se-empty">one data point so far — the drawdown curve appears after a second day</div>';
+  const lo=Math.min(...vals,0), top=0, bot=lo-((0-lo)*0.10||0.001);   // 0% (high-water mark) is the ceiling
+  const n=dates.length, sx=i=>pl+(n<=1?0:i/(n-1)*pw), sy=v=>pt+((top-v)/(top-bot))*ph;
+  const grid=cssv('--line-soft','#19212f'), mut=cssv('--muted','#7c8a9e'), red=cssv('--red','#ff5d6c');
+  let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" style="display:block">`;
+  for(let k=0;k<=4;k++){ const v=top-(top-bot)*k/4, y=sy(v).toFixed(1);
+    s+=`<line x1="${pl}" y1="${y}" x2="${W-pr}" y2="${y}" stroke="${grid}"/><text x="${pl-7}" y="${(+y+3.5).toFixed(1)}" text-anchor="end" font-size="11" fill="${mut}">${(v*100).toFixed(1)}%</text>`; }
+  const step=Math.max(1,Math.round(n/6));
+  for(let i=0;i<n;i+=step){ s+=`<text x="${sx(i).toFixed(1)}" y="${H-7}" text-anchor="middle" font-size="11" fill="${mut}">${String(dates[i]).slice(5)}</text>`; }
+  const y0=sy(0).toFixed(1);
+  let line=""; dd.forEach((v,i)=>{ if(v!=null) line+=(line?"L":"M")+sx(i).toFixed(1)+" "+sy(v).toFixed(1); });
+  const area=`M${sx(0).toFixed(1)} ${y0} `+dd.map((v,i)=>v==null?"":`L${sx(i).toFixed(1)} ${sy(v).toFixed(1)}`).join(" ")+` L${sx(n-1).toFixed(1)} ${y0} Z`;
+  s+=`<path d="${area}" fill="${red}" fill-opacity="0.14"/>`;
+  s+=`<line x1="${pl}" y1="${y0}" x2="${W-pr}" y2="${y0}" stroke="${mut}" stroke-dasharray="3 3" opacity="0.5"/>`;
+  s+=`<path d="${line}" fill="none" stroke="${red}" stroke-width="2" stroke-linejoin="round"/>`;
+  return s+"</svg>";
+}
+
+// Generic single-series line chart with a numeric y-axis (rolling Sharpe etc.).
+function lineChart(dates, data, opts={}){
+  const W=720,H=180,pl=52,pr=14,pt=12,pb=24,pw=W-pl-pr,ph=H-pt-pb;
+  const fmtv=opts.fmt||(v=>v.toFixed(2)), color=opts.color||cssv('--accent','#5b9dff');
+  const vals=(data||[]).filter(v=>v!=null);
+  if(vals.length<2) return '<div class="se-empty">not enough history yet</div>';
+  let lo=Math.min(...vals), hi=Math.max(...vals); if(opts.zero){ lo=Math.min(lo,0); hi=Math.max(hi,0); }
+  const pad=(hi-lo)*0.1||0.5; lo-=pad; hi+=pad;
+  if(opts.floor0) lo=Math.max(lo,0);                 // non-negative series (e.g. volatility)
+  const n=dates.length, sx=i=>pl+(n<=1?0:i/(n-1)*pw), sy=v=>pt+((hi-v)/(hi-lo))*ph;
+  const grid=cssv('--line-soft','#19212f'), mut=cssv('--muted','#7c8a9e');
+  let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" style="display:block">`;
+  for(let k=0;k<=4;k++){ const v=lo+(hi-lo)*k/4, y=sy(v).toFixed(1);
+    s+=`<line x1="${pl}" y1="${y}" x2="${W-pr}" y2="${y}" stroke="${grid}"/><text x="${pl-7}" y="${(+y+3.5).toFixed(1)}" text-anchor="end" font-size="11" fill="${mut}">${fmtv(v)}</text>`; }
+  if(opts.zero && lo<0 && hi>0){ const yz=sy(0).toFixed(1); s+=`<line x1="${pl}" y1="${yz}" x2="${W-pr}" y2="${yz}" stroke="${mut}" stroke-dasharray="3 3" opacity="0.55"/>`; }
+  const step=Math.max(1,Math.round(n/6));
+  for(let i=0;i<n;i+=step){ s+=`<text x="${sx(i).toFixed(1)}" y="${H-7}" text-anchor="middle" font-size="11" fill="${mut}">${String(dates[i]).slice(5)}</text>`; }
+  let p=""; data.forEach((v,i)=>{ if(v!=null) p+=(p?"L":"M")+sx(i).toFixed(1)+" "+sy(v).toFixed(1); });
+  s+=`<path d="${p}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round"/>`;
+  return s+"</svg>";
 }
 
 const esc = s => String(s).replace(/"/g,"&quot;");
