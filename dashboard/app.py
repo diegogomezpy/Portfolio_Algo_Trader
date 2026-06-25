@@ -62,6 +62,7 @@ def _load_meta(env: str, settings) -> dict:
         "leverage_cap": getattr(pf, "max_leverage", 2.0) if pf else 2.0,
         "target_leverage": getattr(pf, "target_leverage", 2.0) if pf else 2.0,
         "max_single_name_pct": getattr(pf, "max_single_name_pct", 0.05) if pf else 0.05,
+        "max_sector_pct": getattr(pf, "max_sector_pct", 0.30) if pf else 0.30,
         "target_delta": getattr(cc, "target_delta", 0.30) if cc else 0.30,
         "live_benchmarks": list(getattr(dash, "live_benchmarks", ["SPY", "XYLD", "JEPI"]))
         if dash else ["SPY", "XYLD", "JEPI"],

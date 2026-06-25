@@ -68,6 +68,7 @@ def test_meta_route_is_config_driven():
     meta = _route(app, "/api/meta")()
     assert meta["env"] == "paper"
     assert meta["leverage_cap"] >= 1.0 and "target_delta" in meta
+    assert meta["max_sector_pct"] > 0 and meta["max_single_name_pct"] > 0   # concentration caps for the UI
     assert meta["live"] is False                # no client → Postgres-only
 
 
