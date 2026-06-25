@@ -227,7 +227,8 @@ def test_daily_job_monitors_on_non_rebalance_day():
     res = run_eod.daily_job(
         client=_FakeClient(), broker=broker, db_engine=eng, settings=load_settings(),
         as_of=date(2026, 7, 2),
-        trading_day_fn=lambda c, d: True, first_trading_day_fn=lambda c, d: False)
+        trading_day_fn=lambda c, d: True, first_trading_day_fn=lambda c, d: False,
+        rebalanced_this_month_fn=lambda c, d: True)    # the month's rebalance already landed
     assert res.status == "monitored"
     assert broker.submitted == [] and _rows(eng, db.orders) == []   # no trading
     assert len(_rows(eng, db.snapshots)) == 1                       # monitor still snapshots
@@ -240,8 +241,59 @@ def test_daily_job_runs_overlay_check_on_non_rebalance_day():
         client=_FakeClient(), broker=_FakeBroker(), db_engine=eng, settings=load_settings(),
         as_of=date(2026, 6, 18), overlay=True,
         trading_day_fn=lambda c, d: True, first_trading_day_fn=lambda c, d: False,
+        rebalanced_this_month_fn=lambda c, d: True,      # the month's rebalance already landed
         options_check_fn=lambda *a, **k: calls.append("opts"))
     assert res.status == "monitored" and calls == ["opts"]   # overlay safety pass ran
+
+
+def test_daily_job_catches_up_when_month_missed():
+    """A trading day past the 1st with no approved rebalance this month → run it now (catch-up)."""
+    eng = _engine()
+    broker = _FakeBroker()
+    res = run_eod.daily_job(
+        client=_FakeClient(), broker=broker, db_engine=eng, settings=load_settings(),
+        as_of=date(2026, 7, 2),                          # not the 1st…
+        targets_fn=_targets({"AAPL": 0.05}, {"AAPL": "Information Technology"}, {"AAPL": 100.0}),
+        trading_day_fn=lambda c, d: True, first_trading_day_fn=lambda c, d: False,
+        rebalanced_this_month_fn=lambda c, d: False)     # …and the month hasn't rebalanced yet
+    assert res.status == "rebalanced" and res.cycle.status == "executed"
+    assert len(_rows(eng, db.orders)) == 1               # it actually traded (caught up)
+    assert _rows(eng, db.rebalance_log)[0]["trigger_reason"] == "monthly_catchup"
+
+
+def test_daily_job_alerts_and_survives_when_rebalance_raises():
+    """If the rebalance raises (e.g. Alpaca down), the job alerts and returns rebalance_failed."""
+    eng = _engine()
+    sent = []
+    res = run_eod.daily_job(
+        client=_FakeClient(raise_positions=True),        # reconcile inside run_cycle will raise
+        broker=_FakeBroker(), db_engine=eng, settings=load_settings(),
+        as_of=date(2026, 7, 1),
+        targets_fn=_targets({"AAPL": 0.05}, {"AAPL": "Information Technology"}, {"AAPL": 100.0}),
+        trading_day_fn=lambda c, d: True, first_trading_day_fn=lambda c, d: True,
+        rebalanced_this_month_fn=lambda c, d: False, alert=sent.append)
+    assert res.status == "rebalance_failed"
+    assert any("failed to complete" in m for m in sent)  # a loud alert went out
+    assert _rows(eng, db.orders) == []                   # nothing traded
+
+
+def test_approved_rebalance_this_month():
+    from datetime import datetime
+    from sqlalchemy import insert
+    eng = _engine()
+    assert run_eod.approved_rebalance_this_month(eng, date(2026, 7, 2)) is False   # empty → False
+    with eng.begin() as c:
+        # a blocked (passed=False) attempt this month does NOT count as rebalanced
+        c.execute(insert(db.rebalance_log).values(
+            ts=datetime(2026, 7, 1, 20, 10), trigger_reason="monthly",
+            target_weights={"AAPL": 0.05}, risk_gate_passed=False, risk_gate_reason="blocked"))
+    assert run_eod.approved_rebalance_this_month(eng, date(2026, 7, 2)) is False
+    with eng.begin() as c:                               # an approved one this month → True
+        c.execute(insert(db.rebalance_log).values(
+            ts=datetime(2026, 7, 1, 20, 10), trigger_reason="monthly",
+            target_weights={"AAPL": 0.05}, risk_gate_passed=True, risk_gate_reason="ok"))
+    assert run_eod.approved_rebalance_this_month(eng, date(2026, 7, 2)) is True
+    assert run_eod.approved_rebalance_this_month(eng, date(2026, 8, 3)) is False   # next month → False
 
 
 def test_daily_job_skips_non_trading_day():

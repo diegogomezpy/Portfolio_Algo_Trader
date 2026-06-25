@@ -234,7 +234,7 @@ def _write_rebalance_log(db_engine, as_of: date, weights: pd.Series, rc: RiskChe
 @dataclass
 class DailyResult:
     """Outcome of one scheduled daily job."""
-    status: str  # "rebalanced" | "monitored" | "not_trading_day"
+    status: str  # "rebalanced" | "monitored" | "not_trading_day" | "rebalance_failed"
     cycle: Optional[CycleResult] = None
     monitor: Optional[monitor.MonitorResult] = None
 
@@ -245,6 +245,31 @@ def is_first_trading_day_of_month(client, as_of: date) -> bool:
     cal = client.market_calendar(start.isoformat(), as_of.isoformat())
     days = sorted(str(d.get("date"))[:10] for d in cal)
     return bool(days) and days[0] == as_of.isoformat()
+
+
+def approved_rebalance_this_month(db_engine, as_of: date) -> bool:
+    """True if an *approved* (risk-gate-passed) rebalance was already logged this calendar month.
+
+    Drives the catch-up: a trading day where this is False means the month's rebalance hasn't
+    landed yet (the scheduled run was missed, the process was down, or the gate blocked). Reads the
+    latest passed ``rebalance_log`` row and compares its month to ``as_of`` in Python — ``ts`` is
+    stamped UTC and the EOD run is afternoon-ET, so the calendar month matches; this avoids any
+    SQL timezone-comparison footgun. A blocked-only or last-month row therefore returns False.
+    """
+    if db_engine is None:
+        return False
+    from sqlalchemy import desc, select
+    from engine.db import rebalance_log
+    with db_engine.connect() as conn:
+        row = conn.execute(
+            select(rebalance_log.c.ts).where(rebalance_log.c.risk_gate_passed.is_(True))
+            .order_by(desc(rebalance_log.c.ts)).limit(1)).first()
+    if not row or row[0] is None:
+        return False
+    ts = row[0]
+    if isinstance(ts, str):                                  # sqlite may hand back a string
+        ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    return (ts.year, ts.month) == (as_of.year, as_of.month)
 
 
 def daily_job(
@@ -258,17 +283,22 @@ def daily_job(
     targets_fn: Callable[..., TargetPlan] = compute_targets,
     trading_day_fn: Callable[[object, str], bool] = ingest.is_trading_day,
     first_trading_day_fn: Callable[[object, date], bool] | None = None,
+    rebalanced_this_month_fn: Callable[[object, date], bool] | None = None,
     overlay: bool = False,
     options_check_fn: Callable[..., object] = covered_calls.options_daily_check,
     alert: Callable[[str], None] | None = None,
 ) -> DailyResult:
     """The once-a-day scheduled job: gate on the calendar, ingest, then branch.
 
-    On the **first trading day of the month** it runs the full rebalance cycle
-    (:func:`run_cycle`, with the covered-call ``overlay`` when enabled); on any other
-    trading day it does a lightweight reconcile + monitor pass (no trading). Non-trading
-    days are skipped. ``ingest_fn`` (default ``None`` = skip, so tests never hit the
-    network) refreshes the day's data first.
+    Runs the full rebalance cycle (:func:`run_cycle`, with the covered-call ``overlay`` when
+    enabled) on the **first trading day of the month** — or, if that run was missed/blocked
+    (process down, Alpaca/data hiccup, or a risk-gate block), on the **next trading day(s) until
+    one lands** (a *catch-up*, so a single bad day can't skip a whole month's rebalance). The
+    trigger is anchored on "no approved rebalance yet this month" (:func:`approved_rebalance_this_month`),
+    so it never rebalances twice in a month. Any other trading day does a lightweight reconcile +
+    monitor pass; non-trading days are skipped. A rebalance that raises is caught, alerted, and
+    retried next trading day rather than killing the scheduler. ``ingest_fn`` (default ``None`` =
+    skip, so tests never hit the network) refreshes the day's data first.
     """
     if not trading_day_fn(client, as_of.isoformat()):
         log.info("not a trading day; daily job skipped", extra={"date": as_of.isoformat()})
@@ -278,13 +308,32 @@ def daily_job(
         ingest_fn(as_of.isoformat())
 
     first_of_month = first_trading_day_fn or is_first_trading_day_of_month
-    if first_of_month(client, as_of):
-        cyc = run_cycle(client=client, broker=broker, db_engine=db_engine, settings=settings,
-                        as_of=as_of, force=True, trigger="monthly", targets_fn=targets_fn,
-                        trading_day_fn=trading_day_fn, overlay=overlay, alert=alert)
+    done_this_month = rebalanced_this_month_fn or approved_rebalance_this_month
+
+    if not done_this_month(db_engine, as_of):
+        trigger = "monthly" if first_of_month(client, as_of) else "monthly_catchup"
+        try:
+            cyc = run_cycle(client=client, broker=broker, db_engine=db_engine, settings=settings,
+                            as_of=as_of, force=True, trigger=trigger, targets_fn=targets_fn,
+                            trading_day_fn=trading_day_fn, overlay=overlay, alert=alert)
+        except Exception as exc:  # noqa: BLE001 — one bad day must not kill the scheduler; alert + retry next day
+            log.error("monthly rebalance raised; will retry next trading day",
+                      extra={"date": as_of.isoformat(), "trigger": trigger, "error": str(exc)})
+            if alert:
+                alert(f"system error: monthly rebalance {as_of.isoformat()} failed to complete "
+                      f"({exc}); will retry next trading day")
+            return DailyResult("rebalance_failed")
+        if cyc.status != "executed":
+            # blocked_risk already alerted inside run_cycle; surface no_targets here. Either way
+            # no approved row is written, so the catch-up retries on the next trading day.
+            log.warning("monthly rebalance did not execute; will retry next trading day",
+                        extra={"date": as_of.isoformat(), "status": cyc.status, "trigger": trigger})
+            if alert and cyc.status == "no_targets":
+                alert(f"monthly rebalance {as_of.isoformat()}: no target weights produced; "
+                      f"will retry next trading day")
         return DailyResult("rebalanced", cycle=cyc)
 
-    # Non-rebalance trading day: keep the DB honest, run the overlay safety pass, snapshot.
+    # This month's rebalance already landed: keep the DB honest, run the overlay safety pass, snapshot.
     reconcile.reconcile(client, db_engine, alert=alert)
     if overlay:
         panel = factors.load_close_panel(PRICES_DIR, end=as_of, lookback=10**9)
