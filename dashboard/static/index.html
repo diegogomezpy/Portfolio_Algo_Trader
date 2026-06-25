@@ -80,6 +80,20 @@
   .conc { display: flex; flex-wrap: wrap; gap: 7px 22px; font-size: 12px; color: var(--muted);
           margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--line); }
   .conc b { color: var(--fg-dim); font-weight: 600; }
+
+  /* factor tilt — book-weighted z-score, diverging from a centre (universe) axis */
+  .ft-wrap { padding: 13px 16px 15px; }
+  .fthead, .ftrow { display: grid; grid-template-columns: 196px 1fr 56px; gap: 14px; align-items: center; }
+  .fthead { font-size: 10.5px; color: var(--muted); margin-bottom: 8px; }
+  .fthead .scale { display: flex; justify-content: space-between; }
+  .ftrow { padding: 9px 0; }
+  .ftrow + .ftrow { border-top: 1px solid var(--line-soft); }
+  .ftname { font-size: 12.5px; color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ftname small { color: var(--muted); font-size: 11px; font-weight: 400; }
+  .ftbar { position: relative; height: 11px; background: var(--panel-3); border-radius: 5px; }
+  .ftbar .axis { position: absolute; top: -4px; bottom: -4px; left: 50%; width: 0; border-left: 1.5px dashed var(--faint); z-index: 1; }
+  .ftbar i { position: absolute; top: 0; height: 11px; border-radius: 4px; min-width: 2px; transition: width .3s var(--ease); }
+  .ftval { text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; }
   .brand { display: flex; align-items: center; gap: 10px; flex: none; }
   .brand svg { width: 26px; height: 26px; display: block; flex: none; }
   .brand .name { font-size: 15px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
@@ -240,6 +254,10 @@
       <div class="se-panel span2">
         <h2>Positions vs target <span class="panel-sub" id="possub"></span></h2>
         <div class="body" id="positions"></div>
+      </div>
+      <div class="se-panel span2">
+        <h2>Factor tilt <span class="panel-sub" id="ftsub"></span></h2>
+        <div class="body" id="ftilt"></div>
       </div>
       <div class="se-panel">
         <h2>Covered calls <span class="panel-sub" id="callssub"></span></h2>
@@ -650,8 +668,8 @@ async function loadPortfolio(){
   if(!s){ ["positions","calls","factors","orders","alerts"].forEach(id=>$(id).innerHTML =
       '<div class="errbox"><div class="big">Backend unreachable</div>Postgres or the dashboard API is not responding.</div>');
     return; }
-  renderSectorExposure(s.positions); renderPositions(s); renderCalls(s, calls);
-  renderFactors(factors); renderOrders(orders); renderAlerts(alerts);
+  renderSectorExposure(s.positions); renderPositions(s); renderFactorTilt(s.positions, factors);
+  renderCalls(s, calls); renderFactors(factors); renderOrders(orders); renderAlerts(alerts);
 }
 
 // Solid sector colour for ribbons/swatches (brighter than the chip background).
@@ -691,6 +709,49 @@ function renderSectorExposure(positions){
     `<span data-tip="Largest single position as a share of the book.">Largest <b>${(shares[0]*100).toFixed(1)}%</b></span>`+
     `<span data-tip="Distinct GICS sectors represented in the book.">Sectors <b>${rows.length}</b></span></div>`;
   $("sectors").innerHTML = `<div class="sec-wrap"><div class="ribbon">${ribbon}</div>${ribcap}${list}${conc}</div>`;
+}
+
+// Factor tilt — the book's share-of-book-weighted exposure to each factor. The stored sub-scores
+// are cross-sectional z-scores (universe mean ≈ 0), so a weighted average reads directly as the
+// active lean vs the universe: +ve = the book leans into the factor, −ve = leans away.
+const FACTOR_KEYS = [
+  ["quality","Quality","profitability","Quality — profitability, margins & balance-sheet strength."],
+  ["value","Value","cheapness","Value — cheapness on earnings & book multiples."],
+  ["momentum","Momentum","price trend","Momentum — 12-month return, skipping the most recent month."],
+  ["lowvol","Low Vol","stability","Low Vol — lower realized volatility scores higher."]];
+function renderFactorTilt(positions, factors){
+  const facBy = {}; (factors||[]).forEach(f=>{ facBy[String(f.symbol).toUpperCase()] = f; });
+  // weight only the names that carry a factor score; share-of-book over that scored sleeve
+  let scoredW = 0; const parts = [];
+  (positions||[]).forEach(p=>{ const w=p.weight||0, f=facBy[String(p.symbol).toUpperCase()];
+    if(!w || !f) return; scoredW += w; parts.push({w, f}); });
+  const equityNames = (positions||[]).filter(p=>p.weight && String(p.symbol).length<=5).length;
+  if(!parts.length || !scoredW){
+    $("ftilt").innerHTML='<div class="se-empty">factor tilt appears once the book is scored and trades</div>'; $("ftsub").textContent=""; return; }
+  $("ftsub").textContent = "book-weighted z-score · 0 = universe average";
+  const wavg = key => parts.reduce((a,{w,f})=>a + (w/scoredW)*(f[key]==null?0:f[key]), 0);
+  const tilt = {}; FACTOR_KEYS.forEach(([k])=>{ tilt[k]=wavg(k); });
+  // composite = equal-weight blend of the four sub-tilts (the engine's composite definition),
+  // computed from the displayed tilts so the footer never contradicts the bars
+  const comp = FACTOR_KEYS.reduce((a,[k])=>a+tilt[k], 0) / FACTOR_KEYS.length;
+  // symmetric domain: ±1σ fills a half-bar unless a tilt is larger (then it scales out)
+  const dom = Math.max(1.0, ...FACTOR_KEYS.map(([k])=>Math.abs(tilt[k])));
+  const head = `<div class="fthead"><span></span><span class="scale"><span>‹ leans away</span><span>neutral</span><span>leans in ›</span></span><span></span></div>`;
+  const rows = FACTOR_KEYS.map(([k,label,desc,tip])=>{
+    const v = tilt[k], pos = v>=0, col = pos?"var(--green)":"var(--amber)";
+    const half = Math.min(Math.abs(v)/dom, 1)*50;
+    const bar = pos ? `left:50%;width:${half.toFixed(1)}%` : `left:${(50-half).toFixed(1)}%;width:${half.toFixed(1)}%`;
+    return `<div class="ftrow">
+      <div class="ftname" data-tip="${esc(tip+" Book-weighted average z-score across held names.")}">${label} <small>· ${desc}</small></div>
+      <div class="ftbar"><span class="axis"></span><i style="${bar};background:${col}"></i></div>
+      <div class="ftval" style="color:${col}">${pos?"+":""}${v.toFixed(2)}</div>
+    </div>`;
+  }).join("");
+  const foot = `<div class="conc">`+
+    `<span data-tip="Equal-weight blend of the four sub-tilts — the book's overall factor lean vs the universe.">Composite tilt <b style="color:${comp>=0?'var(--green)':'var(--amber)'}">${comp>=0?"+":""}${comp.toFixed(2)}</b></span>`+
+    `<span data-tip="Share of the equity book that carries a current factor score and feeds the tilt.">Scored coverage <b>${(100*scoredW/Math.max(1e-9,(positions||[]).filter(p=>p.weight&&String(p.symbol).length<=5).reduce((a,p)=>a+p.weight,0))).toFixed(0)}%</b></span>`+
+    `<span data-tip="Held names with a current factor score.">Names scored <b>${parts.length}</b> <span class="mut">of ${equityNames}</span></span></div>`;
+  $("ftilt").innerHTML = `<div class="ft-wrap">${head}${rows}${foot}</div>`;
 }
 
 function renderGate(s){
