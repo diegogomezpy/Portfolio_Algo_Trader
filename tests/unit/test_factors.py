@@ -201,3 +201,22 @@ def test_load_all_fundamentals_filters_by_source(tmp_path):
     edgar = factors.load_all_fundamentals(tmp_path, source="sec_edgar")
     assert list(edgar["symbol"]) == ["USGAAP"]             # yfinance row dropped
     assert set(factors.load_all_fundamentals(tmp_path)["symbol"]) == {"USGAAP", "ADR"}
+
+
+def test_loaders_skip_macos_dotfiles(tmp_path):
+    """A macOS '._' AppleDouble shadow (or .DS_Store) copied in alongside the real Parquet — e.g.
+    after `scp`-ing data/ up from a Mac — must be ignored, not parsed as a date or read as Parquet.
+    Otherwise one junk file crashes the whole rebalance (the go-live '._2020-07-27' bug)."""
+    eq = tmp_path / "equities"; eq.mkdir()
+    pd.DataFrame({"close": [101.0]}, index=pd.Index(["AAPL"], name="symbol")).to_parquet(eq / "2026-06-25.parquet")
+    (eq / "._2026-06-25.parquet").write_bytes(b"\x00\x05\x16\x07Mac OS X")   # AppleDouble junk, not Parquet
+    (eq / ".DS_Store").write_bytes(b"junk")
+    panel = factors.load_close_panel(eq, end=date(2026, 6, 25), lookback=10)
+    assert list(panel.columns) == ["AAPL"] and len(panel) == 1               # real file loaded, junk skipped
+
+    fund = tmp_path / "fundamentals"; fund.mkdir()
+    pd.DataFrame({"pe_ratio": [15.0], "pb_ratio": [2.0], "roe": [0.2], "gross_margin": [0.4],
+                  "report_date": ["2020-03-31"]}, index=pd.Index(["AAPL"], name="symbol")).to_parquet(fund / "2020-Q1.parquet")
+    (fund / "._2020-Q1.parquet").write_bytes(b"\x00\x05\x16\x07Mac OS X")
+    allf = factors.load_all_fundamentals(fund)
+    assert set(allf["symbol"]) == {"AAPL"} and len(allf) == 1                # shadow skipped, real file read

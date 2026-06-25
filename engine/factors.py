@@ -210,17 +210,25 @@ def _empty_scores() -> pd.DataFrame:
 # ====================================================================== #
 # I/O — Parquet loaders + Postgres writer (injectable into the above)
 # ====================================================================== #
-def _date_from_name(p: Path) -> _date:
-    return _date.fromisoformat(p.stem)
+def _date_from_name(p: Path) -> _date | None:
+    """Parse a ``YYYY-MM-DD`` filename stem to a date, or ``None`` when it isn't a dated
+    snapshot — e.g. a macOS ``._`` AppleDouble shadow, a ``.DS_Store``, or any stray file in
+    the data dir. Returning ``None`` (rather than raising) means one junk file copied in
+    alongside the real Parquet can't crash the whole rebalance."""
+    try:
+        return _date.fromisoformat(p.stem)
+    except ValueError:
+        return None
 
 
 def load_close_panel(prices_dir: Path | str, end: _date, lookback: int) -> pd.DataFrame:
     """Build a (date × symbol) close matrix from per-date equity Parquet files.
 
-    Loads the ``lookback`` most recent trading-day files with date ``<= end``.
+    Loads the ``lookback`` most recent trading-day files with date ``<= end``. Files whose name
+    isn't a ``YYYY-MM-DD`` date (dotfiles / stray copies) are skipped, not parsed.
     """
     files = sorted(Path(prices_dir).glob("*.parquet"))
-    dated = [(f, _date_from_name(f)) for f in files]
+    dated = [(f, d) for f in files if (d := _date_from_name(f)) is not None]
     dated = [(f, d) for f, d in dated if d <= end][-lookback:]
     closes = {pd.Timestamp(d): pd.read_parquet(f, columns=["close"])["close"]
               for f, d in dated}
@@ -241,6 +249,8 @@ def load_all_fundamentals(fundamentals_dir: Path | str, *, source: str | None = 
     """
     frames = []
     for p in sorted(Path(fundamentals_dir).glob("*.parquet")):
+        if p.name.startswith("."):             # skip macOS '._' shadows / .DS_Store / stray dotfiles
+            continue
         df = pd.read_parquet(p).reset_index()  # symbol is the index on disk
         frames.append(df)
     if not frames:
