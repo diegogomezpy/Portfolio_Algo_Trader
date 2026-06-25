@@ -59,26 +59,20 @@
              font-size: 11.5px; color: var(--muted); }
   .legitem { display: inline-flex; align-items: center; gap: 7px; }
 
-  /* sector exposure */
-  .sec-wrap { padding: 13px 16px 15px; }
-  .ribbon { display: flex; height: 18px; border-radius: 6px; overflow: hidden; margin: 2px 0 6px;
-            background: var(--panel-3); box-shadow: inset 0 0 0 1px var(--line); }
-  .ribbon i { height: 100%; display: block; min-width: 2px; }
-  .ribbon i + i { box-shadow: inset 1.5px 0 0 rgba(10,14,21,.5); }   /* hairline between segments */
-  .ribcap { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-bottom: 16px; }
-  .secrow { display: grid; grid-template-columns: 186px 1fr 50px; gap: 13px; align-items: center; padding: 7px 0; }
-  .secrow + .secrow { border-top: 1px solid var(--line-soft); }
-  .secrow .sname { font-size: 12.5px; color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .secrow .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 9px; vertical-align: 0; }
-  .secrow .sbar { position: relative; height: 9px; border-radius: 5px; background: var(--panel-3); }
-  .secrow .sbar i { display: block; height: 100%; border-radius: 5px; min-width: 2px; }
-  .secrow .scap { position: absolute; top: -4px; bottom: -4px; width: 0; border-left: 2px dashed var(--faint); }
-  .secrow.over .sbar i { box-shadow: 0 0 0 1px var(--red) inset; }
-  .secrow.over .scap { border-color: var(--red); }
-  .secrow .spct { text-align: right; font-variant-numeric: tabular-nums; font-size: 12.5px; font-weight: 600; color: var(--fg-dim); }
-  .secrow.over .spct { color: var(--red); }
-  .conc { display: flex; flex-wrap: wrap; gap: 7px 22px; font-size: 12px; color: var(--muted);
-          margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--line); }
+  /* sector exposure — big nested donut (sectors inner · tickers outer), labels drawn on the rings */
+  #sectors { max-height: none; }                 /* the big ring is taller than the default 360px body cap */
+  .sec-wrap { padding: 16px; }
+  .donut-wrap svg path { transition: opacity .12s var(--ease); cursor: help; }
+  .donut-wrap svg:hover path { opacity: .4; }
+  .donut-wrap svg path:hover { opacity: 1; }
+  .sec-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px 18px; margin-top: 18px; }
+  .legitem2 { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .legitem2 .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; flex: none; }
+  .legitem2 b { font-weight: 600; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+  .legitem2.over b { color: var(--red); }
+  .legitem2 .capflag { color: var(--red); font-weight: 700; font-size: 10px; }
+  .conc { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px 22px; font-size: 12px; color: var(--muted);
+          margin-top: 16px; padding-top: 13px; border-top: 1px solid var(--line); }
   .conc b { color: var(--fg-dim); font-weight: 600; }
 
   /* factor tilt — book-weighted z-score, diverging from a centre (universe) axis */
@@ -776,42 +770,84 @@ async function loadPortfolio(){
 }
 
 // Solid sector colour for ribbons/swatches (brighter than the chip background).
-function secColor(sec){ const h=SECTOR_HUE[sec]; return h==null ? "hsl(220 10% 50%)" : `hsl(${h} 55% 55%)`; }
+// Muted, institutional palette: low saturation so the ring reads as restrained rather than candy.
+function secColor(sec){ const h=SECTOR_HUE[sec]; return h==null ? "hsl(220 8% 44%)" : `hsl(${h} 34% 47%)`; }
+// A ticker's shade within its sector: same hue, lightness stepped so names are distinguishable yet
+// clearly belong to the sector's (desaturated) colour family.
+function tkrShade(sec, idx, count){
+  const h = SECTOR_HUE[sec], t = count>1 ? idx/(count-1) : 0;
+  return h==null ? `hsl(220 7% ${(58-t*18).toFixed(0)}%)` : `hsl(${h} 28% ${(63-t*22).toFixed(0)}%)`;
+}
+
+// Nested donut: inner ring = sectors, outer ring = tickers grouped under their sector (same start
+// angle + ordering ⇒ each ticker wedge sits beneath its sector wedge). Labels are drawn straight
+// onto the rings (sector % inside, ticker symbol outside). Items: {share, color, tip, label, over}.
+function nestedDonut(inner, outer, centerTop, centerBot){
+  const cx=150, cy=150, oR=140, oRi=116, iR=108, iRi=84;     // two thin rings + a large airy hole
+  const oMid=(oR+oRi)/2, iMid=(iR+iRi)/2;
+  const bg=cssv('--panel','#0e141d'), fg=cssv('--fg','#e8edf4'), mut=cssv('--muted','#7c8a9e');
+  const X=(r,a)=>(cx+r*Math.cos(a)).toFixed(1), Y=(r,a)=>(cy+r*Math.sin(a)).toFixed(1);
+  const wedge=(r0,r1,a0,a1,color,tip)=>{ const lo=(a1-a0)>Math.PI?1:0;
+    return `<path d="M${X(r0,a0)} ${Y(r0,a0)} A${r0} ${r0} 0 ${lo} 1 ${X(r0,a1)} ${Y(r0,a1)} `+
+      `L${X(r1,a1)} ${Y(r1,a1)} A${r1} ${r1} 0 ${lo} 0 ${X(r1,a0)} ${Y(r1,a0)} Z" `+
+      `fill="${color}" stroke="${bg}" stroke-width="1.25" data-tip="${esc(tip)}"/>`; };
+  // light text with a soft shadow (not a hard outline) so it reads on the muted wedges but stays sleek
+  const label=(r,a,txt,size,weight,fill)=>`<text x="${X(r,a)}" y="${Y(r,a)}" text-anchor="middle" `+
+    `dominant-baseline="central" font-size="${size}" font-weight="${weight}" fill="${fill}" `+
+    `filter="url(#dlbl)" style="pointer-events:none;letter-spacing:.2px">${esc(txt)}</text>`;
+  let s=`<svg viewBox="0 0 300 300" width="100%" preserveAspectRatio="xMidYMid meet" style="display:block;max-width:380px;margin:0 auto">`;
+  s+=`<defs><filter id="dlbl" x="-25%" y="-25%" width="150%" height="150%"><feDropShadow dx="0" dy="0" stdDeviation="1" flood-color="#05080e" flood-opacity="0.75"/></filter></defs>`;
+  let lbl="", a=-Math.PI/2;
+  inner.forEach(it=>{ const a1=a+it.share*2*Math.PI, mid=(a+a1)/2; s+=wedge(iR,iRi,a,a1,it.color,it.tip);
+    if(it.label && it.share>0.05) lbl+=label(iMid,mid,it.label,11,600,'rgba(255,255,255,.88)'); a=a1; });
+  a=-Math.PI/2;
+  outer.forEach(it=>{ const a1=a+it.share*2*Math.PI, mid=(a+a1)/2; s+=wedge(oR,oRi,a,a1,it.color,it.tip);
+    if(it.label && it.share>0.045) lbl+=label(oMid,mid,it.label,10.5,500,'#fff'); a=a1; });
+  s+=lbl;   // labels painted above all wedges
+  s+=`<text x="${cx}" y="${cy-3}" text-anchor="middle" font-size="15" font-weight="600" fill="${fg}" style="letter-spacing:.2px">${esc(centerTop)}</text>`;
+  s+=`<text x="${cx}" y="${cy+15}" text-anchor="middle" font-size="10.5" fill="${mut}" style="letter-spacing:.4px;text-transform:uppercase">${esc(centerBot)}</text>`;
+  return s+"</svg>";
+}
 
 function renderSectorExposure(positions){
   const cap = META.max_sector_pct || 0.30;
-  const bySec = {}; let total = 0;
-  (positions||[]).forEach(p=>{ const w=p.weight||0; if(!w) return;
-    const sec=(REF[String(p.symbol).toUpperCase()]||{}).sector || "Unknown";
-    (bySec[sec]=bySec[sec]||{w:0,n:0}); bySec[sec].w+=w; bySec[sec].n++; total+=w; });
-  const rows = Object.entries(bySec).map(([sec,o])=>({sec, share:o.w/total, n:o.n})).sort((a,b)=>b.share-a.share);
-  if(!rows.length || !total){ $("sectors").innerHTML='<div class="se-empty">no positions yet — sector mix appears once the book trades</div>'; $("secsub").textContent=""; return; }
-  $("secsub").textContent = `share of book · ╎ = ${(cap*100).toFixed(0)}% sector cap`;
-  // stacked ribbon (whole book)
-  const ribbon = rows.map(r=>`<i data-tip="${esc(`${r.sec}: ${(100*r.share).toFixed(1)}% · ${r.n} name${r.n>1?'s':''}`)}" style="width:${(r.share*100).toFixed(2)}%;background:${secColor(r.sec)}"></i>`).join("");
-  const ribcap = `<div class="ribcap"><span>${rows.length} sector${rows.length>1?'s':''}</span><span>whole book = 100%</span></div>`;
-  // per-sector bars with the cap marker (shared scale → cap ticks align into one reference line)
-  const scaleMax = Math.max(cap, rows[0].share) * 1.12;
-  const list = rows.map(r=>{
-    const over = r.share > cap + 1e-9;
-    const capTip = over ? `${r.sec} is ${(r.share*100).toFixed(1)}% — over the ${(cap*100).toFixed(0)}% sector cap`
-                        : `Sector cap ${(cap*100).toFixed(0)}% — the optimizer holds each sector at or under this`;
-    return `<div class="secrow${over?' over':''}">
-      <div class="sname" data-tip="${esc(`${r.sec} · ${r.n} name${r.n>1?'s':''}`)}"><span class="swatch" style="background:${secColor(r.sec)}"></span>${r.sec} <span class="mut">· ${r.n}</span></div>
-      <div class="sbar"><i style="width:${(r.share/scaleMax*100).toFixed(1)}%;background:${secColor(r.sec)}"></i><span class="scap" style="left:${(cap/scaleMax*100).toFixed(1)}%" data-tip="${esc(capTip)}"></span></div>
-      <div class="spct" ${over?`data-tip="Over the ${(cap*100).toFixed(0)}% sector cap"`:''}>${(r.share*100).toFixed(1)}%</div>
-    </div>`;
+  const items = (positions||[]).map(p=>{ const sym=String(p.symbol).toUpperCase(), ref=REF[sym]||{};
+    return {sym, w:p.weight||0, sec:ref.sector||"Unknown", name:ref.name}; }).filter(p=>p.w>0);
+  const total = items.reduce((a,p)=>a+p.w,0);
+  if(!items.length || !total){ $("sectors").innerHTML='<div class="se-empty">no positions yet — sector mix appears once the book trades</div>'; $("secsub").textContent=""; return; }
+  // group names by sector, sectors sorted by share, names within a sector sorted by weight
+  const bySec={}; items.forEach(p=>{ (bySec[p.sec]=bySec[p.sec]||[]).push(p); });
+  const sectors = Object.entries(bySec).map(([sec,names])=>({sec, names:names.sort((a,b)=>b.w-a.w),
+      share:names.reduce((s,p)=>s+p.w,0)/total})).sort((a,b)=>b.share-a.share);
+  $("secsub").textContent = `share of book · sectors over ${(cap*100).toFixed(0)}% cap flagged`;
+
+  // donut wedges (inner = sectors, outer = tickers in sector order so they nest); labels on the rings
+  const secWedges = sectors.map(s=>({share:s.share, color:secColor(s.sec),
+    label:`${Math.round(s.share*100)}%`,
+    tip:`${s.sec} · ${(s.share*100).toFixed(1)}% · ${s.names.length} name${s.names.length>1?'s':''}`}));
+  const tkrWedges = []; sectors.forEach(s=> s.names.forEach((p,ti)=> tkrWedges.push({share:p.w/total,
+    color:tkrShade(s.sec, ti, s.names.length), label:p.sym,
+    tip:`${p.sym}${p.name?' · '+p.name:''} · ${(p.w/total*100).toFixed(1)}%`})));
+  const donut = nestedDonut(secWedges, tkrWedges, `${items.length} names`, `${sectors.length} sectors`);
+
+  // slim legend strip (colour → sector name + share, over-cap flagged) under the ring
+  const legend = sectors.map(s=>{
+    const over = s.share > cap + 1e-9;
+    return `<span class="legitem2 ${over?'over':''}"${over?` data-tip="Over the ${(cap*100).toFixed(0)}% sector cap"`:''}>`+
+      `<span class="swatch" style="background:${secColor(s.sec)}"></span>${s.sec} <b>${(s.share*100).toFixed(1)}%</b>`+
+      `${over?'<span class="capflag">▲</span>':''}</span>`;
   }).join("");
-  // concentration metrics (share-of-book, leverage-independent)
-  const shares = (positions||[]).filter(p=>p.weight).map(p=>p.weight/total).sort((a,b)=>b-a);
+
+  // concentration footer (share-of-book, leverage-independent)
+  const shares = items.map(p=>p.w/total).sort((a,b)=>b-a);
   const topN = k => (shares.slice(0,k).reduce((a,b)=>a+b,0)*100).toFixed(0);
   const hhi = shares.reduce((a,b)=>a+b*b,0), eff = hhi>0 ? 1/hhi : 0;
   const conc = `<div class="conc">`+
     `<span data-tip="Combined weight of the five largest positions (share of book).">Top 5 names <b>${topN(5)}%</b></span>`+
     `<span data-tip="Effective number of equally-weighted names = 1 / Σweightᵢ². Lower than the actual count when a few names dominate.">Effective names <b>${eff.toFixed(1)}</b> <span class="mut">of ${shares.length}</span></span>`+
     `<span data-tip="Largest single position as a share of the book.">Largest <b>${(shares[0]*100).toFixed(1)}%</b></span>`+
-    `<span data-tip="Distinct GICS sectors represented in the book.">Sectors <b>${rows.length}</b></span></div>`;
-  $("sectors").innerHTML = `<div class="sec-wrap"><div class="ribbon">${ribbon}</div>${ribcap}${list}${conc}</div>`;
+    `<span data-tip="Distinct GICS sectors represented in the book.">Sectors <b>${sectors.length}</b></span></div>`;
+  $("sectors").innerHTML = `<div class="sec-wrap"><div class="donut-wrap">${donut}</div><div class="sec-legend">${legend}</div>${conc}</div>`;
 }
 
 // Factor tilt — the book's share-of-book-weighted exposure to each factor. The stored sub-scores
