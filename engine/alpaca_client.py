@@ -794,7 +794,7 @@ class AlpacaClient:
         import urllib.parse
         import urllib.request
 
-        params = {"page_size": str(page_size)}
+        params = {"page_size": str(min(page_size, 100))}   # Alpaca caps activities page_size at 100
         if activity_type:
             params["activity_types"] = activity_type
         url = f"{self._base_url}/v2/account/activities?{urllib.parse.urlencode(params)}"
