@@ -9,13 +9,13 @@
 .dash h1{font-size:22px;font-weight:650;margin:0;letter-spacing:-.01em;}
 .dash .sub{color:var(--muted,#7c8a9e);font-size:13px;margin:3px 0 0;}
 .dash h2{font-size:14px;font-weight:600;margin:22px 0 9px;color:var(--fg-dim,#b3becd);}
-.dash .sec{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--green,#3ddc97);
+.dash .sec{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--muted,#6f7986);
  margin:34px 0 2px;padding-bottom:7px;border-bottom:1px solid var(--line,#232d40);}
 .dash .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(116px,1fr));gap:10px;margin-top:18px;}
 .dash .kpi{background:var(--panel-2,#182030);border:1px solid var(--line,#232d40);border-radius:var(--r-sm,7px);padding:11px 13px;}
 .dash .kpi .l{font-size:10.5px;color:var(--muted,#7c8a9e);text-transform:uppercase;letter-spacing:.04em;}
-.dash .kpi .v{font-size:21px;font-weight:650;margin-top:3px;font-variant-numeric:tabular-nums;}
-.dash .kpi .d{font-size:11px;margin-top:2px;color:var(--muted,#7c8a9e);}
+.dash .kpi .v{font-size:21px;font-weight:500;margin-top:3px;font-family:var(--mono,ui-monospace,Menlo,monospace);font-variant-numeric:tabular-nums;letter-spacing:-.01em;}
+.dash .kpi .d{font-size:10.5px;margin-top:2px;color:var(--muted,#7c8a9e);font-family:var(--mono,ui-monospace,Menlo,monospace);font-variant-numeric:tabular-nums;}
 .dash .pos{color:var(--green,#3ddc97);}.dash .neg{color:var(--red,#ff5d6c);}
 .dash .row{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start;}
 .dash .row>div{flex:1 1 380px;min-width:0;}
@@ -28,6 +28,7 @@
 .dash th:first-child,.dash td:first-child{text-align:left;}
 .dash thead th{color:var(--muted,#7c8a9e);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;}
 .dash tbody tr:hover{background:var(--panel-2,#182030);}
+.dash #bmktbl td:not(:first-child),.dash #contrib td:last-child,.dash #detract td:last-child{font-family:var(--mono,ui-monospace,Menlo,monospace);}
 .dash .blot{max-height:300px;overflow:auto;border:1px solid var(--line,#232d40);border-radius:var(--r-sm,7px);}
 .dash .blot table{font-size:12px;}.dash .blot th{position:sticky;top:0;background:var(--panel,#121925);z-index:1;}
 .dash .adr{font-size:9.5px;color:var(--amber,#f5b73d);background:var(--amber-dim,rgba(245,183,61,.13));border-radius:3px;padding:1px 4px;margin-left:5px;}
@@ -117,6 +118,10 @@ const DATA = /*__DASHBOARD_DATA__*/null;
     line:css('--line','#232d40'),grid:css('--line-soft','#19212f'),panel:css('--panel','#121925'),
     teal:css('--green','#3ddc97'),spy:css('--spy','#8c99ad'),blue:css('--accent','#5b9dff'),
     red:css('--red','#ff5d6c'),amber:css('--amber','#f5b73d')};
+  // SVG axis labels render in mono+tabular (matches the live charts' numeric ticks); the font
+  // stacks carry embedded double-quotes, so swap to single quotes to survive the style attribute.
+  const FM=css('--mono','ui-monospace,SFMono-Regular,Menlo,monospace').replace(/"/g,"'");
+  const FS=css('--font','-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif').replace(/"/g,"'");
   const SECCOL={"Energy":"#e0a341","Materials":"#b3a892","Industrials":"#5b9dff","Consumer Discretionary":"#e87fa8","Consumer Staples":"#9ccc5a","Health Care":"#3ddc97","Financials":"#9a8cff","Information Technology":"#46c7e8","Communication Services":"#ff8a5c","Utilities":"#8a97ab","Real Estate":"#ef6b6b","Unknown":"#5a6678","Cash":"#2a3445"};
   const pct=(v,d=1)=>v==null?"—":(v>=0?"+":"")+(v*100).toFixed(d)+"%";
   const usd=v=>(v<0?"-$":"$")+Math.abs(v).toLocaleString();
@@ -126,7 +131,7 @@ const DATA = /*__DASHBOARD_DATA__*/null;
   const sx=(f,i,n)=>f.padL+(n<=1?0:i/(n-1)*f.plotW);
   const sy=(f,v,lo,hi)=>f.padT+(hi===lo?0:(hi-v)/(hi-lo)*f.plotH);
   const path=pts=>pts.map((p,i)=>(i?"L":"M")+p[0].toFixed(1)+" "+p[1].toFixed(1)).join(" ");
-  const open=f=>`<svg viewBox="0 0 ${f.w} ${f.h}" width="100%" role="img" preserveAspectRatio="xMidYMid meet" style="display:block;font-family:inherit;">`;
+  const open=f=>`<svg viewBox="0 0 ${f.w} ${f.h}" width="100%" role="img" preserveAspectRatio="xMidYMid meet" style="display:block;font-family:${FM};font-variant-numeric:tabular-nums;">`;
   function yaxis(f,lo,hi,fmt){let s="";for(let k=0;k<=4;k++){const v=lo+(hi-lo)*k/4,y=sy(f,v,lo,hi);
     s+=`<line x1="${f.padL}" y1="${y.toFixed(1)}" x2="${f.w-f.padR}" y2="${y.toFixed(1)}" stroke="${C.grid}" stroke-width="1"/>`;
     s+=`<text x="${f.padL-7}" y="${(y+3.5).toFixed(1)}" text-anchor="end" font-size="11" fill="${C.mut}">${fmt(v)}</text>`;}return s;}
@@ -174,7 +179,7 @@ const DATA = /*__DASHBOARD_DATA__*/null;
   function hbars(id,items,fmt){
     const f={w:W,h:items.length*27+12,padL:104},plotW=f.w-f.padL-30,mx=Math.max(...items.map(i=>Math.abs(i.v)))*1.18||1;let s=open(f);
     items.forEach((it,i)=>{const y=10+i*27,cz=f.padL+plotW/2,w=it.v/mx*plotW/2;
-      s+=`<text x="${f.padL-9}" y="${y+13}" text-anchor="end" font-size="12" fill="${C.ink}">${it.name}</text>`;
+      s+=`<text x="${f.padL-9}" y="${y+13}" text-anchor="end" font-size="12" fill="${C.ink}" style="font-family:${FS}">${it.name}</text>`;
       s+=`<line x1="${cz}" y1="${y}" x2="${cz}" y2="${y+20}" stroke="${C.line}" stroke-width="1"/>`;
       s+=`<rect x="${(w<0?cz+w:cz).toFixed(1)}" y="${y+2}" width="${Math.abs(w).toFixed(1)}" height="15" rx="2" fill="${it.v>=0?C.teal:C.red}"/>`;
       s+=`<text x="${(cz+w+(it.v>=0?5:-5)).toFixed(1)}" y="${y+13}" text-anchor="${it.v>=0?"start":"end"}" font-size="11.5" fill="${it.v>=0?C.teal:C.red}">${fmt(it.v)}</text>`;});
