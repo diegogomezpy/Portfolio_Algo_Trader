@@ -55,20 +55,27 @@ class PlannedOrder:
 
 
 def _order_type_for(
-    symbol: str, price: float, *, adv: Mapping[str, float], spread: Mapping[str, float], ex
+    symbol: str, price: float, side: str, *,
+    adv: Mapping[str, float], spread: Mapping[str, float], ex
 ) -> tuple[str, Optional[float]]:
-    """Market for deep+tight names, else a limit at the mid (ARCHITECTURE).
+    """Market for deep+tight names, else a **marketable** limit (ARCHITECTURE).
 
     ``spread`` is the fractional bid/ask (or high-low proxy) per symbol; a name is sent
     market only when it is both deep (ADV ≥ large-cap threshold) and tight (spread <
-    ``spread_threshold``). Otherwise a limit is placed at the supplied mid price.
+    ``spread_threshold``). Otherwise a limit is placed at the mid **crossed by up to
+    ``marketable_limit_bps``** in the trade's direction (buy above / sell below) — a price ceiling
+    that lets the order fill at the touch in-session rather than resting passively at the mid (a
+    passive mid limit often never fills before the session-end cancel). With ``marketable_limit_bps``
+    absent or 0 this is exactly the old mid limit.
     """
     a = float(adv.get(symbol, 0.0) or 0.0)
     s = spread.get(symbol)
     deep_and_tight = a >= ex.large_cap_adv_threshold and (s is not None and float(s) < ex.spread_threshold)
     if deep_and_tight:
         return "market", None
-    return "limit", round(float(price), 2)
+    cap = float(getattr(ex, "marketable_limit_bps", 0.0) or 0.0) / 1e4
+    mult = (1.0 + cap) if side == "buy" else (1.0 - cap)
+    return "limit", round(float(price) * mult, 2)
 
 
 def plan_orders(
@@ -131,7 +138,7 @@ def plan_orders(
                             "qty": qty, "reason": f"below min_trade_usd ({ex.min_trade_usd})"})
             continue
 
-        otype, lp = _order_type_for(sym, mids.get(sym, px), adv=adv, spread=spread, ex=ex)
+        otype, lp = _order_type_for(sym, mids.get(sym, px), side, adv=adv, spread=spread, ex=ex)
         orders.append(PlannedOrder(sym, side, qty, otype, lp, round(notional, 2)))
 
     # Sells (desc by notional) before buys (desc), so proceeds fund purchases.

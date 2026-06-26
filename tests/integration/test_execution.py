@@ -304,6 +304,29 @@ def test_rebalance_established_this_month():
     assert est(eng, date(2026, 8, 3)) is False           # next month → False
 
 
+def test_catchup_requires_substantial_fill_not_one_position():
+    """A rebalance that filled only a name or two must NOT count as done — the catch-up keeps going
+    until the book covers most of the target, so the unfilled names aren't stranded for a month."""
+    from datetime import datetime
+    from sqlalchemy import insert
+    eng = _engine()
+    est = run_eod.rebalance_established_this_month
+    five = {f"NM{i}": 0.05 for i in range(5)}            # 5-name target → need ceil(0.8×5) = 4
+    with eng.begin() as c:
+        c.execute(insert(db.rebalance_log).values(
+            ts=datetime(2026, 7, 1, 18, 0), trigger_reason="monthly_catchup",
+            target_weights=five, risk_gate_passed=True, risk_gate_reason="ok"))
+        c.execute(insert(db.snapshots).values(                # only 2 of 5 names filled
+            ts=datetime(2026, 7, 1, 18, 1), nav=100_000.0, cash=80_000.0, last_equity=100_000.0,
+            weights=five, positions={"NM0": 100, "NM1": 100}, drift=None))
+    assert est(eng, date(2026, 7, 2)) is False           # 2/5 < 4 → keep catching up
+    with eng.begin() as c:                                # now 4 of 5 are held
+        c.execute(insert(db.snapshots).values(
+            ts=datetime(2026, 7, 1, 18, 2), nav=100_000.0, cash=20_000.0, last_equity=100_000.0,
+            weights=five, positions={f"NM{i}": 100 for i in range(4)}, drift=None))
+    assert est(eng, date(2026, 7, 2)) is True            # 4/5 ≥ 4 → established
+
+
 def test_daily_job_skips_non_trading_day():
     eng = _engine()
     broker = _FakeBroker()

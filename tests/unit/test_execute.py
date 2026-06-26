@@ -19,7 +19,8 @@ from engine.alpaca_client import AlpacaAPIError
 def _settings():
     return SimpleNamespace(execution=SimpleNamespace(
         min_trade_usd=500, large_cap_adv_threshold=50_000_000,
-        mid_cap_adv_threshold=5_000_000, spread_threshold=0.001))
+        mid_cap_adv_threshold=5_000_000, spread_threshold=0.001,
+        marketable_limit_bps=50))
 
 
 def _plan(weights, positions, prices, *, nav=100_000, **kw):
@@ -88,12 +89,21 @@ def test_order_type_market_for_deep_and_tight():
     assert orders[0].order_type == "market" and orders[0].limit_price is None
 
 
-def test_order_type_limit_otherwise_at_mid():
-    # Thin name (low ADV) ⇒ limit; limit price comes from the supplied mid.
+def test_order_type_marketable_limit_buy_above_mid():
+    # Thin name (low ADV) ⇒ marketable limit; a BUY crosses up from the mid by marketable_limit_bps.
     orders, _ = _plan({"AAPL": 0.05}, {}, {"AAPL": 100.0},
                       adv={"AAPL": 1_000_000}, spread={"AAPL": 0.0005},
-                      mid_prices={"AAPL": 100.5})
-    assert orders[0].order_type == "limit" and orders[0].limit_price == 100.5
+                      mid_prices={"AAPL": 100.0})
+    assert orders[0].order_type == "limit" and orders[0].limit_price == 100.5   # 100.0 × (1 + 50bps)
+
+
+def test_order_type_marketable_limit_sell_below_mid():
+    # Trim an oversized position in a thin name ⇒ marketable limit SELL crosses down from the mid.
+    orders, _ = _plan({"AAPL": 0.05}, {"AAPL": 80}, {"AAPL": 100.0},
+                      adv={"AAPL": 1_000_000}, spread={"AAPL": 0.0005},
+                      mid_prices={"AAPL": 100.0})
+    assert orders[0].side == "sell"
+    assert orders[0].order_type == "limit" and orders[0].limit_price == 99.5    # 100.0 × (1 − 50bps)
 
 
 def test_wide_spread_forces_limit_even_if_deep():

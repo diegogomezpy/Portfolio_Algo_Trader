@@ -249,20 +249,46 @@ def is_first_trading_day_of_month(client, as_of: date) -> bool:
     return bool(days) and days[0] == as_of.isoformat()
 
 
-def _book_has_equity_positions(db_engine) -> bool:
-    """True if the latest snapshot shows the book actually holds equity — i.e. a rebalance's
-    orders *filled*. A gate pass whose orders never filled (e.g. submitted into a closed market
-    and cancelled at session end) leaves an empty book, which must not count as 'rebalanced'."""
-    if db_engine is None:
-        return False
+# The catch-up keeps rebalancing until the book holds at least this fraction of the latest
+# target's equity names. Keying on coverage of the target — not merely "any position exists" —
+# stops a rebalance that filled only a name or two (passive limits that mostly didn't fill, an
+# outage mid-fill) from prematurely counting as done and stranding the rest in
+# ``pending_adjustments`` until next month. The fraction (not 100%) keeps a couple of
+# genuinely-unfillable names from forcing perpetual retries; a persistent shortfall still surfaces
+# via the per-rebalance fill alert.
+_CATCHUP_MIN_FILL_FRAC = 0.8
+
+
+def _equity_names(d: dict | None) -> set[str]:
+    """Nonzero **equity** legs of a {symbol: qty/weight} map (short tickers; OCC options are long)."""
+    return {str(s) for s, q in (d or {}).items() if q and len(str(s)) <= 5}
+
+
+def _latest_positions(db_engine) -> dict:
     from sqlalchemy import desc, select
     from engine.db import snapshots
     with db_engine.connect() as conn:
         row = conn.execute(
             select(snapshots.c.positions).order_by(desc(snapshots.c.ts)).limit(1)).first()
-    pos = (row[0] if row else None) or {}
-    # equity symbols are short tickers; OCC option symbols are long — count only nonzero equity legs
-    return any(q for s, q in pos.items() if q and len(str(s)) <= 5)
+    return (row[0] if row else None) or {}
+
+
+def _book_substantially_filled(db_engine) -> bool:
+    """True once the book holds ``_CATCHUP_MIN_FILL_FRAC`` of the latest target's equity names.
+
+    A gate pass whose orders never filled (submitted into a closed market and cancelled, an outage
+    mid-fill) — or filled only partially — must not count as 'rebalanced', or the catch-up stops
+    with a thin book and the unfilled names wait a month. With no target recorded yet this falls
+    back to 'any equity position held'.
+    """
+    if db_engine is None:
+        return False
+    target = _equity_names(monitor.last_target_weights(db_engine))
+    held = _equity_names(_latest_positions(db_engine))
+    if not target:
+        return bool(held)
+    import math
+    return len(held & target) >= max(1, math.ceil(_CATCHUP_MIN_FILL_FRAC * len(target)))
 
 
 def rebalance_established_this_month(db_engine, as_of: date) -> bool:
@@ -291,7 +317,7 @@ def rebalance_established_this_month(db_engine, as_of: date) -> bool:
         ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
     if (ts.year, ts.month) != (as_of.year, as_of.month):
         return False
-    return _book_has_equity_positions(db_engine)             # …and the orders actually filled
+    return _book_substantially_filled(db_engine)             # …and the orders substantially filled
 
 
 def daily_job(
@@ -398,23 +424,26 @@ def graceful_shutdown(scheduler, broker) -> None:
 
 
 def serve(*, env: str, settings, client, broker, db_engine, alert=None,
-          hour: int = 15, minute: int = 0) -> None:
+          hour: int | None = None, minute: int | None = None) -> None:
     """Run the continuous APScheduler process (blocks until SIGTERM/SIGINT).
 
     Two jobs: a weekday EOD job at ``hour:minute`` America/New_York (the holiday gate +
     rebalance/monitor branch live inside :func:`daily_job`), and a 60s monitor tick.
 
-    Default **15:00 ET** (mid-afternoon) is deliberate: it runs *inside* market hours so DAY
-    orders fill in-session (submitting after the 16:00 close would queue them for the next open
-    and they'd be cancelled at session end). 15:00 also sits in the empirical intraday spread
-    trough — spreads are U-shaped, widest at the 9:30 open and widening again into the close
-    auction, narrowest mid-afternoon — so the rebalance executes when bid/ask is tightest, with
-    a full hour of runway before the close.
+    Fires at ``settings.execution.rebalance_hour_et`` (default **13:00 ET**) — mid-session so DAY
+    orders fill *in-session* (submitting after the 16:00 close would queue them for the next open
+    and they'd be cancelled), inside the intraday spread trough (U-shaped: widest at the 9:30 open
+    and the close auction, tightest mid-session), with a long runway before the close for fills to
+    land. ``hour``/``minute`` override the settings value (tests).
     """
     import signal
 
     import pytz
     from apscheduler.schedulers.blocking import BlockingScheduler
+
+    ex = settings.execution
+    hour = int(getattr(ex, "rebalance_hour_et", 13)) if hour is None else hour
+    minute = int(getattr(ex, "rebalance_minute_et", 0)) if minute is None else minute
 
     sched = BlockingScheduler(timezone=pytz.timezone("America/New_York"))
     sched.add_job(

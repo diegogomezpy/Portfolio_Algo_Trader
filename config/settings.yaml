@@ -103,6 +103,15 @@ execution:
   mid_cap_adv_threshold: 5_000_000
   spread_threshold: 0.001
   price_adjustment: all
+  # Non-market orders cross the spread by up to this many bps so they actually FILL in-session,
+  # instead of resting passively at the mid (which often never fills before the ~60s session-end
+  # cancel — it left the establishing rebalance with a thin partial book). It is a CEILING: liquid
+  # names still fill at the touch; only an abnormally wide spread (> this) rests for protection.
+  marketable_limit_bps: 50
+  # When the daily EOD/rebalance job fires (America/New_York). Mid-session: tight spreads and a long
+  # runway before the 16:00 close for DAY orders to fill.
+  rebalance_hour_et: 13
+  rebalance_minute_et: 0
   # Backtest transaction-cost model (DECISIONS D23d): a half-spread charged in basis
   # points, tiered by ADV. Retires the `spread` high-low placeholder.
   cost_bps_large: 5              # ADV >= large_cap_adv_threshold
