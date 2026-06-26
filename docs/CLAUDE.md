@@ -35,7 +35,9 @@ sharpe-engine/
 │   ├── ARCHITECTURE.md        ← how it is built
 │   ├── DECISIONS.md           ← why key choices were made
 │   ├── BUILD_ORDER.md         ← phase-by-phase build plan
-│   └── CLI.md                 ← all command-line entry points
+│   ├── CLI.md                 ← all command-line entry points
+│   └── DESIGN_LANGUAGE.md     ← the SFI design language (dashboard look, tokens, motion)
+├── design_lang/               ← SFI design-language handoff (visual reference, self-contained HTML)
 ├── data/
 │   └── raw/
 │       ├── equities/          ← daily OHLCV Parquet per date
@@ -62,7 +64,7 @@ sharpe-engine/
 ├── dashboard/                 ← live dashboard (Phase 5 ✅)
 │   ├── app.py                 ← FastAPI backend (Postgres reads + self-updating monitor/live-orders layer)
 │   ├── data.py                ← dashboard read queries
-│   └── static/{index.html,theme.css} ← dark-institutional single-page dashboard (polls /api/*)
+│   └── static/{index.html,theme.css} ← single-page dashboard, SFI design language (polls /api/*)
 ├── scripts/
 │   ├── init_db.py             ← create the PostgreSQL schema
 │   ├── backfill.py            ← one-time historical data pull
@@ -180,7 +182,7 @@ code-complete (4.0–4.5: leverage, strike selection, broker option orders, writ
 earnings-close + expiry + rewrite + assignment re-entry, 4.0–4.6) and tested.**
 **Phase 5 (alerting + live dashboard) is code-complete and tested** — alerts.py records and
 (now) live-emails the 6 SPEC alert types via Gmail SMTP (`send_enabled: true`, App Password
-in `SMTP_PASSWORD`); the dark-institutional dashboard (app.py + static/) serves live state
+in `SMTP_PASSWORD`); the SFI-design-language dashboard (app.py + static/) serves live state
 from Postgres, self-updates via an in-process Alpaca→Postgres monitor + live-orders read, and
 its Backtest tab carries the real-premium/variance-risk-premium analytics (D33). The one
 remaining gate is the **live-paper verification of the full strategy**. **Phase 6 (crypto)

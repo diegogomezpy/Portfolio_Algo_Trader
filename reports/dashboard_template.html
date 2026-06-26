@@ -1,44 +1,45 @@
 <style>
-/* Dark-institutional backtest tab. Colours come from the shared design tokens in
-   /static/theme.css; the var() fallbacks keep it self-sufficient if opened standalone. */
+/* SFI backtest tab (the "SFI Design Language" — navy ink, teal accent). Colours come from the
+   shared design tokens in /static/theme.css; the var() fallbacks keep it self-sufficient if
+   opened standalone. Full spec: docs/DESIGN_LANGUAGE.md. */
 .dash{font-family:var(--font,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif);
- color:var(--fg,#e9eef7);background:var(--panel,#121925);max-width:1040px;margin:0 auto;padding:28px 32px 36px;
- border:1px solid var(--line,#232d40);border-radius:var(--r-lg,15px);line-height:1.5;-webkit-font-smoothing:antialiased;
+ color:var(--fg,#eaf2fb);background:var(--panel,#0e1830);max-width:1040px;margin:0 auto;padding:28px 32px 36px;
+ border:1px solid var(--line,#1b2740);border-radius:var(--r-lg,7px);line-height:1.5;-webkit-font-smoothing:antialiased;
  box-shadow:var(--shadow,0 8px 30px -12px rgba(0,0,0,.6));}
 .dash *{box-sizing:border-box;}
 .dash h1{font-size:22px;font-weight:650;margin:0;letter-spacing:-.01em;}
-.dash .sub{color:var(--muted,#7c8a9e);font-size:13px;margin:3px 0 0;}
-.dash h2{font-size:14px;font-weight:600;margin:22px 0 9px;color:var(--fg-dim,#b3becd);}
-.dash .sec{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--muted,#6f7986);
- margin:34px 0 2px;padding-bottom:7px;border-bottom:1px solid var(--line,#232d40);}
+.dash .sub{color:var(--muted,#65758c);font-size:13px;margin:3px 0 0;}
+.dash h2{font-size:14px;font-weight:600;margin:22px 0 9px;color:var(--fg-dim,#cdd9e8);}
+.dash .sec{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--muted,#65758c);
+ margin:34px 0 2px;padding-bottom:7px;border-bottom:1px solid var(--line,#1b2740);}
 .dash .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(116px,1fr));gap:10px;margin-top:18px;}
-.dash .kpi{background:var(--panel-2,#182030);border:1px solid var(--line,#232d40);border-radius:var(--r-sm,7px);padding:11px 13px;}
-.dash .kpi .l{font-size:10.5px;color:var(--muted,#7c8a9e);text-transform:uppercase;letter-spacing:.04em;}
+.dash .kpi{background:var(--panel-2,#16223a);border:1px solid var(--line,#1b2740);border-radius:var(--r-sm,3px);padding:11px 13px;}
+.dash .kpi .l{font-size:10.5px;color:var(--muted,#65758c);text-transform:uppercase;letter-spacing:.04em;}
 .dash .kpi .v{font-size:21px;font-weight:500;margin-top:3px;font-family:var(--mono,ui-monospace,Menlo,monospace);font-variant-numeric:tabular-nums;letter-spacing:-.01em;}
-.dash .kpi .d{font-size:10.5px;margin-top:2px;color:var(--muted,#7c8a9e);font-family:var(--mono,ui-monospace,Menlo,monospace);font-variant-numeric:tabular-nums;}
-.dash .pos{color:var(--green,#3ddc97);}.dash .neg{color:var(--red,#ff5d6c);}
+.dash .kpi .d{font-size:10.5px;margin-top:2px;color:var(--muted,#65758c);font-family:var(--mono,ui-monospace,Menlo,monospace);font-variant-numeric:tabular-nums;}
+.dash .pos{color:var(--green,#5fb088);}.dash .neg{color:var(--red,#cf6f66);}
 .dash .row{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start;}
 .dash .row>div{flex:1 1 380px;min-width:0;}
-.dash .lg{display:flex;gap:13px;font-size:11.5px;color:var(--muted,#7c8a9e);margin:2px 0 8px;align-items:center;flex-wrap:wrap;}
+.dash .lg{display:flex;gap:13px;font-size:11.5px;color:var(--muted,#65758c);margin:2px 0 8px;align-items:center;flex-wrap:wrap;}
 .dash .lg span{display:inline-flex;align-items:center;gap:5px;}
 .dash .sw{width:12px;height:3px;border-radius:2px;display:inline-block;}
 .dash .dot{width:9px;height:9px;border-radius:2px;display:inline-block;flex:none;}
 .dash table{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums;}
-.dash th,.dash td{padding:6px 9px;text-align:right;border-bottom:1px solid var(--line-soft,#19212f);}
+.dash th,.dash td{padding:6px 9px;text-align:right;border-bottom:1px solid var(--line-soft,#131e34);}
 .dash th:first-child,.dash td:first-child{text-align:left;}
-.dash thead th{color:var(--muted,#7c8a9e);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;}
-.dash tbody tr:hover{background:var(--panel-2,#182030);}
+.dash thead th{color:var(--muted,#65758c);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;}
+.dash tbody tr:hover{background:var(--panel-2,#16223a);}
 .dash #bmktbl td:not(:first-child),.dash #contrib td:last-child,.dash #detract td:last-child{font-family:var(--mono,ui-monospace,Menlo,monospace);}
-.dash .blot{max-height:300px;overflow:auto;border:1px solid var(--line,#232d40);border-radius:var(--r-sm,7px);}
-.dash .blot table{font-size:12px;}.dash .blot th{position:sticky;top:0;background:var(--panel,#121925);z-index:1;}
-.dash .adr{font-size:9.5px;color:var(--amber,#f5b73d);background:var(--amber-dim,rgba(245,183,61,.13));border-radius:3px;padding:1px 4px;margin-left:5px;}
-.dash .call{background:var(--green-dim,rgba(61,220,151,.13));border:1px solid rgba(61,220,151,.28);border-radius:var(--r-sm,7px);padding:12px 15px;font-size:13px;margin-top:13px;color:var(--fg-dim,#b3becd);}
-.dash .note{background:var(--amber-dim,rgba(245,183,61,.13));border:1px solid rgba(245,183,61,.30);border-radius:var(--r-sm,7px);padding:12px 15px;font-size:13px;margin-top:11px;color:var(--fg-dim,#b3becd);}
-.dash input[type=range]{width:100%;accent-color:var(--green,#3ddc97);}
+.dash .blot{max-height:300px;overflow:auto;border:1px solid var(--line,#1b2740);border-radius:var(--r-sm,3px);}
+.dash .blot table{font-size:12px;}.dash .blot th{position:sticky;top:0;background:var(--panel,#0e1830);z-index:1;}
+.dash .adr{font-size:9.5px;color:var(--amber,#d8a84b);background:var(--amber-dim,rgba(216,168,75,.13));border-radius:3px;padding:1px 4px;margin-left:5px;}
+.dash .call{background:var(--green-dim,rgba(95,176,136,.13));border:1px solid rgba(95,176,136,.28);border-radius:var(--r-sm,3px);padding:12px 15px;font-size:13px;margin-top:13px;color:var(--fg-dim,#cdd9e8);}
+.dash .note{background:var(--amber-dim,rgba(216,168,75,.13));border:1px solid rgba(216,168,75,.30);border-radius:var(--r-sm,3px);padding:12px 15px;font-size:13px;margin-top:11px;color:var(--fg-dim,#cdd9e8);}
+.dash input[type=range]{width:100%;accent-color:var(--accent,#46b8ad);}
 .dash .scrub{display:flex;gap:14px;align-items:center;margin:4px 0 8px;}
 .dash .scrub b{font-weight:650;min-width:62px;font-size:14px;}
-.dash .foot{color:var(--faint,#54627a);font-size:11.5px;margin-top:28px;border-top:1px solid var(--line,#232d40);padding-top:13px;}
-.dash .snapbox{max-height:300px;overflow:auto;border:1px solid var(--line,#232d40);border-radius:var(--r-sm,7px);}
+.dash .foot{color:var(--faint,#34425e);font-size:11.5px;margin-top:28px;border-top:1px solid var(--line,#1b2740);padding-top:13px;}
+.dash .snapbox{max-height:300px;overflow:auto;border:1px solid var(--line,#1b2740);border-radius:var(--r-sm,3px);}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);}
 @media print{body{background:#fff!important;}.dash{box-shadow:none;border:0;max-width:100%;}}
 </style>
@@ -48,13 +49,13 @@
 
 <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;">
   <div><h1>sharpe-engine — strategy backtest</h1><p class="sub" id="period"></p></div>
-  <div style="font-size:12px;color:var(--muted,#7c8a9e);text-align:right;">factor equity + covered-call overlay<br>vs S&amp;P 500 (SPY), net of costs</div>
+  <div style="font-size:12px;color:var(--muted,#65758c);text-align:right;">factor equity + covered-call overlay<br>vs S&amp;P 500 (SPY), net of costs</div>
 </div>
 <div class="kpis" id="kpis"></div>
 
 <div class="sec">Performance</div>
 <h2>Growth of $100,000 — full strategy (equity + covered calls) vs S&amp;P 500</h2>
-<div class="lg"><span><i class="sw" style="background:var(--green,#3ddc97)"></i>full strategy (equity + covered calls)</span><span><i class="sw" style="background:var(--faint,#54627a)"></i>factor equity only</span><span><i class="sw" style="background:var(--spy,#8c99ad)"></i>S&amp;P 500</span></div>
+<div class="lg"><span><i class="sw" style="background:var(--accent,#46b8ad)"></i>full strategy (equity + covered calls)</span><span><i class="sw" style="background:var(--faint,#34425e)"></i>factor equity only</span><span><i class="sw" style="background:var(--spy,#8893a3)"></i>S&amp;P 500</span></div>
 <div id="growth"></div>
 <p class="sub" id="growthnote" style="margin:8px 0 0;"></p>
 <div class="row">
@@ -88,7 +89,7 @@
 <div class="row">
   <div><h2>Factor sleeve return (annualized)</h2><div id="attr"></div></div>
   <div><h2>Calendar-year return vs SPY</h2>
-    <div class="lg"><span><i class="sw" style="background:var(--green,#3ddc97)"></i>strategy</span><span><i class="sw" style="background:var(--spy,#8c99ad)"></i>SPY</span></div>
+    <div class="lg"><span><i class="sw" style="background:var(--accent,#46b8ad)"></i>strategy</span><span><i class="sw" style="background:var(--spy,#8893a3)"></i>SPY</span></div>
     <div id="years"></div></div>
 </div>
 <div class="row">
@@ -100,10 +101,10 @@
 <p class="sub" id="vrpsub" style="margin:2px 0 4px;"></p>
 <div class="kpis" id="vrpkpis"></div>
 <h2>Implied vol (sold) vs realized vol (over the hold)</h2>
-<div class="lg"><span><i class="sw" style="background:var(--accent,#5b9dff)"></i>implied vol — what we sold at</span><span><i class="sw" style="background:var(--spy,#8c99ad)"></i>realized vol — what the names did</span></div>
+<div class="lg"><span><i class="sw" style="background:var(--accent,#46b8ad)"></i>implied vol — what we sold at</span><span><i class="sw" style="background:var(--spy,#8893a3)"></i>realized vol — what the names did</span></div>
 <div id="vrpchart"></div>
 <h2>The edge: implied − realized vol (the variance risk premium, by month)</h2>
-<div class="lg"><span><i class="sw" style="background:var(--green,#3ddc97)"></i>positive — sold vol richer than it realized (we got paid)</span><span><i class="sw" style="background:var(--red,#ff5d6c)"></i>negative — realized &gt; implied (a crash month)</span></div>
+<div class="lg"><span><i class="sw" style="background:var(--green,#5fb088)"></i>positive — sold vol richer than it realized (we got paid)</span><span><i class="sw" style="background:var(--red,#cf6f66)"></i>negative — realized &gt; implied (a crash month)</span></div>
 <div id="vrpdiff"></div>
 <div class="note" id="vrpnote"></div>
 
@@ -114,15 +115,18 @@
 const DATA = /*__DASHBOARD_DATA__*/null;
 (function(){
   const css=(n,f)=>{const v=getComputedStyle(document.documentElement).getPropertyValue(n).trim();return v||f;};
-  const C={ink:css('--fg','#e9eef7'),mut:css('--muted','#7c8a9e'),faint:css('--faint','#54627a'),
-    line:css('--line','#232d40'),grid:css('--line-soft','#19212f'),panel:css('--panel','#121925'),
-    teal:css('--green','#3ddc97'),spy:css('--spy','#8c99ad'),blue:css('--accent','#5b9dff'),
-    red:css('--red','#ff5d6c'),amber:css('--amber','#f5b73d')};
+  // teal = the accent → primary/strategy lines; green = signed-positive bars (green/red are signed-only);
+  // spy = neutral benchmark; blue = a second neutral benchmark hue. (SFI design tokens.)
+  const C={ink:css('--fg','#eaf2fb'),mut:css('--muted','#65758c'),faint:css('--faint','#34425e'),
+    line:css('--line','#1b2740'),grid:css('--grid','#16223a'),panel:css('--panel','#0e1830'),
+    teal:css('--accent','#46b8ad'),green:css('--green','#5fb088'),spy:css('--spy','#8893a3'),
+    blue:css('--sec-tech','#6f93d6'),red:css('--red','#cf6f66'),amber:css('--amber','#d8a84b')};
   // SVG axis labels render in mono+tabular (matches the live charts' numeric ticks); the font
   // stacks carry embedded double-quotes, so swap to single quotes to survive the style attribute.
   const FM=css('--mono','ui-monospace,SFMono-Regular,Menlo,monospace').replace(/"/g,"'");
   const FS=css('--font','-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif').replace(/"/g,"'");
-  const SECCOL={"Energy":"#e0a341","Materials":"#b3a892","Industrials":"#5b9dff","Consumer Discretionary":"#e87fa8","Consumer Staples":"#9ccc5a","Health Care":"#3ddc97","Financials":"#9a8cff","Information Technology":"#46c7e8","Communication Services":"#ff8a5c","Utilities":"#8a97ab","Real Estate":"#ef6b6b","Unknown":"#5a6678","Cash":"#2a3445"};
+  // SFI sector accents — low-saturation, signed-neutral (never the green/red reserved for P&L).
+  const SECCOL={"Energy":"#c2a36b","Materials":"#6fb0c4","Industrials":"#8893a3","Consumer Discretionary":"#d8a84b","Consumer Staples":"#7fae8f","Health Care":"#cf8a86","Financials":"#4ea6a0","Information Technology":"#6f93d6","Communication Services":"#9b87d4","Utilities":"#7d8ba0","Real Estate":"#a98fb0","Unknown":"#5a6678","Cash":"#233454"};
   const pct=(v,d=1)=>v==null?"—":(v>=0?"+":"")+(v*100).toFixed(d)+"%";
   const usd=v=>(v<0?"-$":"$")+Math.abs(v).toLocaleString();
   const nm=t=>(DATA.names&&DATA.names[t])||t;
@@ -155,7 +159,7 @@ const DATA = /*__DASHBOARD_DATA__*/null;
     const n=vals.length,slot=f.plotW/n,zero=sy(f,0,lo,hi);
     let s=open(f)+yaxis(f,lo,hi,fmtY);
     vals.forEach((v,i)=>{if(v==null)return;const x=f.padL+i*slot,y=sy(f,v,lo,hi);
-      s+=`<rect x="${(x+1).toFixed(1)}" y="${Math.min(y,zero).toFixed(1)}" width="${Math.max(slot-2,1).toFixed(1)}" height="${Math.max(Math.abs(y-zero),0.6).toFixed(1)}" rx="1" fill="${v>=0?C.teal:C.red}"/>`;});
+      s+=`<rect x="${(x+1).toFixed(1)}" y="${Math.min(y,zero).toFixed(1)}" width="${Math.max(slot-2,1).toFixed(1)}" height="${Math.max(Math.abs(y-zero),0.6).toFixed(1)}" rx="1" fill="${v>=0?C.green:C.red}"/>`;});
     s+=`<line x1="${f.padL}" y1="${zero.toFixed(1)}" x2="${f.w-f.padR}" y2="${zero.toFixed(1)}" stroke="${C.faint}" stroke-width="1"/>`;
     for(let i=0;i<n;i+=Math.max(1,Math.round(n/6))){s+=`<text x="${(f.padL+i*slot+slot/2).toFixed(1)}" y="${f.h-7}" text-anchor="middle" font-size="11" fill="${C.mut}">${labels[i]}</text>`;}
     put(id,s);
@@ -181,8 +185,8 @@ const DATA = /*__DASHBOARD_DATA__*/null;
     items.forEach((it,i)=>{const y=10+i*27,cz=f.padL+plotW/2,w=it.v/mx*plotW/2;
       s+=`<text x="${f.padL-9}" y="${y+13}" text-anchor="end" font-size="12" fill="${C.ink}" style="font-family:${FS}">${it.name}</text>`;
       s+=`<line x1="${cz}" y1="${y}" x2="${cz}" y2="${y+20}" stroke="${C.line}" stroke-width="1"/>`;
-      s+=`<rect x="${(w<0?cz+w:cz).toFixed(1)}" y="${y+2}" width="${Math.abs(w).toFixed(1)}" height="15" rx="2" fill="${it.v>=0?C.teal:C.red}"/>`;
-      s+=`<text x="${(cz+w+(it.v>=0?5:-5)).toFixed(1)}" y="${y+13}" text-anchor="${it.v>=0?"start":"end"}" font-size="11.5" fill="${it.v>=0?C.teal:C.red}">${fmt(it.v)}</text>`;});
+      s+=`<rect x="${(w<0?cz+w:cz).toFixed(1)}" y="${y+2}" width="${Math.abs(w).toFixed(1)}" height="15" rx="2" fill="${it.v>=0?C.green:C.red}"/>`;
+      s+=`<text x="${(cz+w+(it.v>=0?5:-5)).toFixed(1)}" y="${y+13}" text-anchor="${it.v>=0?"start":"end"}" font-size="11.5" fill="${it.v>=0?C.green:C.red}">${fmt(it.v)}</text>`;});
     put(id,s);
   }
   function donut(id,items){
@@ -225,10 +229,10 @@ const DATA = /*__DASHBOARD_DATA__*/null;
     {data:E.spy_cum.map(v=>v*1e5),color:C.spy,w:2,dash:"5 4"},
   ],{h:240,fmtY:v=>"$"+Math.round(v/1000)+"k"});
   document.getElementById("growthnote").innerHTML=P
-    ?`Full strategy = factor equity <b>+ the covered-call overlay</b> priced from real historical premiums (Sharpe ${P.sharpe.toFixed(2)} vs equity-only ${E.sharpe.toFixed(2)}). The overlay backtest assumes full coverage; live, calls are written only on names holding ≥100 shares (~½ the book at 2×), so the realized result sits <i>between</i> the two green lines. The optional put-wheel is excluded here (off by default).`
+    ?`Full strategy = factor equity <b>+ the covered-call overlay</b> priced from real historical premiums (Sharpe ${P.sharpe.toFixed(2)} vs equity-only ${E.sharpe.toFixed(2)}). The overlay backtest assumes full coverage; live, calls are written only on names holding ≥100 shares (~½ the book at 2×), so the realized result sits <i>between</i> the teal (full strategy) and grey (equity-only) lines. The optional put-wheel is excluded here (off by default).`
     :`Factor equity strategy only — covered-call overlay data unavailable this build.`;
   lineChart("dd",DATA.labels,[{data:E.dd,color:C.red,w:1.6}],{h:175,area:true,hi:0,fmtY:v=>(v*100).toFixed(0)+"%"});
-  lineChart("roll",DATA.labels,[{data:E.roll_sharpe,color:C.blue,w:2}],{h:175,fmtY:v=>v.toFixed(1),refs:[{v:0,c:C.faint},{v:1,c:"#cdd6cf"}]});
+  lineChart("roll",DATA.labels,[{data:E.roll_sharpe,color:C.teal,w:2}],{h:175,fmtY:v=>v.toFixed(1),refs:[{v:0,c:C.faint},{v:1,c:"#cdd9e8"}]});
 
   // Strategy vs SPY + CBOE 30Δ buy-writes (BXMD = S&P 500, BXRD = Russell 2000), normalized.
   const BM=DATA.benchmarks||{}, BS=BM.series||{};
@@ -284,7 +288,7 @@ const DATA = /*__DASHBOARD_DATA__*/null;
       {l:"IV > RV",v:pp(VRP.hit_rate),d:"of months"},
       {l:"Real coverage",v:pp(VRP.real_coverage),d:`${pp(VRP.unhedged_weight,1)} unhedged`},
     ].map(k=>`<div class="kpi"><div class="l">${k.l}</div><div class="v">${k.v}</div><div class="d">${k.d}</div></div>`).join("");
-    lineChart("vrpchart",VRP.labels,[{data:VRP.iv,color:C.blue,w:2},{data:VRP.rv,color:C.spy,w:2}],{h:200,lo:0,fmtY:v=>(v*100).toFixed(0)+"%"});
+    lineChart("vrpchart",VRP.labels,[{data:VRP.iv,color:C.teal,w:2},{data:VRP.rv,color:C.spy,w:2}],{h:200,lo:0,fmtY:v=>(v*100).toFixed(0)+"%"});
     // The edge made explicit: IV − RV per month (green = we got paid, red = a crash month).
     const diff=VRP.iv.map((v,i)=>(v==null||VRP.rv[i]==null)?null:v-VRP.rv[i]);
     signedBars("vrpdiff",VRP.labels,diff,v=>(v*100).toFixed(0));

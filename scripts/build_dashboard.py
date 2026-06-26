@@ -412,11 +412,17 @@ def main() -> None:
         full = ('<!DOCTYPE html>\n<html lang="en">\n<head><meta charset="utf-8">'
                 '<meta name="viewport" content="width=device-width, initial-scale=1">'
                 '<link rel="icon" href="/favicon.svg" type="image/svg+xml">'
-                '<link rel="stylesheet" href="/static/theme.css">'
+                # SFI fonts: Space Grotesk (display/UI) + IBM Plex Mono (numbers) — must be loaded
+                # here too, since an iframe does not inherit the parent page's fonts.
+                '<link rel="preconnect" href="https://fonts.googleapis.com">'
+                '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+                '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?'
+                'family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap">'
+                '<link rel="stylesheet" href="/static/theme.css?v=5">'
                 "<title>sharpe-engine — backtest dashboard</title></head>\n"
-                # dark canvas; var(--bg) is from the shared theme, the hex is the standalone
-                # (file://) fallback so the page is still dark without the served stylesheet.
-                '<body style="margin:0;padding:22px 0;background:var(--bg,#0a0e15);">\n'
+                # navy canvas; var(--bg) is from the shared theme, the hex is the standalone
+                # (file://) fallback so the page is still on-brand without the served stylesheet.
+                '<body style="margin:0;padding:22px 0;background:var(--bg,#0b1322);">\n'
                 + frag + "\n</body></html>")
         HTML_OUT.write_text(full)
         print(f"wrote {HTML_OUT} ({HTML_OUT.stat().st_size/1024:.1f} KB) and {FRAG_OUT}")

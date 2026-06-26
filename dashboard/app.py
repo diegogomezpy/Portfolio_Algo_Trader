@@ -36,13 +36,14 @@ _STATIC = Path(__file__).parent / "static"
 _INDEX = _STATIC / "index.html"
 _BACKTEST = Path(__file__).parent.parent / "reports" / "backtest_dashboard.html"
 
-# A tiny inline SVG mark used as the favicon and the header logo (generic — no branding).
+# The SFI mark — a 3×3 dot grid with the middle column in teal — on a rounded navy tile.
+# (See the SFI Design Language: docs/DESIGN_LANGUAGE.md / design_lang/.)
 _FAVICON = (
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
-    '<rect width="32" height="32" rx="7" fill="#121925"/>'
-    '<path d="M5 21 L13 13 L18 18 L27 7" fill="none" stroke="#3ddc97" '
-    'stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>'
-    '<circle cx="27" cy="7" r="2.4" fill="#3ddc97"/></svg>'
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36">'
+    '<rect width="36" height="36" rx="8" fill="#0e1830"/>'
+    '<circle cx="9" cy="9" r="3.1" fill="#34425e"/><circle cx="18" cy="9" r="3.1" fill="#46b8ad"/><circle cx="27" cy="9" r="3.1" fill="#34425e"/>'
+    '<circle cx="9" cy="18" r="3.1" fill="#34425e"/><circle cx="18" cy="18" r="3.1" fill="#46b8ad"/><circle cx="27" cy="18" r="3.1" fill="#34425e"/>'
+    '<circle cx="9" cy="27" r="3.1" fill="#34425e"/><circle cx="18" cy="27" r="3.1" fill="#46b8ad"/><circle cx="27" cy="27" r="3.1" fill="#34425e"/></svg>'
 )
 
 

@@ -1,45 +1,60 @@
-/* sharpe-engine — shared dark *terminal* design system.
+/* SFI — Systematic Factor Income · shared design system (the "SFI Design Language").
  *
  * One source of truth for BOTH the live tab (dashboard/static/index.html) and the generated
- * backtest tab (reports/backtest_dashboard.html). Both <link> this file; the backtest SVG
- * charts read core colours from these CSS variables via getComputedStyle.
+ * backtest tab (reports/backtest_dashboard.html). Both <link> this file; the chart SVGs read
+ * core colours from these CSS variables via getComputedStyle.
  *
- * Aesthetic: dense, flat, near-monochrome slate/ink. ONE restrained accent; green/red are
- * reserved strictly for signed P&L. IBM Plex Sans for text, IBM Plex Mono for every number
- * (tabular). No gradients, minimal chrome, hairline borders.
+ * Aesthetic: dense, flat, navy ink with ONE teal accent. Teal is brand & focus; green/red are
+ * reserved strictly for signed P&L. Space Grotesk for display/UI/labels, IBM Plex Mono for every
+ * number (tabular). Flat panels, hairline borders, no gradients; shadow only on floating chrome.
+ *
+ * Full spec — tokens, motion, iconography, formatting, resilience, a11y — in docs/DESIGN_LANGUAGE.md;
+ * visual reference (handoff) in design_lang/.
  */
 
 :root {
-  /* ---- surfaces (neutral ink, flat) ------------------------------------ */
-  --bg:        #0a0c10;   /* app canvas */
-  --bg-2:      #0c0f14;   /* sticky header / alt canvas */
-  --panel:     #0f1217;   /* panels */
-  --panel-2:   #141821;   /* nested rows, hover, inputs */
-  --panel-3:   #1b212b;   /* active / elevated */
-  --line:      #20262f;   /* borders / hairlines */
-  --line-soft: #161b22;   /* faint gridlines */
+  /* ---- surfaces (navy ink, flat) --------------------------------------- */
+  --bg:        #0b1322;   /* app canvas */
+  --bg-2:      #0a1120;   /* sticky header / code & footer strips */
+  --panel:     #0e1830;   /* panels */
+  --panel-2:   #16223a;   /* nested rows, hover, inputs */
+  --panel-3:   #1f2c49;   /* active / elevated */
+  --line:      #1b2740;   /* borders / hairlines */
+  --line-soft: #131e34;   /* inner rows / faint hairlines */
+  --grid:      #16223a;   /* chart gridlines */
 
   /* ---- text ------------------------------------------------------------ */
-  --fg:    #e6e9ee;   /* primary */
-  --fg-dim:#a7b0bc;   /* secondary */
-  --muted: #6f7986;   /* labels / tertiary */
-  --faint: #49525e;   /* axes / quaternary */
+  --fg:    #eaf2fb;   /* primary */
+  --fg-dim:#cdd9e8;   /* secondary */
+  --muted: #65758c;   /* labels / tertiary */
+  --faint: #34425e;   /* axes / quaternary */
 
-  /* ---- one accent; green/red ONLY for signed values -------------------- */
-  --accent:  #4d8fd6;   --accent-dim: rgba(77,143,214,.14);
-  --green:   #46b07e;   --green-dim:  rgba(70,176,126,.12);
-  --red:     #df6660;   --red-dim:    rgba(223,102,96,.12);
-  --amber:   #c79545;   --amber-dim:  rgba(199,149,69,.12);   /* warn / stale only */
+  /* ---- one accent (teal); green/red ONLY for signed values ------------- */
+  --accent:  #46b8ad;   --accent-dim: rgba(70,184,173,.14);
+  --green:   #5fb088;   --green-dim:  rgba(95,176,136,.12);
+  --red:     #cf6f66;   --red-dim:    rgba(207,111,102,.12);
+  --amber:   #d8a84b;   --amber-dim:  rgba(216,168,75,.12);    /* warn / stale only */
   --purple:  #9b87d4;   --purple-dim: rgba(155,135,212,.12);  /* benchmark series only */
-  --spy:     #7d8896;   /* neutral benchmark series */
+  --spy:     #8893a3;   /* neutral benchmark series */
 
-  /* ---- shape / motion (sharp, flat) ------------------------------------ */
-  --r-sm: 3px;  --r: 4px;  --r-lg: 6px;
+  /* ---- sector accents (signed-neutral; for chips & exposure rings) ----- */
+  --sec-tech:#6f93d6; --sec-comm:#9b87d4; --sec-health:#cf8a86; --sec-fin:#4ea6a0;
+  --sec-disc:#d8a84b; --sec-staples:#7fae8f; --sec-energy:#c2a36b; --sec-ind:#8893a3; --sec-mat:#6fb0c4;
+
+  /* ---- shape (sharp, flat) --------------------------------------------- */
+  --r-sm: 3px;  --r: 6px;  --r-lg: 7px;   /* chip · control · panel */
   --shadow: none;
-  --ease: cubic-bezier(.4,0,.2,1);
+  --shadow-float: 0 8px 22px rgba(0,0,0,.5);   /* floating only: toast, header */
+
+  /* ---- motion ---------------------------------------------------------- */
+  --ease: cubic-bezier(.4,0,.2,1);          /* standard */
+  --ease-decel: cubic-bezier(0,0,.2,1);     /* enter (soft) */
+  --ease-accel: cubic-bezier(.4,0,1,1);     /* exit (quick) */
+  --ease-emph:  cubic-bezier(.2,.8,.2,1);   /* emphasized */
+  --dur-instant: 80ms; --dur-fast: 140ms; --dur-base: 200ms; --dur-slow: 320ms;
 
   /* ---- type ------------------------------------------------------------ */
-  --font: "IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --font: "Space Grotesk",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   --mono: "IBM Plex Mono",ui-monospace,"SF Mono",SFMono-Regular,"JetBrains Mono",Menlo,Consolas,monospace;
 }
 
@@ -47,23 +62,16 @@
 
 body {
   margin: 0;
-  /* graph-paper dot grid over the ink canvas (terminal texture) + a soft slate glow rising from
-     the bottom to ground the empty space below the content. Panels are opaque, so they sit clean
-     on top; the texture only shows in the gaps and the open canvas. */
-  background-color: var(--bg);
-  background-image:
-    radial-gradient(rgba(155,175,205,.10) 1px, transparent 1.4px),
-    radial-gradient(135% 80% at 50% 122%, rgba(95,130,180,.10), transparent 56%);
-  background-size: 22px 22px, 100% 100%;
-  background-position: -1px -1px, center bottom;
-  background-attachment: fixed, fixed;
+  /* flat navy ink — panels are opaque and sit clean on top. No texture, no gradient. */
+  background: var(--bg);
   color: var(--fg);
   font: 13px/1.45 var(--font);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
+::selection { background: rgba(70,184,173,.30); }
 
-/* every number is mono + tabular — the terminal signature */
+/* every number is mono + tabular — the SFI signature */
 .num, .mono, .se-table td, .se-kpi .val, .se-kpi .sub {
   font-family: var(--mono); font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1;
 }
@@ -92,7 +100,7 @@ body {
 .se-panel {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: var(--r);
+  border-radius: var(--r-lg);
   box-shadow: var(--shadow);
   overflow: hidden;
 }
@@ -108,7 +116,7 @@ body {
 .se-kpi {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: var(--r);
+  border-radius: var(--r-lg);
   padding: 9px 12px 10px;
   box-shadow: var(--shadow);
   position: relative; overflow: hidden;

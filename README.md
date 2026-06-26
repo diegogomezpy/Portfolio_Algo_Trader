@@ -62,7 +62,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 
 ## Monitoring & operations
 
-A live **dashboard** (FastAPI + one dark-themed page) serves current state from Postgres and
+A live **dashboard** (FastAPI + one page built in the **SFI design language** — see
+[docs/DESIGN_LANGUAGE.md](docs/DESIGN_LANGUAGE.md)) serves current state from Postgres and
 self-updates via an in-process Alpaca→Postgres monitor:
 
 - **Overview** — NAV, day P&L, leverage gauge, cash, premium, and a global health bar (engine
