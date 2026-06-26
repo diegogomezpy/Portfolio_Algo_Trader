@@ -240,6 +240,32 @@ def test_api_slippage_signs_and_aggregate():
     assert sl["total_slippage_usd"] == -14.0                                # -10 + (-4)
 
 
+def test_slippage_from_orders_market_uses_arrival_mid():
+    """Live path: market orders are priced vs the arrival mid; a missing arrival drops the order."""
+    arrivals = {("WU", "t-buy"): 7.20, ("WU", "t-sell"): 7.20}   # NBBO mid at submit
+    arrival_mid = lambda sym, ts: arrivals.get((sym, ts))
+    orders = [
+        # market BUY filled ABOVE the arrival mid → adverse (paid up): (7.21-7.20)/7.20*1e4 ≈ +13.9 bps
+        {"symbol": "WU", "side": "buy", "type": "market", "filled_qty": 100,
+         "limit_price": None, "filled_avg_price": 7.21, "submitted_at": "t-buy"},
+        # market SELL filled BELOW the arrival mid → adverse (got less): (7.20-7.18)/7.20*1e4 ≈ +27.8 bps
+        {"symbol": "WU", "side": "sell", "type": "market", "filled_qty": 100,
+         "limit_price": None, "filled_avg_price": 7.18, "submitted_at": "t-sell"},
+        # limit order → priced vs its limit, no arrival lookup needed
+        {"symbol": "AAPL", "side": "buy", "type": "limit", "filled_qty": 10,
+         "limit_price": 100.0, "filled_avg_price": 99.90, "submitted_at": "t-x"},
+        # market order whose arrival mid can't be resolved → skipped (no reference)
+        {"symbol": "XYZ", "side": "buy", "type": "market", "filled_qty": 5,
+         "limit_price": None, "filled_avg_price": 50.0, "submitted_at": "t-missing"},
+    ]
+    sl = data.slippage_from_orders(orders, arrival_mid)
+    assert sl["n_fills"] == 3                                                # XYZ (no arrival) dropped
+    by = {f["symbol"]: f for f in sl["fills"]}
+    assert by["WU"]["basis"] == "arrival" and by["WU"]["type"] == "market"
+    assert by["WU"]["slippage_bps"] > 0                                      # paid up on the buy = adverse
+    assert by["AAPL"]["basis"] == "limit" and by["AAPL"]["slippage_bps"] == -10.0
+
+
 def test_held_symbols_union_excludes_options():
     eng = _engine()
     _seed(eng)

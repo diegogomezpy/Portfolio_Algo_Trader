@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -108,6 +108,44 @@ def _live_orders(client, limit: int) -> list[dict]:
              "type": o.get("type"), "status": o.get("status"), "filled_qty": o.get("filled_qty"),
              "filled_avg_price": o.get("filled_avg_price"),
              "submitted_at": o.get("submitted_at")} for o in orders]
+
+
+# Arrival-mid lookups are immutable once an order has filled, so cache them per (symbol, submit
+# time) — a panel refresh shouldn't re-hit the data API for the same fills.
+_ARRIVAL_MID_CACHE: dict = {}
+
+
+def _arrival_mid(client, symbol, submitted_at):
+    """The NBBO mid prevailing at order submission — the 'arrival price' a market fill is judged
+    against. Returns the first quote at/after ``submitted_at`` (within 30s), or ``None`` if no
+    quote resolves. Cached so repeated slippage-panel refreshes don't re-query the data API."""
+    if not symbol or not submitted_at:
+        return None
+    key = (symbol, str(submitted_at))
+    if key in _ARRIVAL_MID_CACHE:
+        return _ARRIVAL_MID_CACHE[key]
+    mid = None
+    try:
+        start = datetime.fromisoformat(str(submitted_at))
+        end = start + timedelta(seconds=30)
+        quotes = client.historical_quotes(symbol, start=start.isoformat(),
+                                           end=end.isoformat(), limit=1)
+        if quotes:
+            bid, ask = quotes[0].get("bid_px"), quotes[0].get("ask_px")
+            if bid and ask:
+                mid = (bid + ask) / 2
+    except Exception as exc:  # noqa: BLE001 — a quote miss just drops that order from slippage
+        log.warning("arrival-mid lookup failed for %s @ %s: %s", symbol, submitted_at, exc)
+    _ARRIVAL_MID_CACHE[key] = mid
+    return mid
+
+
+def _live_slippage(client, limit: int = 200) -> dict:
+    """Execution quality from live Alpaca fills. Includes market orders and trades placed directly
+    on Alpaca (priced vs the arrival NBBO mid) — not just the engine's limit orders."""
+    orders = client.get_orders(status="all", limit=limit)
+    filled = [o for o in orders if str(o.get("status")).lower() == "filled"]
+    return data.slippage_from_orders(filled, lambda s, t: _arrival_mid(client, s, t))
 
 
 def _align(closes: dict, dates: list[str]) -> list[float]:
@@ -259,6 +297,13 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
 
     @app.get("/api/slippage")
     def slippage() -> dict:
+        # Live Alpaca fills (incl. market + manually-placed trades, priced vs the arrival mid)
+        # when a broker client is available; fall back to the engine's Postgres limit orders.
+        if client is not None:
+            try:
+                return _live_slippage(client)
+            except Exception as exc:  # noqa: BLE001 — degrade to Postgres, never break the panel
+                log.warning("live slippage read failed, falling back to Postgres: %s", exc)
         return data.api_slippage(db_engine)
 
     @app.get("/api/risk")

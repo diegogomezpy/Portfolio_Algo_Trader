@@ -348,6 +348,7 @@ const fmt = (v,d=0) => v==null||isNaN(v) ? "–" : Number(v).toLocaleString(unde
 const usd  = v => v==null ? "–" : (v<0?"-$":"$")+fmt(Math.abs(v),0);
 const susd = v => v==null ? "–" : (v>=0?"+$":"-$")+fmt(Math.abs(v),0);
 const usd2 = v => v==null ? "–" : (v<0?"-$":"$")+fmt(Math.abs(v),2);
+const susd2 = v => v==null ? "–" : (v>=0?"+$":"-$")+fmt(Math.abs(v),2);
 const pct  = (v,d=1) => v==null ? "–" : (100*v).toFixed(d)+"%";
 const spct = (v,d=1) => v==null ? "–" : (v>=0?"+":"")+(100*v).toFixed(d)+"%";
 const sgn  = v => v==null ? "mut" : v>0 ? "pos" : v<0 ? "neg" : "mut";
@@ -507,18 +508,20 @@ function renderReturns(tr, slip){
 
 function renderExecution(slip){
   if(slip && slip.n_fills){
-    $("slipsub").textContent = `${slip.n_fills} filled limit orders · positive bps = paid up vs mid`;
+    $("slipsub").textContent = `${slip.n_fills} filled orders · positive bps = paid up vs reference (limit, or arrival mid for market)`;
     $("slippage").innerHTML = table(slip.fills, [
-      {h:"Symbol", cls:()=>"sym", f:r=>symCell(r.symbol)}, {h:"Side", tip:"Buy or sell.", f:r=>r.side}, {h:"Qty", tip:"Filled quantity.", f:r=>fmt(r.qty)},
-      {h:"Intended", tip:"Decision-time reference price (the order's limit / mid).", f:r=>usd2(r.intended)},
+      {h:"Symbol", cls:()=>"sym", f:r=>symCell(r.symbol)}, {h:"Side", tip:"Buy or sell.", f:r=>r.side},
+      {h:"Type", tip:"Order type. Market fills are judged against the arrival NBBO mid at submit; limit fills against their limit price.", f:r=>r.type||"—"},
+      {h:"Qty", tip:"Filled quantity.", f:r=>fmt(r.qty)},
+      {h:"Reference", tip:"The price each fill is judged against: the order's limit (limit orders) or the arrival NBBO mid at submit time (market orders).", f:r=>usd2(r.intended)},
       {h:"Filled", tip:"Actual average fill price.", f:r=>usd2(r.filled)},
-      {h:"Slippage", tip:"Fill vs intended, in basis points. Positive = paid up (adverse); negative = price improvement.",
+      {h:"Slippage", tip:"Fill vs reference, in basis points. Positive = paid up (adverse); negative = price improvement.",
         f:r=>`<span class="${r.slippage_bps>0?'neg':'pos'}">${r.slippage_bps>0?'+':''}${r.slippage_bps} bps</span>`},
-      {h:"Cost", tip:"Dollar execution cost vs the intended price (negative = saved money).",
-        f:r=>`<span class="${r.slippage_usd>0?'neg':'pos'}">${susd(-r.slippage_usd)}</span>`},
+      {h:"Cost", tip:"Execution P&L vs the reference price, to the cent — green/positive = price improvement, red/negative = paid up.",
+        f:r=>`<span class="${r.slippage_usd>0?'neg':'pos'}">${susd2(-r.slippage_usd)}</span>`},
     ]);
   } else {
-    $("slippage").innerHTML = '<div class="se-empty">No filled limit orders yet — this compares each fill to its intended (mid) price once the strategy trades.</div>';
+    $("slippage").innerHTML = '<div class="se-empty">No filled orders yet — this compares each fill to its reference price (the order\'s limit, or the arrival mid for market orders) once there\'s trading activity.</div>';
   }
 }
 
@@ -685,9 +688,9 @@ function renderHealth(h){
 function kpis(s){
   const lev = s.leverage, cap = META.leverage_cap||2.0, over = lev!=null && lev>cap+1e-9;
   const cards = [];
-  cards.push(kpi("Net asset value", usd(s.nav),
+  cards.push(kpi("Net asset value", usd2(s.nav),
     s.day_pnl_pct==null ? "" : `<span class="${sgn(s.day_pnl_pct)}">${spct(s.day_pnl_pct)} today</span>`,
-    "Total account equity (cash + positions), live from Alpaca."));
+    "Total account equity (cash + positions), live from Alpaca — exact to the cent."));
   cards.push(kpi("Day P&amp;L",
     `<span class="${sgn(s.day_pnl)}">${susd(s.day_pnl)}</span>`,
     s.day_pnl_pct==null ? "" : `<span class="${sgn(s.day_pnl_pct)}">${spct(s.day_pnl_pct)} vs prior</span>`,
@@ -696,9 +699,9 @@ function kpis(s){
       <div class="val ${over?'neg':''}">${lev==null?"–":lev.toFixed(2)+"×"}</div>
       <div class="gauge ${over?'over':''}"><i style="width:${lev==null?0:Math.min(100,lev/cap*100).toFixed(0)}%"></i></div>
       <div class="sub">cap ${cap.toFixed(1)}× · gross ${usd(s.gross_exposure)}</div></div>`);
-  cards.push(kpi("Cash", usd(s.cash),
+  cards.push(kpi("Cash", usd2(s.cash),
     (s.cash!=null && s.nav) ? `${pct(s.cash/s.nav)} of NAV` : "",
-    "Uninvested cash balance."));
+    "Uninvested cash balance — exact to the cent."));
   cards.push(kpi("Premium collected", usd(s.premium_collected),
     (s.premium_collected && s.nav) ? `${pct(s.premium_collected/s.nav)} of NAV` : "lifetime",
     "Lifetime premium income from writing covered calls."));

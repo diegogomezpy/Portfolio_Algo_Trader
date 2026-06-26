@@ -490,35 +490,79 @@ def api_risk(db_engine, *, window: int = 10) -> dict:
     }
 
 
-def api_slippage(db_engine) -> dict:
-    """Execution quality from filled orders: realized fill vs the intended (limit/mid) price.
+def _slippage_core(records, arrival_mid) -> dict:
+    """Execution quality from filled orders: realized fill vs the *intended* (reference) price.
 
-    Per filled limit order, ``slippage = (fill − intended)`` signed so **positive = adverse**
-    (paid more on a buy / received less on a sell), in bps of the intended price and in dollars.
-    Market orders carry no intended price (limit None) and are excluded. Aggregates are
-    notional-weighted. The dollar total is the realized execution cost vs decision-time mid.
+    The reference is the order's ``limit_price`` for a limit order, or — for a **market order** —
+    the arrival NBBO mid at submit time, supplied by ``arrival_mid(symbol, submitted_at) -> float |
+    None``. A market order whose arrival mid can't be resolved is skipped (no reference to measure
+    against). ``slippage = (fill − intended)`` is signed so **positive = adverse** (paid more on a
+    buy / received less on a sell), in bps of the intended price and in dollars. Aggregates are
+    notional-weighted; the dollar total is the realized execution cost vs the reference.
     """
-    with db_engine.connect() as conn:
-        rows = conn.execute(
-            select(db.orders).where(db.orders.c.status == "filled")
-            .order_by(desc(db.orders.c.created_at))).mappings().all()
     fills: list[dict] = []
     tot_usd = tot_notional = wbps = 0.0
-    for r in rows:
-        intended, filled, fq = r["limit_price"], r["filled_avg_price"], (r["filled_qty"] or 0)
-        if not intended or not filled or not fq:
+    for r in records:
+        filled, fq = r.get("filled_avg_price"), (r.get("filled_qty") or 0)
+        if not filled or not fq:
             continue
-        adverse = (filled - intended) if str(r["side"]).lower() == "buy" else (intended - filled)
+        limit = r.get("limit_price")
+        if limit:
+            intended, basis = float(limit), "limit"
+        else:                                    # market order → reference is the arrival mid
+            ref = arrival_mid(r.get("symbol"), r.get("submitted_at"))
+            if not ref:
+                continue
+            intended, basis = float(ref), "arrival"
+        side = str(r.get("side")).lower()
+        adverse = (filled - intended) if side == "buy" else (intended - filled)
         bps = adverse / intended * 1e4
         usd, notional = adverse * fq, filled * fq
         tot_usd += usd
         tot_notional += notional
         wbps += bps * notional
-        fills.append({"symbol": r["symbol"], "side": str(r["side"]).lower(), "qty": fq,
+        fills.append({"symbol": r.get("symbol"), "side": side, "qty": fq,
+                      "type": (str(r.get("order_type")).lower() if r.get("order_type")
+                               else ("limit" if basis == "limit" else "market")),
+                      "basis": basis,
                       "intended": round(float(intended), 2), "filled": round(float(filled), 2),
                       "slippage_bps": round(bps, 1), "slippage_usd": round(usd, 2),
-                      "filled_at": str(r["filled_at"]) if r["filled_at"] else None})
+                      "filled_at": str(r["filled_at"]) if r.get("filled_at") else None})
     avg_bps = (wbps / tot_notional) if tot_notional else None
     return {"n_fills": len(fills),
             "avg_slippage_bps": round(avg_bps, 1) if avg_bps is not None else None,
             "total_slippage_usd": round(tot_usd, 2), "fills": fills[:30]}
+
+
+def slippage_from_orders(orders, arrival_mid) -> dict:
+    """Execution quality from live Alpaca order dicts (shaped like ``AlpacaClient.get_orders``).
+
+    Unlike :func:`api_slippage`, this **includes market orders** — their reference is the arrival
+    NBBO mid via ``arrival_mid`` — so trades placed directly on Alpaca and the engine's own
+    market-order legs are covered, not just engine limit orders. Callers pass only filled orders.
+    """
+    records = [{"symbol": o.get("symbol"), "side": o.get("side"), "order_type": o.get("type"),
+                "filled_qty": o.get("filled_qty"), "limit_price": o.get("limit_price"),
+                "filled_avg_price": o.get("filled_avg_price"),
+                "submitted_at": o.get("submitted_at"), "filled_at": o.get("filled_at")}
+               for o in orders]
+    return _slippage_core(records, arrival_mid)
+
+
+def api_slippage(db_engine) -> dict:
+    """Execution quality from the engine's filled orders in Postgres (the offline / no-broker path).
+
+    Limit orders only: without a broker client there's no arrival quote to price a market order
+    against, so market orders are excluded here — the live route in ``app.py`` covers them via
+    :func:`slippage_from_orders`. See :func:`_slippage_core` for the sign convention.
+    """
+    with db_engine.connect() as conn:
+        rows = conn.execute(
+            select(db.orders).where(db.orders.c.status == "filled")
+            .order_by(desc(db.orders.c.created_at))).mappings().all()
+    records = [{"symbol": r["symbol"], "side": r["side"], "order_type": r["order_type"],
+                "filled_qty": r["filled_qty"], "limit_price": r["limit_price"],
+                "filled_avg_price": r["filled_avg_price"],
+                "submitted_at": r["submitted_at"], "filled_at": r["filled_at"]}
+               for r in rows]
+    return _slippage_core(records, lambda *_: None)
