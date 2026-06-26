@@ -336,6 +336,10 @@
         <h2>Execution quality / slippage <span class="panel-sub" id="slipsub"></span></h2>
         <div class="body" id="slippage"></div>
       </div>
+      <div class="se-panel" style="margin-top:16px">
+        <h2>Fees <span class="panel-sub" id="feesub"></span></h2>
+        <div class="body" id="fees"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -453,15 +457,15 @@ function trackChart(dates, series){
 }
 
 async function loadPerformance(){
-  const [tr, slip, risk, st] = await Promise.all(
-    ["/api/track_record","/api/slippage","/api/risk","/api/state"].map(get));
+  const [tr, slip, risk, st, fees] = await Promise.all(
+    ["/api/track_record","/api/slippage","/api/risk","/api/state","/api/fees"].map(get));
   lastFetch = Date.now(); tickFreshness();
-  renderReturns(tr, slip);     // Returns sub-view
-  renderRisk(risk, st);        // Risk sub-view
-  renderExecution(slip);       // Execution sub-view
+  renderReturns(tr, slip, fees);   // Returns sub-view
+  renderRisk(risk, st);            // Risk sub-view
+  renderExecution(slip, fees);     // Execution sub-view
 }
 
-function renderReturns(tr, slip){
+function renderReturns(tr, slip, fees){
   if(!tr || !tr.available){ $("trackempty").style.display="block"; $("trackbody").style.display="none"; return; }
   $("trackempty").style.display="none"; $("trackbody").style.display="block";
   const star = tr.mature ? "" : "*";
@@ -474,6 +478,8 @@ function renderReturns(tr, slip){
     kpi("Premium collected", usd(tr.premium_collected), "covered calls"),
     kpi("Avg slippage", slip&&slip.avg_slippage_bps!=null?slip.avg_slippage_bps.toFixed(1)+" bps":"—",
         slip&&slip.n_fills?`${susd(-slip.total_slippage_usd)} vs mid`:"vs intended price"),
+    kpi("Fees paid", fees&&fees.total_usd?usd2(fees.total_usd):"—",
+        fees&&fees.n?Object.keys(fees.by_type).join(" · "):"CAT · TAF · SEC"),
   ].join("");
 
   const primary=cssv('--accent','#46b8ad');   // strategy equity is the primary series → teal (SFI)
@@ -506,7 +512,7 @@ function renderReturns(tr, slip){
 
 }
 
-function renderExecution(slip){
+function renderExecution(slip, fees){
   if(slip && slip.n_fills){
     $("slipsub").textContent = `${slip.n_fills} filled orders · positive bps = paid up vs reference (limit, or arrival mid for market)`;
     $("slippage").innerHTML = table(slip.fills, [
@@ -522,6 +528,25 @@ function renderExecution(slip){
     ]);
   } else {
     $("slippage").innerHTML = '<div class="se-empty">No filled orders yet — this compares each fill to its reference price (the order\'s limit, or the arrival mid for market orders) once there\'s trading activity.</div>';
+  }
+
+  // Fees: regulatory / broker charges (CAT, TAF, SEC, …) from Alpaca activities.
+  const allIn = (fees&&fees.total_usd||0) + (slip&&slip.total_slippage_usd>0?slip.total_slippage_usd:0);
+  if(fees && fees.n){
+    $("feesub").textContent = `${usd2(fees.total_usd)} total · ${fees.n} charge${fees.n>1?'s':''} · all-in execution cost ${usd2(allIn)}`;
+    const chips = Object.entries(fees.by_type)
+      .map(([t,v])=>`<span title="${t} fees" style="display:inline-flex;align-items:center;gap:6px;padding:3px 9px;background:var(--panel-2);border:1px solid var(--line);border-radius:var(--r-sm);font-size:11px;color:var(--muted)">${t} <b style="color:var(--fg);font-family:var(--mono)">${usd2(v)}</b></span>`).join("");
+    $("fees").innerHTML =
+      `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">${chips}</div>` +
+      table(fees.items, [
+        {h:"Date", tip:"When the fee was booked (Alpaca books fees the morning after the trade).", f:r=>r.date||"—"},
+        {h:"Type", tip:"CAT = Consolidated Audit Trail · TAF = FINRA Trading Activity Fee · REG/SEC = Section 31.", f:r=>r.type},
+        {h:"Amount", tip:"Fee charged (a debit to the account).", f:r=>`<span class="neg">-${usd2(r.amount)}</span>`},
+        {h:"Description", cls:()=>"mut", f:r=>r.description||"—"},
+      ]);
+  } else {
+    $("feesub").textContent = "";
+    $("fees").innerHTML = '<div class="se-empty">No fees yet. Regulatory fees (CAT, TAF, SEC Section 31) appear here the morning after a trade — they\'re tiny (often rounded up to $0.01) but real, and already reflected in NAV.</div>';
   }
 }
 

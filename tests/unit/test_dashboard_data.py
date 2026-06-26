@@ -240,6 +240,31 @@ def test_api_slippage_signs_and_aggregate():
     assert sl["total_slippage_usd"] == -14.0                                # -10 + (-4)
 
 
+def test_fees_from_activities_aggregates_by_type():
+    """FEE activities aggregate to a positive total + by-type breakdown; non-fees are ignored."""
+    activities = [
+        {"activity_type": "FILL", "side": "buy", "symbol": "WU", "price": "7.19"},   # ignored
+        {"activity_type": "FEE", "activity_sub_type": "CAT", "net_amount": "-0.01",
+         "date": "2026-06-24", "description": "CAT fee for proceed of 2 trades"},
+        {"activity_type": "FEE", "activity_sub_type": "TAF", "net_amount": "-0.01",
+         "date": "2026-06-24", "description": "TAF fee for proceed of 1 shares"},
+        {"activity_type": "FEE", "activity_sub_type": "TAF", "net_amount": "-0.02",
+         "date": "2026-06-25", "description": "TAF fee"},
+        {"activity_type": "FEE", "activity_sub_type": "REG", "net_amount": "0",          # zero → skip
+         "date": "2026-06-25", "description": "no-op"},
+    ]
+    f = data.fees_from_activities(activities)
+    assert f["total_usd"] == 0.04                         # 0.01 + 0.01 + 0.02
+    assert f["by_type"] == {"TAF": 0.03, "CAT": 0.01}     # sorted by magnitude desc
+    assert f["n"] == 3
+    assert f["items"][0]["date"] == "2026-06-25"          # newest first
+    assert all(it["amount"] > 0 for it in f["items"])     # magnitudes, not negatives
+
+
+def test_api_fees_empty_without_broker():
+    assert data.api_fees(_engine()) == {"total_usd": 0.0, "by_type": {}, "n": 0, "items": []}
+
+
 def test_slippage_from_orders_market_uses_arrival_mid():
     """Live path: market orders are priced vs the arrival mid; a missing arrival drops the order."""
     arrivals = {("WU", "t-buy"): 7.20, ("WU", "t-sell"): 7.20}   # NBBO mid at submit

@@ -148,6 +148,12 @@ def _live_slippage(client, limit: int = 200) -> dict:
     return data.slippage_from_orders(filled, lambda s, t: _arrival_mid(client, s, t))
 
 
+def _live_fees(client, page_size: int = 200) -> dict:
+    """Regulatory / broker fees (CAT, TAF, SEC, …) from live Alpaca activities."""
+    return data.fees_from_activities(client.account_activities(activity_type="FEE",
+                                                               page_size=page_size))
+
+
 def _align(closes: dict, dates: list[str]) -> list[float]:
     """Reindex a {date: close} map onto ``dates``, forward-filling the most recent prior close."""
     import bisect
@@ -305,6 +311,17 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
             except Exception as exc:  # noqa: BLE001 — degrade to Postgres, never break the panel
                 log.warning("live slippage read failed, falling back to Postgres: %s", exc)
         return data.api_slippage(db_engine)
+
+    @app.get("/api/fees")
+    def fees() -> dict:
+        # Regulatory / broker fees from live Alpaca activities (CAT, TAF, SEC, …). No Postgres
+        # source, so the no-client fallback is simply empty.
+        if client is not None:
+            try:
+                return _live_fees(client)
+            except Exception as exc:  # noqa: BLE001 — never break the panel on a fees read
+                log.warning("live fees read failed: %s", exc)
+        return data.api_fees(db_engine)
 
     @app.get("/api/risk")
     def risk() -> dict:

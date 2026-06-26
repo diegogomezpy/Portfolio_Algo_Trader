@@ -549,6 +549,41 @@ def slippage_from_orders(orders, arrival_mid) -> dict:
     return _slippage_core(records, arrival_mid)
 
 
+def fees_from_activities(activities) -> dict:
+    """Aggregate Alpaca ``FEE`` activities into a total, a by-type breakdown, and recent line items.
+
+    Alpaca reports each fee as a **negative** ``net_amount``; we surface the magnitude as a positive
+    cost. ``activity_sub_type`` names the fee — CAT (Consolidated Audit Trail), TAF (FINRA Trading
+    Activity Fee), REG/SEC (Section 31), etc. These are booked the morning after a trade, so they
+    can lag the fills that caused them.
+    """
+    items: list[dict] = []
+    by_type: dict[str, float] = {}
+    total = 0.0
+    for a in activities:
+        if str(a.get("activity_type")) != "FEE":
+            continue
+        amt = abs(float(a.get("net_amount") or 0.0))
+        if amt == 0:
+            continue
+        sub = a.get("activity_sub_type") or "FEE"
+        by_type[sub] = round(by_type.get(sub, 0.0) + amt, 2)
+        total += amt
+        when = a.get("date") or (str(a.get("transaction_time"))[:10] if a.get("transaction_time") else None)
+        items.append({"date": when, "type": sub, "amount": round(amt, 2),
+                      "description": a.get("description") or ""})
+    items.sort(key=lambda x: (x["date"] or ""), reverse=True)
+    return {"total_usd": round(total, 2),
+            "by_type": dict(sorted(by_type.items(), key=lambda kv: -kv[1])),
+            "n": len(items), "items": items[:30]}
+
+
+def api_fees(db_engine) -> dict:
+    """No-broker fallback: the engine doesn't record broker fees, so there's nothing in Postgres —
+    the live route in ``app.py`` supplies fees from Alpaca activities."""
+    return {"total_usd": 0.0, "by_type": {}, "n": 0, "items": []}
+
+
 def api_slippage(db_engine) -> dict:
     """Execution quality from the engine's filled orders in Postgres (the offline / no-broker path).
 
