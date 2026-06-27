@@ -223,7 +223,12 @@ def submit_and_track(
         for oid, _o in live:
             if oid not in open_ids:
                 continue
-            st = broker.get_order(oid)
+            try:
+                st = broker.get_order(oid)
+            except AlpacaAPIError as exc:   # transient read hiccup — keep the order open, re-poll next pass
+                log.warning("poll get_order failed; will retry next pass",
+                            extra={"id": oid, "error": str(exc)})
+                continue
             _upsert_order(db_engine, cycle_key, st)
             if st["status"] in _TERMINAL:
                 open_ids.discard(oid)
@@ -239,7 +244,12 @@ def submit_and_track(
             broker.cancel_order(oid)
         except AlpacaAPIError as exc:
             log.warning("cancel failed at session end", extra={"id": oid, "error": str(exc)})
-        st = broker.get_order(oid)
+        try:
+            st = broker.get_order(oid)
+        except AlpacaAPIError as exc:   # can't read final state — leave it; reconcile corrects from Alpaca
+            log.warning("session-end get_order failed; leaving to reconcile",
+                        extra={"id": oid, "error": str(exc)})
+            continue
         _upsert_order(db_engine, cycle_key, st)
         filled_qty = int(st.get("filled_qty") or 0)
         if filled_qty > 0 and oid not in recorded_fill:
@@ -256,7 +266,11 @@ def submit_and_track(
     planned_qty = {oid: o.qty for oid, o in live}
     filled = partial = 0
     for oid in planned_qty:
-        st = broker.get_order(oid)
+        try:
+            st = broker.get_order(oid)
+        except AlpacaAPIError as exc:   # tally only — a read hiccup must not crash a completed cycle
+            log.warning("tally get_order failed; counting unknown", extra={"id": oid, "error": str(exc)})
+            continue
         fq = int(st.get("filled_qty") or 0)
         if fq >= planned_qty[oid] and fq > 0:
             filled += 1

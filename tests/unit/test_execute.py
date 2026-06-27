@@ -187,6 +187,29 @@ def _po(symbol, side, qty, otype="market", lp=None, notional=None):
                                 notional if notional is not None else qty * 100.0)
 
 
+def test_poll_get_order_transient_failure_does_not_crash():
+    """A transient AlpacaAPIError on get_order during polling must not crash the cycle — the order
+    stays open and is re-polled, and its fill is still recorded once the read recovers."""
+    class _FlakyBroker(_FakeBroker):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.fails_left = 2
+        def get_order(self, order_id):
+            if self.fails_left > 0:
+                self.fails_left -= 1
+                raise AlpacaAPIError(order_id, "get_order", "503 transient")
+            return super().get_order(order_id)
+
+    eng = _engine()
+    broker = _FlakyBroker(fill_plan={"AAPL": [("filled", 50.0)]})
+    report = execute.submit_and_track(
+        [_po("AAPL", "buy", 50)], broker=broker, db_engine=eng, cycle_key="2026-07-01",
+        poll_attempts=5, poll_interval_s=0, sleep=lambda s: None)
+    assert report.submitted == 1 and report.filled == 1        # survived the transient reads
+    fills = _rows(eng, db.fills)
+    assert len(fills) == 1 and fills[0]["symbol"] == "AAPL"     # fill still recorded
+
+
 _NOSLEEP = dict(sleep=lambda *_: None, poll_interval_s=0)
 
 
