@@ -945,3 +945,52 @@ return histogram, rolling-12m volatility, best/worst-months tables, trades-per-m
 trading cost, and the trade blotter. Kept growth-vs-SPY, drawdown, rolling Sharpe, sector-exposure
 stack, the time-scrubbing snapshot, factor sleeves, calendar-year, contributors/detractors, the
 IV-assumption overlay growth, delta optimization, VRP, and the new wheel panel.
+
+
+## D35 — Launch hardening: marketable limits, complete-the-book catch-up, 13:00 ET
+
+**Context (2026-06-26).** A pre-mortem of the *first* real rebalance (order placement had never run
+live) found it would likely establish only a thin partial book with almost no covered calls. Three
+compounding causes: (a) non-market orders rested passively at the **mid** and were cancelled ~60s
+later mostly unfilled; (b) the monthly catch-up counted the month "done" as soon as **any one**
+position existed, stranding the unfilled names in `pending_adjustments` (never retried) until next
+month; (c) the covered-call write runs right after equity submission, so with nothing filled it had
+no shares to cover.
+
+**Decision.**
+1. **Marketable limits.** Non-market equity orders now cross the spread by up to
+   `execution.marketable_limit_bps` (default **50**) in the trade's direction — a *ceiling*, so
+   liquid names fill at the touch and only an abnormally wide spread rests. Reliable in-session
+   fills also give the covered-call write real shares to cover.
+2. **Complete the book.** `rebalance_established_this_month` now requires the book to hold **≥0.8**
+   (`_CATCHUP_MIN_FILL_FRAC`) of the latest target's names, not just one — so the catch-up keeps
+   finishing the book; a couple of genuinely unfillable names won't force perpetual retries (a
+   persistent shortfall surfaces via the per-rebalance fill alert).
+3. **Earlier in-session.** Rebalance moved **15:00 → 13:00 ET** (`execution.rebalance_hour_et`, read
+   by `serve()`) for more runway before the 16:00 close.
+
+**Also (same audit).** Guarded the three `get_order` reads in `submit_and_track` (poll / session-end /
+tally) against transient Alpaca errors, so a read hiccup mid-poll can't crash a live rebalance and
+leave working orders uncancelled.
+
+**Code.** `engine/execute._order_type_for`; `scripts/run_eod` (`_book_substantially_filled`,
+`serve()` hour from settings); `config/settings.yaml` (`marketable_limit_bps`, `rebalance_hour_et`).
+Commits 1b2a71e, 298e0f1.
+
+**Open (deferred — strategy, not bugs).** Covered-call coverage is structurally thin at launch: the
+30-45 DTE window can miss the monthly-expiry cycle (only weekly-optioned names coverable on some
+dates), and ~$10k per-name positions can't meet the 100-share minimum on $100+ names. Both are tuning
+calls (DTE window / book concentration / leverage), left open intentionally.
+
+
+## D36 — Production VM is e2-standard-4 (16 GB)
+
+**Context (2026-06-26).** The first rebalance to reach the compute stage (factor scores + FF5
+covariance + optimize over the **full Alpaca universe**) exhausted the original **e2-small (2 GB)**
+and wedged the box in swap for ~20 min. A dry run of `compute_targets` measured peak RSS **~1.6 GB**,
+which on top of ~0.8 GB of services overflows 2 GB.
+
+**Decision.** Run on **e2-standard-4 (4 vCPU / 16 GB)** — compute completes in ~19s with 13+ GB free.
+~$98/mo vs ~$14 for e2-small; acceptable for a paper/research book, with headroom for the overlay and
+universe growth. deploy/DEPLOY.md's provision command now creates e2-standard-4 (resize is stop →
+`set-machine-type` → start, instance must be stopped).

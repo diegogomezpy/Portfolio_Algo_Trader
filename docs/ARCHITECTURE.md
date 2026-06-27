@@ -305,8 +305,10 @@ Translates approved order list into Alpaca API calls.
 5. New covered call writes (after equity trades settle)
 
 **Order types:**
-- Equities: market order if ADV > $50M and spread < 0.1%, else limit at mid
-- Options: limit order at mid price
+- Equities: market order if ADV > $50M and spread < 0.1%, else a **marketable** limit — the mid
+  crossed by up to `marketable_limit_bps` (default 50) in the trade's direction, so it fills at
+  the touch in-session instead of resting passively at the mid until the session-end cancel (D35)
+- Options: limit order at mid price (sell-to-open the covered call)
 - All equity prices use adjustment='all'
 
 **Minimum trade filter:**
@@ -330,8 +332,8 @@ delta in pending_adjustments, alert. No retry on rejection.
 
 ### `engine/reconcile.py`
 
-Runs at pipeline startup before any other job (4:10 PM ET on rebalance
-days, or at scheduler start on non-rebalance days for monitoring).
+Runs first in `run_cycle`, before any trading (at the 13:00 ET rebalance on
+rebalance days; the 60s monitor reconciles via its own read on other days).
 
 1. Fetch live positions from Alpaca Trading API
 2. Fetch last known positions from PostgreSQL `snapshots` table
@@ -389,34 +391,29 @@ pb_ratio, roe, gross_margin, report_date, source. Written quarterly.
 
 ## Scheduler design
 
-Single APScheduler process (`scripts/run_eod.py`).
-All times in America/New_York via pytz.
+Single APScheduler process (`scripts/run_eod.py --serve`), America/New_York via pytz. **Two jobs**
+(the staged pipeline runs *in-process* inside one job, not as separate scheduled steps):
 
-**Monthly rebalance jobs (first trading day of month):**
-- 4:10 PM — `reconcile_job`
-- 4:12 PM — `holiday_check_job` (queries Alpaca calendar; cancels all
-  downstream jobs if not a trading day)
-- 4:15 PM — `ingest_job` (retries 3x with backoff on failure)
-- 4:20 PM — `factors_job` (price factors recomputed fresh)
-- 4:25 PM — `optimize_job`
-- 4:28 PM — `covered_calls_close_job` (close all existing calls)
-- 4:30 PM — `risk_and_execute_equity_job` (equity trades)
-- 4:40 PM — `covered_calls_write_job` (rewrite calls after equity trades)
-- 4:45 PM — `risk_and_execute_options_job` (submit covered call writes)
+**EOD job — weekday cron at `execution.rebalance_hour_et` (default 13:00 ET):** runs `daily_job`,
+which gates on the Alpaca calendar (skips non-trading days), refreshes the day's ingest, then
+**branches** on whether this month's rebalance has established the book:
 
-**Daily jobs (every trading day):**
-- 4:10 PM — `reconcile_job`
-- 4:12 PM — `holiday_check_job`
-- 4:15 PM — `ingest_job` (prices only, not fundamentals)
-- 4:20 PM — `factors_job` (price factors: momentum + vol refreshed from today's prices)
-- 4:30 PM — `earnings_check_job` (close calls before an upcoming earnings date, rewrite
-  after — DECISIONS D31; no drift-rebalance check and no DTE-based roll)
+- **Not yet established** — no risk-gate-passed `rebalance_log` row this month, *or* the book holds
+  < 80% of the target's names (`_book_substantially_filled`, D35) — runs the full **`run_cycle`** in
+  sequence: reconcile (halt if Alpaca down) → compute targets → pre-trade **risk gate** (written to
+  `rebalance_log`; blocks on failure) → close existing calls → plan + submit + poll **equity orders**
+  → **write fresh calls** on the shares actually held → monitor snapshot. Trigger is `monthly` on the
+  first trading day, else `monthly_catchup` on later days — so a missed / blocked / partially-filled
+  month keeps retrying until the book is built (never twice a month once filled). A cycle that raises
+  is caught, alerted, and retried next trading day.
+- **Already established** — lightweight **reconcile + overlay safety pass** (force-close expiring
+  calls, close into earnings, rewrite names whose earnings just passed — D31; no drift-rebalance, no
+  DTE roll) + monitor snapshot.
 
-**Continuous:**
-- Every 60s — `monitor_job`
+**Monitor tick — every 60s (`continuous_monitor_job`):** reads Alpaca → writes a NAV / positions /
+drift snapshot to Postgres, keeping the dashboard live between rebalances.
 
-Jobs are chained with dependencies. If any upstream job fails or skips,
-all downstream jobs cancel for that day. Alert sent on any cancellation.
+SIGTERM/SIGINT → finish the in-flight stage, then cancel any working orders (graceful shutdown).
 
 ---
 

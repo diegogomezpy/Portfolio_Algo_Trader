@@ -6,9 +6,9 @@ your laptop's power/network. This is a near-lift-and-shift: `run_eod --serve` is
 built for a long-running host (APScheduler + SIGTERM handling).
 
 ```
-┌─────────────────────────  GCE VM  (e2-small, Ubuntu 24.04, us-east4)  ─────────────────────────┐
+┌─────────────────────────  GCE VM  (e2-standard-4, Ubuntu 24.04, us-east4)  ────────────────────┐
 │  systemd (Restart=always):                                                                      │
-│    • sharpe-eod.service        run_eod.py --serve   (15:00-ET rebalance branch + 60s monitor)   │
+│    • sharpe-eod.service        run_eod.py --serve   (13:00-ET rebalance branch + 60s monitor)   │
 │    • sharpe-dashboard.service  run_dashboard.py     (FastAPI on 127.0.0.1:8000, localhost only)  │
 │    • sharpe-backup.timer       nightly pg_dump → GCS                                             │
 │  Postgres (local, peer auth)   +   data/ Parquet store   +   .venv                              │
@@ -82,7 +82,8 @@ gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
 
 ```bash
 gcloud compute instances create "$VM" \
-  --zone="$ZONE" --machine-type=e2-small \
+  --zone="$ZONE" --machine-type=e2-standard-4 \  # 4 vCPU / 16 GB — the full-universe rebalance (factor
+                                                 # scores + FF5 covariance + optimize) OOMs e2-small's 2 GB (D36)
   --image-family=ubuntu-2404-lts-amd64 --image-project=ubuntu-os-cloud \
   --boot-disk-size=30GB --boot-disk-type=pd-balanced \
   --service-account="$SA_EMAIL" --scopes=cloud-platform
@@ -138,7 +139,7 @@ This renders the unit files for this host (user/dir/bucket), enables and starts
 ```bash
 # on the VM:
 systemctl status sharpe-eod sharpe-dashboard --no-pager
-journalctl -u sharpe-eod -n 40 --no-pager        # should show "scheduler started ... EOD 15:00 ET"
+journalctl -u sharpe-eod -n 40 --no-pager        # should show "scheduler started ... EOD 13:00 ET"
 curl -s localhost:8000/api/state | head -c 300   # dashboard answering
 systemctl list-timers sharpe-backup sharpe-watchdog --no-pager   # both timers scheduled
 ```
@@ -243,7 +244,7 @@ run is missed/blocked it **catches up** on the next trading day(s) until one lan
 month). Other trading days just reconcile + monitor (+ the covered-call safety pass). To trade
 sooner (e.g. a fresh mid-month launch), use the "force a rebalance now" row.
 
-**Cost:** e2-small ≈ \$13–15/mo + ~30 GB pd-balanced ≈ \$1.2/mo + minimal egress/storage. Stop
+**Cost:** e2-standard-4 (4 vCPU / 16 GB) ≈ \$98/mo + ~30 GB pd-balanced ≈ \$1.2/mo + minimal egress/storage. Stop
 the VM (`gcloud compute instances stop $VM`) to pause billing (engine stops too).
 
 **Migrating to live (Phase 7) later:** create separate `*-live` secrets, point a second

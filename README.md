@@ -66,13 +66,14 @@ A live **dashboard** (FastAPI + one page built in the **SFI design language** �
 [docs/DESIGN_LANGUAGE.md](docs/DESIGN_LANGUAGE.md)) serves current state from Postgres and
 self-updates via an in-process Alpaca→Postgres monitor:
 
-- **Overview** — NAV, day P&L, leverage gauge, cash, premium, and a global health bar (engine
-  heartbeat, market clock, next rebalance, risk gate, drift, alerts).
+- **Overview** — NAV and cash (exact to the cent), day P&L, leverage gauge, premium, and a global
+  health bar (engine heartbeat, market clock, next rebalance, risk gate, drift, alerts).
 - **Portfolio** — holdings vs target with drift, a nested **sector/ticker donut** + concentration
   metrics (HHI, effective names, sector caps), the **factor tilt** (book-weighted
   Quality/Value/Momentum/Low-Vol vs the universe), covered calls, and recent activity.
 - **Performance** — growth vs SPY / covered-call-ETF benchmarks, a **Risk** sub-tab (drawdown,
-  volatility, 1-day 95% VaR, rolling volatility, leverage), and execution slippage.
+  volatility, 1-day 95% VaR, rolling volatility, leverage), and an **Execution** sub-tab: slippage
+  across all Alpaca fills (market orders priced vs the arrival mid) plus regulatory fees (CAT/TAF/SEC).
 - **Backtest** — the static walk-forward + covered-call / variance-risk-premium analytics.
 
 Deployed on a GCP VM as `systemd` services, shared read-only behind a password (Tailscale Funnel

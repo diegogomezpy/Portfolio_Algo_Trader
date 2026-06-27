@@ -95,7 +95,8 @@ sharpe-engine/
 | Factor weights | Equal weight initially, adjust after backtesting |
 | Objective | Max Sharpe, capital preservation mandate |
 | Constraints | Long-only, sector cap, min position size, leverage capped at `max_leverage` (risk gate) |
-| Rebalancing | Monthly only — first trading day (catches up on the next trading day if a run is missed/blocked); equities + covered calls together (DECISIONS D31). Drift is telemetry, not a trigger |
+| Rebalancing | Monthly only — first trading day at **13:00 ET** (D35); catches up on later trading days until the book is **substantially filled** (≥80% of target names), not just any one position (D35); equities + covered calls together (DECISIONS D31). Drift is telemetry, not a trigger |
+| Execution | Equity orders: market for deep+tight names, else a **marketable limit** (mid crossed by ≤ `marketable_limit_bps`, default 50) so they fill in-session; ~60s fill-poll then cancel, unfilled rolls to `pending_adjustments` and is retried by the catch-up (D35) |
 | Covered calls | Delta = 0.30 (D29), 30-45 DTE, rewritten monthly — no mid-cycle roll (D31) |
 | Covered call rebalance | Close all calls before monthly rebalance, rewrite fresh after new weights set |
 | Earnings policy | Close calls before earnings date, rewrite after announcement |
@@ -139,7 +140,8 @@ sharpe-engine/
 - Fundamental data upgrade — resolved to **SEC EDGAR** for deep point-in-time
   history (DECISIONS D22); build pending. yfinance remains the current-quarter fallback.
 - Go-live gate criteria (user-defined before real capital deployed)
-- DB backup strategy (required before go-live)
+- (resolved) DB backups — nightly `pg_dump` → GCS with a 30-day delete lifecycle
+  (`sharpe-backup.timer`; see deploy/DEPLOY.md)
 - Secret rotation policy (required before go-live)
 - Leverage implementation (1.5x margin, after live validation)
 
