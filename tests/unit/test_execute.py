@@ -289,3 +289,97 @@ def test_incoming_pending_is_persisted():
     assert rep.deferred == 1
     pend = _rows(eng, db.pending_adjustments)
     assert len(pend) == 1 and pend[0]["symbol"] == "TINY"
+
+
+def test_report_lines_per_symbol():
+    """The single-pass report carries a per-symbol outcome line for the breakdown."""
+    eng = _engine()
+    broker = _FakeBroker(fill_plan={"AAPL": [("filled", 50.0)], "SLOW": [("new", 0), ("new", 0)]})
+    rep = execute.submit_and_track(
+        [_po("AAPL", "buy", 50), _po("SLOW", "buy", 10, "limit", 100.0)],
+        broker=broker, db_engine=eng, cycle_key="2026-07-01", poll_attempts=2, **_NOSLEEP)
+    lines = {l["symbol"]: l for l in rep.lines}
+    assert lines["AAPL"]["status"] == "filled" and lines["AAPL"]["filled"] == 50
+    assert lines["SLOW"]["status"] == "deferred" and lines["SLOW"]["filled"] == 0
+
+
+# ====================================================================== #
+# Chase mode — re-peg to the touch until filled, then a final market order
+# ====================================================================== #
+class _ChaseBroker(_FakeBroker):
+    """Fills a symbol's order only once it has been submitted ``fill_after[symbol]`` times
+    (a thin name that fills after re-pegging). ``partial[symbol]`` shares fill on each earlier
+    round (walking the book). Market orders always fill immediately."""
+
+    def __init__(self, fill_after=None, partial=None, **kw):
+        super().__init__(**kw)
+        self.fill_after = fill_after or {}
+        self.partial = partial or {}
+        self.attempts = {}
+
+    def submit_order(self, symbol, qty, side, *, order_type="market", limit_price=None,
+                     client_order_id=None):
+        self.attempts[symbol] = self.attempts.get(symbol, 0) + 1
+        resp = super().submit_order(symbol, qty, side, order_type=order_type,
+                                    limit_price=limit_price, client_order_id=client_order_id)
+        need = self.fill_after.get(symbol, 1)
+        if order_type == "market" or self.attempts[symbol] >= need:
+            self._seq[resp["id"]] = iter([("filled", float(qty))])
+        else:
+            p = float(self.partial.get(symbol, 0.0))          # walk a few shares; the rest rests
+            self._seq[resp["id"]] = iter([("partially_filled", p)] if p else [("new", 0.0)])
+        return resp
+
+
+_TOUCH = lambda sym, side: 100.0   # noqa: E731 — fixed touch price for tests
+
+
+def test_chase_fills_on_first_round():
+    eng = _engine()
+    broker = _ChaseBroker()
+    rep = execute.submit_and_track([_po("AAPL", "buy", 50, "limit", 100.0)], broker=broker,
+                                   db_engine=eng, cycle_key="2026-07-01", touch=_TOUCH,
+                                   poll_attempts=1, **_NOSLEEP)
+    assert rep.filled == 1 and broker.attempts["AAPL"] == 1
+    assert rep.lines[0]["status"] == "filled"
+    assert _rows(eng, db.pending_adjustments) == []
+
+
+def test_chase_repegs_until_fill():
+    eng = _engine()
+    broker = _ChaseBroker(fill_after={"SLOW": 3})        # fills only on the 3rd re-peg
+    rep = execute.submit_and_track([_po("SLOW", "buy", 10, "limit", 100.0)], broker=broker,
+                                   db_engine=eng, cycle_key="2026-07-01", touch=_TOUCH,
+                                   poll_attempts=1, max_rounds=5, **_NOSLEEP)
+    assert broker.attempts["SLOW"] == 3                  # re-priced and resubmitted twice more
+    assert rep.filled == 1 and _rows(eng, db.pending_adjustments) == []
+    assert _rows(eng, db.fills)[-1]["qty"] == 10
+
+
+def test_chase_final_market_order_at_close():
+    """Within the close buffer, the chase stops re-pegging and a market order guarantees the fill."""
+    from datetime import datetime, timezone
+    eng = _engine()
+    broker = _ChaseBroker(fill_after={"X": 99})          # never fills as a limit
+    close = datetime(2026, 7, 1, 16, 0, tzinfo=timezone.utc)
+    nowfn = lambda: datetime(2026, 7, 1, 15, 57, tzinfo=timezone.utc)   # inside the 5-min buffer
+    rep = execute.submit_and_track([_po("X", "buy", 10, "limit", 100.0)], broker=broker,
+                                   db_engine=eng, cycle_key="2026-07-01", touch=_TOUCH,
+                                   now=nowfn, market_close=close, close_buffer_s=300,
+                                   poll_attempts=1, **_NOSLEEP)
+    assert rep.filled == 1
+    coids = {o["client_order_id"] for o in _rows(eng, db.orders)}
+    assert any(c and c.endswith(":final") for c in coids)   # used the market-order guarantee
+    assert _rows(eng, db.pending_adjustments) == []
+
+
+def test_chase_partial_then_completes_across_rounds():
+    eng = _engine()
+    # Round 1 fills 4 of 10 (walks the book); round 2 (re-peg) fills the rest.
+    broker = _ChaseBroker(partial={"PART": 4}, fill_after={"PART": 2})
+    rep = execute.submit_and_track([_po("PART", "buy", 10, "limit", 100.0)], broker=broker,
+                                   db_engine=eng, cycle_key="2026-07-01", touch=_TOUCH,
+                                   poll_attempts=1, max_rounds=4, **_NOSLEEP)
+    assert rep.filled == 1                                # fully filled across two rounds
+    assert sum(f["qty"] for f in _rows(eng, db.fills)) == 10
+    assert _rows(eng, db.pending_adjustments) == []

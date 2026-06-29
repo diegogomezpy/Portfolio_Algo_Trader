@@ -30,6 +30,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 import time
 from dataclasses import dataclass, field
@@ -45,7 +46,7 @@ from engine import (  # noqa: E402
     alerts, covariance, covered_calls, factors, ingest, monitor, optimize, reconcile, risk, sectors,
 )
 from engine.config import load_settings  # noqa: E402
-from engine.execute import ExecReport, plan_orders, submit_and_track  # noqa: E402
+from engine.execute import ExecReport, PlannedOrder, plan_orders, submit_and_track  # noqa: E402
 from engine.logger import get_logger  # noqa: E402
 from engine.risk import RiskCheckResult  # noqa: E402
 from scripts import backtest as bt  # safe_covariance + dir constants  # noqa: E402
@@ -121,6 +122,36 @@ def compute_targets(settings, as_of: date, *, db_engine=None,
 # ====================================================================== #
 # Orchestrator
 # ====================================================================== #
+def _touch_price(client, sym: str, side: str) -> float:
+    """The touch for a chase order: lift the ask on a buy, hit the bid on a sell."""
+    bid, ask = client.latest_nbbo(sym)
+    return ask if side == "buy" else bid
+
+
+def _format_breakdown(report, written, skipped) -> str:
+    """Per-asset / per-call summary of what traded and why — for the rebalance alert + log."""
+    rows = ["Equities (filled / target):"]
+    for ln in sorted(report.lines, key=lambda x: (x["status"] != "filled", x["symbol"])):
+        note = f"  — {ln['reason']}" if ln.get("reason") and ln["status"] != "filled" else ""
+        rows.append(f"  {ln['symbol']:<6} {ln['side']:<4} {ln['filled']}/{ln['qty']}  "
+                    f"{ln['status'].upper()}{note}")
+    rows.append("Covered calls:")
+    for w in (written or []):
+        u = getattr(w, "underlying", None)
+        if u is None:
+            rows.append(f"  {w}")
+        else:
+            rows.append(f"  {u:<6} WROTE {getattr(w, 'contracts', '?')}x {getattr(w, 'strike', '?')}C "
+                        f"{getattr(w, 'expiration', '?')} Δ{getattr(w, 'delta', '?')} (${getattr(w, 'premium', '?')})")
+    for s in (skipped or []):
+        sym = s.get("symbol", "?") if isinstance(s, dict) else getattr(s, "symbol", "?")
+        reason = s.get("reason", "") if isinstance(s, dict) else getattr(s, "reason", "")
+        rows.append(f"  {sym:<6} skipped — {reason}")
+    if not (written or skipped):
+        rows.append("  (none)")
+    return "\n".join(rows)
+
+
 def run_cycle(
     *,
     client,
@@ -184,26 +215,43 @@ def run_cycle(
     nav = equity * leverage
     orders, pending = plan_orders(weights, rec.live_positions, plan.prices, nav=nav,
                                   settings=settings, adv=plan.adv, spread=plan.spread)
+
+    # Chase fills: re-peg each unfilled name to the touch (ask on a buy / bid on a sell) every
+    # round until it fills or the session nears the close, then a market order guarantees it.
+    touch_fn = (lambda s, side: _touch_price(client, s, side)) if hasattr(client, "latest_nbbo") else None
+    mkt_close = None
+    try:
+        nc = client.market_clock().get("next_close")
+        mkt_close = datetime.fromisoformat(nc) if nc else None
+    except Exception as exc:  # noqa: BLE001 — a clock-read failure must not block the rebalance
+        log.warning("market clock read failed; chasing without a close guarantee",
+                    extra={"error": str(exc)})
     report = submit_and_track(orders, broker=broker, db_engine=db_engine,
-                              cycle_key=as_of.isoformat(), pending=pending, alert=alert)
+                              cycle_key=as_of.isoformat(), pending=pending,
+                              touch=touch_fn, market_close=mkt_close, alert=alert)
 
     # Overlay (D31): write fresh calls AFTER equity settles, on the shares actually held.
-    n_written = 0
+    n_written, written, skipped = 0, [], []
     if overlay:
         held = _equity_shares(client)
-        written, _skipped = write_calls_fn(client, broker, db_engine, held,
-                                           settings=settings, as_of=as_of,
-                                           price_panel=plan.panel, alert=alert)
+        written, skipped = write_calls_fn(client, broker, db_engine, held,
+                                          settings=settings, as_of=as_of,
+                                          price_panel=plan.panel, alert=alert)
         n_written = len(written or [])
 
     mon = monitor.monitor_once(client, db_engine, target_weights=weights.to_dict())
-    if alert:
-        r = report
-        alert(f"rebalance {as_of.isoformat()} complete — equity: {r.filled}/{r.submitted} orders "
-              f"filled ({r.partial} partial, {r.rejected} rejected, {r.deferred} deferred); "
-              f"covered calls: {n_closed} closed, {n_written} written")
-    log.info("cycle executed", extra={"date": as_of.isoformat(), "closed": n_closed,
-                                      "written": n_written, **vars(report)})
+    try:                       # reporting must never crash a cycle that already traded
+        breakdown = _format_breakdown(report, written, skipped)   # per-asset / per-call detail
+        if alert:
+            alert(f"rebalance {as_of.isoformat()} complete — equity {report.filled}/{report.submitted} "
+                  f"filled ({report.partial} partial, {report.rejected} rejected, {report.deferred} deferred); "
+                  f"covered calls {n_closed} closed, {n_written} written.\n\n{breakdown}")
+        log.info("rebalance breakdown", extra={"date": as_of.isoformat(), "breakdown": breakdown})
+    except Exception as exc:   # noqa: BLE001
+        log.error("rebalance breakdown/alert failed (cycle already executed)", extra={"error": str(exc)})
+    log.info("cycle executed",
+             extra={"date": as_of.isoformat(), "closed": n_closed, "written": n_written,
+                    **{k: v for k, v in vars(report).items() if k != "lines"}})
     return CycleResult("executed", weights, rc, report, mon,
                        calls_closed=n_closed, calls_written=n_written)
 
@@ -320,6 +368,85 @@ def rebalance_established_this_month(db_engine, as_of: date) -> bool:
     return _book_substantially_filled(db_engine)             # …and the orders substantially filled
 
 
+def _open_pending(db_engine) -> list[dict]:
+    """Unapplied deferred residuals ({id, symbol, side, qty}) — the cross-day work queue."""
+    from sqlalchemy import select
+    from engine.db import pending_adjustments as pa
+    with db_engine.connect() as conn:
+        rows = conn.execute(select(pa.c.id, pa.c.symbol, pa.c.side, pa.c.qty)
+                            .where(pa.c.applied.is_(False))).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def _mark_applied(db_engine, ids) -> None:
+    if not ids:
+        return
+    from sqlalchemy import update
+    from engine.db import pending_adjustments as pa
+    with db_engine.begin() as conn:
+        conn.execute(update(pa).where(pa.c.id.in_(list(ids))).values(applied=True))
+
+
+def work_pending_adjustments(client, broker, db_engine, *, settings, as_of, alert=None) -> int:
+    """Cross-day catch-up: re-attempt still-open deferred residuals for names **still in the
+    current target**, via the fill chaser.
+
+    A name that dropped out of the target — or is already at its target weight — is just marked
+    applied (no trade). A residual that still can't fill writes a fresh pending row, so the next
+    trading day re-works it: it keeps trying until the name is held or leaves the target. Drift on
+    non-deferred names is never touched (monthly-only cadence, DECISIONS D31).
+    """
+    open_rows = _open_pending(db_engine)
+    if not open_rows:
+        return 0
+    target = monitor.last_target_weights(db_engine) or {}
+    held = {str(p["symbol"]): float(p["qty"]) for p in client.all_positions()
+            if len(str(p["symbol"])) <= 5}                        # equities only
+    equity = float(client.account().get("equity") or settings.portfolio.nav)
+    nav = equity * float(getattr(settings.portfolio, "target_leverage", 1.0))
+    ex = settings.execution
+
+    ids_by_sym: dict[str, list] = {}
+    for r in open_rows:
+        ids_by_sym.setdefault(r["symbol"], []).append(r["id"])
+
+    orders, resolve = [], []
+    for sym, ids in ids_by_sym.items():
+        tgt_w = float(target.get(sym, 0.0))
+        if tgt_w <= 0:                                            # dropped from target → done
+            resolve += ids; continue
+        try:
+            price = float(client.latest_trade(sym))
+        except Exception:                                        # noqa: BLE001 — can't price → retry next day
+            continue
+        tgt_shares = int(math.floor(tgt_w * nav / price)) if price > 0 else 0
+        delta = tgt_shares - int(round(held.get(sym, 0.0)))
+        if delta == 0 or abs(delta) * price < ex.min_trade_usd:  # already at target / sub-min → done
+            resolve += ids; continue
+        orders.append(PlannedOrder(sym, "buy" if delta > 0 else "sell", abs(delta), "limit",
+                                   None, round(abs(delta) * price, 2)))
+        resolve += ids                                           # re-attempted; a fresh pending rolls if still short
+
+    _mark_applied(db_engine, resolve)
+    if not orders:
+        return 0
+    touch_fn = (lambda s, side: _touch_price(client, s, side)) if hasattr(client, "latest_nbbo") else None
+    mkt_close = None
+    try:
+        nc = client.market_clock().get("next_close")
+        mkt_close = datetime.fromisoformat(nc) if nc else None
+    except Exception:  # noqa: BLE001
+        pass
+    rep = submit_and_track(orders, broker=broker, db_engine=db_engine,
+                           cycle_key=f"{as_of.isoformat()}-topup", pending=[],
+                           touch=touch_fn, market_close=mkt_close, alert=alert)
+    log.info("cross-day top-up", extra={"date": as_of.isoformat(), "names": len(orders), "filled": rep.filled})
+    if alert and rep.filled:
+        alert(f"cross-day top-up {as_of.isoformat()}: filled {rep.filled}/{rep.submitted} "
+              f"previously-deferred name(s)")
+    return rep.filled
+
+
 def daily_job(
     *,
     client,
@@ -334,6 +461,7 @@ def daily_job(
     rebalanced_this_month_fn: Callable[[object, date], bool] | None = None,
     overlay: bool = False,
     options_check_fn: Callable[..., object] = covered_calls.options_daily_check,
+    pending_work_fn: Callable[..., int] = work_pending_adjustments,
     alert: Callable[[str], None] | None = None,
 ) -> DailyResult:
     """The once-a-day scheduled job: gate on the calendar, ingest, then branch.
@@ -383,8 +511,13 @@ def daily_job(
                       f"will retry next trading day")
         return DailyResult("rebalanced", cycle=cyc)
 
-    # This month's rebalance already landed: keep the DB honest, run the overlay safety pass, snapshot.
+    # This month's rebalance already landed: keep the DB honest, finish any still-deferred residual,
+    # run the overlay safety pass, snapshot.
     reconcile.reconcile(client, db_engine, alert=alert)
+    try:                       # cross-day: complete still-deferred names that remain in the target
+        pending_work_fn(client, broker, db_engine, settings=settings, as_of=as_of, alert=alert)
+    except Exception as exc:   # noqa: BLE001 — a top-up failure must not crash the daily job
+        log.error("cross-day top-up failed", extra={"date": as_of.isoformat(), "error": str(exc)})
     if overlay:
         panel = factors.load_close_panel(PRICES_DIR, end=as_of, lookback=10**9)
         options_check_fn(client, broker, db_engine, settings=settings,

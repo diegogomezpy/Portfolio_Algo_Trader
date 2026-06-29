@@ -156,6 +156,33 @@ def test_run_cycle_no_overlay_skips_call_legs():
     assert called == []                                       # overlay legs not invoked
 
 
+def test_cross_day_topup_fills_deferred_name():
+    """A name deferred on the establishing day is re-worked (and filled) on the next trading day,
+    re-derived from target-vs-held, with its pending row marked applied."""
+    from datetime import datetime, timezone
+    from sqlalchemy import insert
+    eng = _engine()
+    with eng.begin() as c:                                    # last rebalance targeted INBX at 5%
+        c.execute(insert(db.rebalance_log).values(
+            ts=datetime(2026, 6, 29, 17, 3, tzinfo=timezone.utc), trigger_reason="monthly_catchup",
+            risk_gate_passed=True, target_weights={"INBX": 0.05}))
+        c.execute(insert(db.pending_adjustments).values(                     # …but it deferred
+            symbol="INBX", side="buy", qty=108.0, reason="unfilled at session end", applied=False))
+
+    class _Client:                                            # has the chase + clock methods
+        def all_positions(self): return []                   # not held yet
+        def account(self): return {"equity": 100_000.0}
+        def latest_trade(self, sym): return 90.0
+        def latest_nbbo(self, sym): return (89.9, 90.1)
+        def market_clock(self): return {"next_close": "2026-06-30T16:00:00-04:00"}
+
+    n = run_eod.work_pending_adjustments(_Client(), _FakeBroker(), eng,
+                                         settings=load_settings(), as_of=date(2026, 6, 30))
+    assert n == 1                                             # the previously-deferred name filled
+    assert any(o["symbol"] == "INBX" and o["side"] == "buy" for o in _rows(eng, db.orders))
+    assert all(p["applied"] for p in _rows(eng, db.pending_adjustments))   # open row resolved
+
+
 def test_run_cycle_blocked_by_risk_gate_submits_nothing():
     eng = _engine()
     broker = _FakeBroker()

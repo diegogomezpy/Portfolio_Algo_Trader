@@ -28,8 +28,8 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Mapping, Optional, Sequence
 
 import pandas as pd
@@ -162,6 +162,9 @@ class ExecReport:
     partial: int
     rejected: int
     deferred: int          # pending_adjustments rolled to the next cycle
+    # Per-symbol outcome for the post-rebalance breakdown:
+    # {symbol, side, qty, filled, status ∈ filled/partial/deferred/rejected, reason}.
+    lines: list = field(default_factory=list)
 
 
 def submit_and_track(
@@ -174,29 +177,77 @@ def submit_and_track(
     poll_attempts: int = 30,
     poll_interval_s: float = 2.0,
     sleep: Callable[[float], None] = time.sleep,
+    touch: Callable[[str, str], float] | None = None,
+    now: Callable[[], datetime] | None = None,
+    market_close: datetime | None = None,
+    close_buffer_s: float = 300.0,
+    max_rounds: int = 40,
     alert: Callable[[str], None] | None = None,
 ) -> ExecReport:
-    """Submit ``orders`` via ``broker``, poll fills, cancel leftovers, persist to DB.
+    """Submit ``orders``, poll fills, persist to DB, and return a per-symbol :class:`ExecReport`.
 
-    **Idempotent** — each order carries ``client_order_id = "{cycle}:{symbol}:{side}"``,
-    and any client_order_id already recorded in the ``orders`` table for this
-    ``cycle_key`` is skipped, so a re-run after a crash resumes without double-submitting.
+    Two modes:
 
-    Flow: submit each new order (a 4xx rejection is permanent — skip, defer the delta to
-    ``pending_adjustments``, alert, no retry); poll open orders up to ``poll_attempts``
-    times; at session end cancel anything still working and roll the unfilled residual to
-    ``pending_adjustments``. ``pending`` carries the planner's sub-min-trade deltas, which
-    are persisted alongside. ``sleep`` is injectable so tests run instantly.
+    * **Single pass** (``touch is None``) — submit once (idempotent ``client_order_id =
+      "{cycle}:{symbol}:{side}"``), poll up to ``poll_attempts``, cancel any leftover, roll the
+      unfilled residual to ``pending_adjustments``. (Unchanged legacy behaviour.)
+    * **Chase** (``touch`` provided) — each round re-prices every still-unfilled name to the
+      **touch** (``touch(symbol, side)`` → ask for a buy / bid for a sell) and re-submits the
+      residual, polling each round, repeating until the names fill or the session comes within
+      ``close_buffer_s`` of ``market_close``; then one final **market** order guarantees the
+      residual. Anything still unfilled (e.g. a halt) rolls to ``pending_adjustments`` for the
+      cross-day retry. Each round uses a fresh ``client_order_id`` ``…:{side}:r{n}`` (final ``…:final``).
+
+    ``pending`` carries the planner's sub-min-trade deltas, persisted alongside. ``sleep`` is
+    injectable so tests run instantly. ``ExecReport.lines`` lists each name's outcome.
     """
     pending = list(pending or [])
-    already = _existing_client_ids(db_engine, cycle_key)
+    out = {o.symbol: {"symbol": o.symbol, "side": o.side, "qty": int(o.qty),
+                      "filled": 0, "status": "deferred", "reason": ""} for o in orders}
+    if touch is None:
+        return _single_pass(orders, broker=broker, db_engine=db_engine, cycle_key=cycle_key,
+                            pending=pending, out=out, poll_attempts=poll_attempts,
+                            poll_interval_s=poll_interval_s, sleep=sleep, alert=alert)
+    return _chase(orders, broker=broker, db_engine=db_engine, cycle_key=cycle_key,
+                  pending=pending, out=out, poll_attempts=poll_attempts,
+                  poll_interval_s=poll_interval_s, sleep=sleep, touch=touch,
+                  now=now or (lambda: datetime.now(timezone.utc)), market_close=market_close,
+                  close_buffer_s=close_buffer_s, max_rounds=max_rounds, alert=alert)
 
+
+def _finalize(out, orders, *, submitted, rejected, pending, db_engine, cycle_key) -> ExecReport:
+    """Derive per-symbol statuses from accumulated fills, write pending, build the ExecReport."""
+    if pending:
+        _write_pending(db_engine, pending)
+    by_qty = {o.symbol: int(o.qty) for o in orders}
+    filled = partial = 0
+    for sym, d in out.items():
+        if d["status"] == "rejected":
+            continue
+        q, f = by_qty.get(sym, 0), d["filled"]
+        if f >= q and f > 0:
+            d["status"] = "filled"; filled += 1
+        elif f > 0:
+            d["status"] = "partial"; d["reason"] = d["reason"] or "partial fill; residual deferred"; partial += 1
+        else:
+            d["status"] = "deferred"; d["reason"] = d["reason"] or "unfilled"
+    report = ExecReport(submitted=submitted, filled=filled, partial=partial,
+                        rejected=rejected, deferred=len(pending), lines=list(out.values()))
+    log.info("execution complete",
+             extra={k: v for k, v in vars(report).items() if k != "lines"} | {"cycle": cycle_key})
+    return report
+
+
+def _single_pass(orders, *, broker, db_engine, cycle_key, pending, out,
+                 poll_attempts, poll_interval_s, sleep, alert) -> ExecReport:
+    already = _existing_client_ids(db_engine, cycle_key)
     live: list[tuple[str, PlannedOrder]] = []   # (order_id, planned)
     rejected = 0
     for o in orders:
         coid = f"{cycle_key}:{o.symbol}:{o.side}"
         if coid in already:
             log.info("order already submitted this cycle; skipping", extra={"coid": coid})
+            out.pop(o.symbol, None)
             continue
         try:
             resp = broker.submit_order(o.symbol, o.qty, o.side, order_type=o.order_type,
@@ -206,6 +257,7 @@ def submit_and_track(
             pending.append({"symbol": o.symbol, "side": o.side,
                             "delta_usd": round(o.notional, 2), "qty": o.qty,
                             "reason": f"rejected: {exc}"})
+            out[o.symbol].update(status="rejected", reason=f"rejected: {exc}")
             log.error("order rejected; deferring", extra={"symbol": o.symbol, "error": str(exc)})
             if alert:
                 alert(f"order rejected {o.symbol} {o.side} {o.qty}: {exc}")
@@ -213,7 +265,6 @@ def submit_and_track(
         _upsert_order(db_engine, cycle_key, resp)
         live.append((resp["id"], o))
 
-    # Poll open orders for fills.
     open_ids = {oid for oid, _ in live}
     recorded_fill: set[str] = set()
     for _ in range(poll_attempts):
@@ -233,10 +284,8 @@ def submit_and_track(
             if st["status"] in _TERMINAL:
                 open_ids.discard(oid)
                 if (st.get("filled_qty") or 0) > 0 and oid not in recorded_fill:
-                    _record_fill(db_engine, st)
-                    recorded_fill.add(oid)
+                    _record_fill(db_engine, st); recorded_fill.add(oid)
 
-    # Session end: cancel anything still working, record any partial fill, roll residual.
     for oid, o in live:
         if oid not in open_ids:
             continue
@@ -253,33 +302,116 @@ def submit_and_track(
         _upsert_order(db_engine, cycle_key, st)
         filled_qty = int(st.get("filled_qty") or 0)
         if filled_qty > 0 and oid not in recorded_fill:
-            _record_fill(db_engine, st)
-            recorded_fill.add(oid)
+            _record_fill(db_engine, st); recorded_fill.add(oid)
         residual = o.qty - filled_qty
         if residual > 0:
             pending.append({"symbol": o.symbol, "side": o.side, "delta_usd": None,
                             "qty": residual, "reason": "unfilled at session end"})
 
-    if pending:
-        _write_pending(db_engine, pending)
-
-    planned_qty = {oid: o.qty for oid, o in live}
-    filled = partial = 0
-    for oid in planned_qty:
+    for oid, o in live:
         try:
             st = broker.get_order(oid)
         except AlpacaAPIError as exc:   # tally only — a read hiccup must not crash a completed cycle
             log.warning("tally get_order failed; counting unknown", extra={"id": oid, "error": str(exc)})
             continue
-        fq = int(st.get("filled_qty") or 0)
-        if fq >= planned_qty[oid] and fq > 0:
-            filled += 1
-        elif fq > 0:
-            partial += 1
-    report = ExecReport(submitted=len(live), filled=filled, partial=partial,
-                        rejected=rejected, deferred=len(pending))
-    log.info("execution complete", extra=vars(report) | {"cycle": cycle_key})
-    return report
+        out[o.symbol]["filled"] = int(st.get("filled_qty") or 0)
+    return _finalize(out, orders, submitted=len(live), rejected=rejected, pending=pending,
+                     db_engine=db_engine, cycle_key=cycle_key)
+
+
+def _chase(orders, *, broker, db_engine, cycle_key, pending, out, poll_attempts,
+           poll_interval_s, sleep, touch, now, market_close, close_buffer_s, max_rounds,
+           alert) -> ExecReport:
+    by_sym = {o.symbol: o for o in orders}
+    active = {o.symbol for o in orders}
+    submitted_n = 0
+    rejected = 0
+
+    def _round(tag: str, *, force_market: bool) -> None:
+        nonlocal submitted_n, rejected
+        live: list[tuple[str, str]] = []
+        for sym in list(active):
+            o = by_sym[sym]
+            residual = o.qty - out[sym]["filled"]
+            if residual <= 0:
+                active.discard(sym); continue
+            if force_market or o.order_type == "market":
+                otype, lp = "market", None
+            else:
+                try:
+                    lp, otype = round(float(touch(sym, o.side)), 2), "limit"
+                except AlpacaAPIError as exc:           # can't quote → take it market this round
+                    log.warning("touch quote failed; using market", extra={"symbol": sym, "error": str(exc)})
+                    otype, lp = "market", None
+            coid = f"{cycle_key}:{sym}:{o.side}:{tag}"
+            try:
+                resp = broker.submit_order(sym, residual, o.side, order_type=otype,
+                                           limit_price=lp, client_order_id=coid)
+            except AlpacaAPIError as exc:
+                rejected += 1
+                out[sym].update(status="rejected", reason=f"rejected: {exc}")
+                pending.append({"symbol": sym, "side": o.side, "delta_usd": None,
+                                "qty": residual, "reason": f"rejected: {exc}"})
+                log.error("order rejected; deferring", extra={"symbol": sym, "error": str(exc)})
+                if alert:
+                    alert(f"order rejected {sym} {o.side} {residual}: {exc}")
+                active.discard(sym); continue
+            submitted_n += 1
+            _upsert_order(db_engine, cycle_key, resp)
+            live.append((resp["id"], sym))
+
+        open_ids = {oid for oid, _ in live}
+        for _ in range(poll_attempts):
+            if not open_ids:
+                break
+            sleep(poll_interval_s)
+            for oid, sym in live:
+                if oid not in open_ids:
+                    continue
+                try:
+                    st = broker.get_order(oid)
+                except AlpacaAPIError as exc:
+                    log.warning("poll get_order failed; will retry next pass", extra={"id": oid, "error": str(exc)})
+                    continue
+                _upsert_order(db_engine, cycle_key, st)
+                if st["status"] in _TERMINAL:
+                    open_ids.discard(oid)
+
+        for oid, sym in live:
+            if oid in open_ids:
+                try:
+                    broker.cancel_order(oid)
+                except AlpacaAPIError as exc:
+                    log.warning("cancel failed", extra={"id": oid, "error": str(exc)})
+            try:
+                st = broker.get_order(oid)
+            except AlpacaAPIError as exc:
+                log.warning("round-end get_order failed; leaving to reconcile", extra={"id": oid, "error": str(exc)})
+                continue
+            _upsert_order(db_engine, cycle_key, st)
+            fq = int(st.get("filled_qty") or 0)
+            if fq > 0:
+                _record_fill(db_engine, st)
+                out[sym]["filled"] += fq
+            if out[sym]["filled"] >= by_sym[sym].qty:
+                active.discard(sym)
+
+    rnd = 0
+    while active and rnd < max_rounds:
+        if market_close is not None and now() >= market_close - timedelta(seconds=close_buffer_s):
+            break
+        rnd += 1
+        _round(f"r{rnd}", force_market=False)
+    if active:                                          # final market order guarantees the residual
+        _round("final", force_market=True)
+
+    for sym in active:
+        residual = by_sym[sym].qty - out[sym]["filled"]
+        if residual > 0:
+            pending.append({"symbol": sym, "side": by_sym[sym].side, "delta_usd": None,
+                            "qty": residual, "reason": "unfilled after chase + market order"})
+    return _finalize(out, orders, submitted=submitted_n, rejected=rejected, pending=pending,
+                     db_engine=db_engine, cycle_key=cycle_key)
 
 
 # --- DB helpers (lazy sqlalchemy import, like factors.write_factor_scores) ----------- #

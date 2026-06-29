@@ -235,6 +235,32 @@ class AlpacaClient:
         # Quote unavailable — fall back to the most recent trade.
         return self.latest_trade(symbol)
 
+    def latest_nbbo(self, symbol: str) -> tuple[float, float]:
+        """Return ``(bid, ask)`` from the latest NBBO quote for ``symbol``.
+
+        Each side falls back to the latest trade price when it is absent or non-positive
+        (e.g. outside market hours on the IEX feed). Used by the execution chaser to cross
+        to the touch: lift the ask on a buy, hit the bid on a sell.
+
+        Raises:
+            AlpacaAPIError: If both the quote and the fallback trade fetch fail.
+        """
+        request = StockLatestQuoteRequest(symbol_or_symbols=symbol, feed=self.feed)
+        try:
+            result = self._data.get_stock_latest_quote(request)
+        except APIError as exc:
+            raise AlpacaAPIError(symbol, "latest_nbbo", str(exc)) from exc
+        quote = result.get(symbol) if isinstance(result, dict) else None
+        bid = getattr(quote, "bid_price", None) if quote is not None else None
+        ask = getattr(quote, "ask_price", None) if quote is not None else None
+        bid = float(bid) if bid is not None and float(bid) > 0 else None
+        ask = float(ask) if ask is not None and float(ask) > 0 else None
+        if bid is None or ask is None:
+            last = self.latest_trade(symbol)
+            bid = bid if bid is not None else last
+            ask = ask if ask is not None else last
+        return bid, ask
+
     def latest_trade(self, symbol: str) -> float:
         """Return the price of the most recent trade for ``symbol``.
 
