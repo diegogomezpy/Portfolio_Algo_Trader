@@ -255,6 +255,24 @@ def _icon(ax, name, cx, cy, s, color=ACCDK_H):
             ax.add_patch(Rectangle((cx - 0.5*s + i*0.36*s, cy - 0.55*s), 0.24*s, hh*s, fc=color, ec="none"))
 
 
+LOGO_DIR = os.path.join(HERE, "logos")
+ALPACA_LOGO = os.path.join(LOGO_DIR, "alpaca.png")
+SEC_LOGO = os.path.join(LOGO_DIR, "sec.png")
+
+
+def _place_logo(ax, path, cx, cy, box):
+    """Place a logo image centered at (cx, cy), fit within a 2*box square, aspect preserved."""
+    img = plt.imread(path)
+    ih, iw = img.shape[0], img.shape[1]
+    ar = iw / ih
+    if ar >= 1:
+        w = 2 * box; h = w / ar
+    else:
+        h = 2 * box; w = h * ar
+    ax.imshow(img, extent=[cx - w/2, cx + w/2, cy - h/2, cy + h/2],
+              zorder=6, aspect="auto", interpolation="antialiased")
+
+
 def _icon_cards(path, items, cols=2, figw=12.0, figh=4.5, wrap=34):
     rows = -(-len(items) // cols)
     fig, ax = plt.subplots(figsize=(figw, figh))
@@ -281,23 +299,30 @@ def _icon_cards(path, items, cols=2, figw=12.0, figh=4.5, wrap=34):
 def fig_data_sources():
     path = os.path.join(ASSETS, "data_sources.png")
     fig, ax = plt.subplots(figsize=(12, 5.4)); ax.set_xlim(0, 12); ax.set_ylim(0, 5.4); ax.axis("off")
-    sources = [(4.05, "Alpaca", "Brokerage & market data", "bars", "daily prices · option quotes · trading"),
-               (2.35, "SEC EDGAR", "Official company filings", "doc", "company financials"),
-               (0.65, "Ken French Data Library", "Academic factor data", "chartline", "factor returns for risk")]
+    sources = [(4.05, "Alpaca", "Brokerage & market data", "bars", ALPACA_LOGO,
+                "daily prices · option quotes · trading"),
+               (2.35, "SEC EDGAR", "Official company filings", "doc", SEC_LOGO,
+                "company financials"),
+               (0.65, "Ken French Data Library", "Academic factor data", "chartline", None,
+                "factor returns for risk")]
     node_x, node_y = 8.7, 2.05
     ends = {4.05: 3.05, 2.35: 2.45, 0.65: 1.85}
-    for cy, name, sub, icon, lbl in sources:
+    for cy, name, sub, icon, logo, lbl in sources:
         start, end = (4.7, cy + 0.6), (node_x - 0.05, ends[cy])
         ax.add_patch(FancyArrowPatch(start, end, arrowstyle="-|>", mutation_scale=18, color=ACC_H,
                      lw=2.2, shrinkA=0, shrinkB=2, connectionstyle="arc3,rad=0.04"))
         mx, my = (start[0] + end[0]) / 2 + 0.05, (start[1] + end[1]) / 2 + 0.16
         ax.text(mx, my, lbl, fontsize=9.5, color=MUT_H, fontproperties=_REG, ha="center",
                 bbox=dict(fc="white", ec="none", pad=1.5))
-    for cy, name, sub, icon, lbl in sources:
+    for cy, name, sub, icon, logo, lbl in sources:
         _rbox(ax, 0.3, cy, 4.4, 1.2, fc=PANEL_H, ec=BD_H, r=0.1)
         ax.add_patch(Rectangle((0.3, cy), 0.09, 1.2, fc=ACC_H, ec="none"))
-        ax.add_patch(Circle((1.05, cy + 0.6), 0.46, fc="white", ec=BD_H, lw=1.0))
-        _icon(ax, icon, 1.05, cy + 0.6, 0.28)
+        chx, chy = 1.05, cy + 0.6
+        _rbox(ax, chx - 0.5, chy - 0.5, 1.0, 1.0, fc="white", ec=BD_H, lw=1.0, r=0.18)
+        if logo and os.path.exists(logo):
+            _place_logo(ax, logo, chx, chy, 0.4)
+        else:
+            _icon(ax, icon, chx, chy, 0.32)
         ax.text(1.75, cy + 0.74, name, fontsize=14.5, color=INK_H, fontproperties=_BOLD, va="center")
         ax.text(1.75, cy + 0.36, sub, fontsize=10.5, color=MUT_H, fontproperties=_REG, va="center")
     _rbox(ax, node_x, node_y, 3.0, 1.3, fc=INK_H, ec=INK_H, r=0.12)
