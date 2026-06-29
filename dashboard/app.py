@@ -294,9 +294,13 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
         return data.api_alerts(db_engine, limit)
 
     @app.get("/api/track_record")
-    def track_record() -> dict:
-        """Realized paper performance since inception + SPY/covered-call-ETF benchmarks."""
-        tr = data.api_track_record(db_engine)
+    def track_record(start: str | None = None) -> dict:
+        """Realized paper performance + SPY/covered-call-ETF benchmarks.
+
+        ``start`` (ISO date) windows the curve and re-bases everything — including the
+        benchmarks, which align to the (now windowed) ``dates`` and base at ``inception``.
+        """
+        tr = data.api_track_record(db_engine, start=start)
         if not tr.get("available"):
             return {**tr, "benchmarks": {}}
         benchmarks = _benchmark_curves(meta.get("live_benchmarks", []), tr["inception"], tr["dates"])
@@ -325,9 +329,12 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
         return data.api_fees(db_engine)
 
     @app.get("/api/risk")
-    def risk() -> dict:
-        """Drawdown / volatility / VaR analytics from the equity curve (Postgres-only)."""
-        return data.api_risk(db_engine)
+    def risk(start: str | None = None) -> dict:
+        """Drawdown / volatility / VaR analytics from the equity curve (Postgres-only).
+
+        ``start`` (ISO date) windows the curve to match the Performance start-date picker.
+        """
+        return data.api_risk(db_engine, start=start)
 
     @app.get("/api/reference")
     def reference() -> dict:

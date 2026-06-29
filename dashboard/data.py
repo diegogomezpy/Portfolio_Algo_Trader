@@ -365,8 +365,11 @@ def _daily_nav(rows) -> tuple[list[str], list[float]]:
            [by_day[d] for d in days]
 
 
-def api_track_record(db_engine) -> dict:
+def api_track_record(db_engine, *, start: str | None = None) -> dict:
     """Realized paper performance since inception, from the ``snapshots`` equity curve.
+
+    ``start`` (ISO ``YYYY-MM-DD``) windows the curve to snapshots on/after that date and re-bases
+    the normalized series + all stats to it (the dashboard's start-date / period picker).
 
     Returns the daily NAV series + normalized curve + stats (return/vol/Sharpe/drawdown) and
     lifetime premium collected. ``available`` is False until the monitor has written snapshots;
@@ -379,6 +382,8 @@ def api_track_record(db_engine) -> dict:
         premium = conn.execute(
             select(func.coalesce(func.sum(db.options_lifecycle.c.premium), 0.0))).scalar()
     rows = [(ts, nav) for ts, nav in rows if nav is not None]
+    if start:
+        rows = [(ts, nav) for ts, nav in rows if str(ts)[:10] >= start]
     if not rows:
         return {"available": False, "days": 0, "dates": [], "nav": [], "norm": [],
                 "premium_collected": float(premium or 0.0)}
@@ -450,7 +455,7 @@ def _rolling_vol(rets: list[float], window: int) -> list[float | None]:
     return out
 
 
-def api_risk(db_engine, *, window: int = 10) -> dict:
+def api_risk(db_engine, *, window: int = 10, start: str | None = None) -> dict:
     """Risk analytics from the ``snapshots`` equity curve (Postgres-only, unit-testable).
 
     Everything derives from the daily NAV series: an underwater (drawdown) curve with the current
@@ -463,6 +468,8 @@ def api_risk(db_engine, *, window: int = 10) -> dict:
         rows = conn.execute(
             select(db.snapshots.c.ts, db.snapshots.c.nav).order_by(db.snapshots.c.ts)).all()
     rows = [(ts, nav) for ts, nav in rows if nav is not None]
+    if start:
+        rows = [(ts, nav) for ts, nav in rows if str(ts)[:10] >= start]
     if not rows:
         return {"available": False, "days": 0}
     dates, navs = _daily_nav(rows)

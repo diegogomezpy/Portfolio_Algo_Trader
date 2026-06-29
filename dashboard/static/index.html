@@ -111,6 +111,15 @@
             cursor: pointer; transition: all .15s var(--ease); }
   .subtab:hover { color: var(--fg); background: var(--panel-2); }
   .subtab.active { color: var(--fg); background: var(--panel-2); border-color: var(--line); }
+  .winbar { display: flex; align-items: center; gap: 6px; margin: 14px 0 2px; flex-wrap: wrap; }
+  .winbar .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-right: 4px; }
+  .winpill { background: transparent; color: var(--muted); border: 1px solid transparent;
+             border-radius: 6px; padding: 3px 10px; font: inherit; font-size: 11.5px; font-weight: 600;
+             cursor: pointer; transition: all .15s var(--ease); }
+  .winpill:hover { color: var(--fg); background: var(--panel-2); }
+  .winpill.active { color: var(--accent); background: var(--accent-dim); border-color: var(--line); }
+  .windate { background: var(--panel-2); border: 1px solid var(--line); color: var(--fg-dim);
+             border-radius: 6px; padding: 2px 7px; font-family: var(--mono); font-size: 11px; }
   .topbar .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
   .refresh { background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
              border-radius: 8px; width: 30px; height: 30px; cursor: pointer; display: grid;
@@ -295,6 +304,14 @@
       <button class="subtab" data-sub="risk">Risk</button>
       <button class="subtab" data-sub="execution">Execution</button>
     </div>
+    <div class="winbar" id="winbar" title="window the performance & risk views to a start date">
+      <span class="lbl">Window</span>
+      <button class="winpill" data-win="ALL">All</button>
+      <button class="winpill" data-win="1M">1M</button>
+      <button class="winpill" data-win="3M">3M</button>
+      <button class="winpill" data-win="YTD">YTD</button>
+      <input type="date" class="windate" id="windate" title="custom start date">
+    </div>
     <div class="subview" id="sub-returns">
       <div class="se-panel" id="trackempty" style="display:none;text-align:center;color:var(--muted);padding:38px 20px">
         No live track record yet — this fills in automatically once the strategy starts trading and the
@@ -456,9 +473,20 @@ function trackChart(dates, series){
   return s+"</svg>";
 }
 
+// Performance window picker (per-browser): re-base the track record + risk to a chosen start.
+let perfWin = localStorage.getItem("perfWin") || "ALL";   // ALL | 1M | 3M | YTD | YYYY-MM-DD
+function winStart(w){
+  if(/^\d{4}-\d{2}-\d{2}$/.test(w)) return w;             // custom date passed straight through
+  const d = new Date();
+  if(w==="YTD") return `${d.getFullYear()}-01-01`;
+  if(w==="1M"){ d.setMonth(d.getMonth()-1); return d.toISOString().slice(0,10); }
+  if(w==="3M"){ d.setMonth(d.getMonth()-3); return d.toISOString().slice(0,10); }
+  return "";                                              // ALL → since inception
+}
 async function loadPerformance(){
+  const start = winStart(perfWin), ws = start ? `?start=${start}` : "";
   const [tr, slip, risk, st, fees] = await Promise.all(
-    ["/api/track_record","/api/slippage","/api/risk","/api/state","/api/fees"].map(get));
+    [`/api/track_record${ws}`,"/api/slippage",`/api/risk${ws}`,"/api/state","/api/fees"].map(get));
   lastFetch = Date.now(); tickFreshness();
   renderReturns(tr, slip, fees);   // Returns sub-view
   renderRisk(risk, st);            // Risk sub-view
@@ -1059,7 +1087,30 @@ $("sbtoggle").onclick = () => {
   $("sbtoggle").innerHTML = healthOpen ? "Hide ▴" : "Details ▾";
 };
 boot();
-setInterval(loadActive, 30000);   // re-read the active view every 30s
+// ---- Performance window picker wiring -------------------------------------
+function syncWin(){
+  const isDate = /^\d{4}-\d{2}-\d{2}$/.test(perfWin);
+  $("windate").value = isDate ? perfWin : "";
+  document.querySelectorAll(".winpill").forEach(b => b.classList.toggle("active", !isDate && b.dataset.win === perfWin));
+}
+document.querySelectorAll(".winpill").forEach(b => b.onclick = () => {
+  perfWin = b.dataset.win; localStorage.setItem("perfWin", perfWin); syncWin(); loadPerformance();
+});
+$("windate").onchange = () => {
+  if ($("windate").value) { perfWin = $("windate").value; localStorage.setItem("perfWin", perfWin); syncWin(); loadPerformance(); }
+};
+syncWin();
+
+// ---- live ticks -----------------------------------------------------------
+// Fast 1s tick: refresh the live NAV + KPIs on the Overview (one /api/state read ≈ one Alpaca
+// quote — well under the rate limit), so the headline numbers move every second. The heavier
+// panels (history, factors, health) stay on the 30s poll, which is all they change on anyway.
+setInterval(async () => {
+  if (activeView !== "overview") return;
+  const s = await get("/api/state");
+  if (s) { noteFresh(s); kpis(s); renderGate(s); }
+}, 1000);
+setInterval(loadActive, 30000);   // full re-read of the active view every 30s
 setInterval(tickFreshness, 1000); // tick the "checked / data age" header every second
 </script>
 </body>

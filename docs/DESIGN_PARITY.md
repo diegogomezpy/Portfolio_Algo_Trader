@@ -40,8 +40,10 @@ the newer spec introduces.
   NAV panel below. Restructure into one hero. _Needs: frontend._
 - [ ] **Flash-on-tick highlight** — MISSING. Brief tinted bg (green up / red down) on NAV & P&L cells
   when the value changes. _Needs: frontend (compare last value, animate)._
-- [ ] **Period selector `1M / 3M / YTD / ITD`** driving the KPI strip — MISSING. _Needs: frontend +
-  windowed metrics (return/Sharpe/MaxDD/vol over the chosen window) in the data layer._
+- [x] **Performance window picker (`All / 1M / 3M / YTD / custom date`)** — DONE. Re-bases the track
+  record + risk + benchmarks to a chosen start (per-browser via localStorage); `api_track_record` /
+  `api_risk` take a `start` param. Supersedes the period-selector item; an Overview KPI-strip variant
+  over the window is a follow-up.
 - [ ] **Overview KPI strip = Return · Sharpe · MaxDD · Volatility** — PARTIAL/DIFFERENT. Current
   overview KPIs are NAV/Day P&L/Leverage/Cash/Premium/Positions. Spec's overview strip is the four
   performance metrics. Decide whether to add the perf strip here. _Needs: frontend + windowed metrics._
@@ -106,3 +108,14 @@ the newer spec introduces.
 
 > Note: the handoff's data is simulated; everything here must be wired to real fund/engine/feed data,
 > which the live dashboard already does for the existing panels.
+
+---
+
+## Requested beyond the handoff
+
+- [x] **Performance start-date / window picker** — done (see Overview/Performance above).
+- [x] **~1-second live refetch** — the Overview NAV + KPIs now refresh every **1 s** from `/api/state`
+  (one Alpaca quote per tick, well under the ~200/min limit). The heavier Postgres-backed panels
+  (health, history, factors) stay on the 30 s poll, since their snapshot only changes every 60 s.
+  Full 1 s polling of *every* endpoint is avoided deliberately — it would burn the Alpaca rate limit
+  re-reading unchanged data. Revisit if a streaming (websocket) feed replaces polling.
