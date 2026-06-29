@@ -15,10 +15,16 @@ Sep 2021 - Jun 2026 window; strategy figures are from the walk-forward backtest.
 from __future__ import annotations
 import os
 
+import math
+import textwrap
+
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.patches import (FancyBboxPatch, FancyArrowPatch, Rectangle, Circle,
+                                Polygon, RegularPolygon, Arc)
+from matplotlib.font_manager import FontProperties
 
 from pptx import Presentation
 from pptx.util import Inches, Pt
@@ -47,6 +53,9 @@ FONT = "Avenir Next"
 
 INK_H, ACC_H, ACCDK_H = "#0E1B2A", "#14B8A6", "#0E8C7E"
 MUT_H, GRY_H, TEXT_H = "#6B7787", "#9AA7B4", "#1F2A37"
+PANEL_H, BD_H, LIGHT_H = "#F4F7F9", "#DDE4EA", "#C7D2DD"
+_BOLD = FontProperties(family="Avenir Next", weight="bold")
+_REG = FontProperties(family="Avenir Next")
 
 matplotlib.rcParams.update({
     "font.family": "sans-serif",
@@ -169,6 +178,202 @@ def fig_vrp():
     plt.close(fig); return path
 
 
+def _rbox(ax, x, y, w, h, fc=PANEL_H, ec=BD_H, lw=1.2, r=0.1):
+    ax.add_patch(FancyBboxPatch((x, y), w, h,
+                 boxstyle=f"round,pad=0,rounding_size={r}", fc=fc, ec=ec, lw=lw))
+
+
+def _arc_arrow(ax, cx, cy, r, t1, t2, color, lw=2.2):
+    ax.add_patch(Arc((cx, cy), 2 * r, 2 * r, theta1=t1, theta2=t2, ec=color, lw=lw))
+    a = math.radians(t2)
+    px, py = cx + r * math.cos(a), cy + r * math.sin(a)
+    tx, ty = -math.sin(a), math.cos(a)
+    nx, ny = math.cos(a), math.sin(a)
+    sz = r * 0.6
+    ax.add_patch(Polygon([(px + tx * sz, py + ty * sz),
+                          (px + nx * sz * 0.5, py + ny * sz * 0.5),
+                          (px - nx * sz * 0.5, py - ny * sz * 0.5)], closed=True, fc=color, ec="none"))
+
+
+def _icon(ax, name, cx, cy, s, color=ACCDK_H):
+    lw = 2.1
+    if name == "shield":
+        pts = [(cx, cy + s), (cx + 0.8*s, cy + 0.45*s), (cx + 0.8*s, cy - 0.25*s),
+               (cx, cy - s), (cx - 0.8*s, cy - 0.25*s), (cx - 0.8*s, cy + 0.45*s)]
+        ax.add_patch(Polygon(pts, closed=True, fill=False, ec=color, lw=lw, joinstyle="round"))
+        ax.plot([cx - 0.32*s, cx - 0.05*s, cx + 0.4*s], [cy - 0.02*s, cy - 0.32*s, cy + 0.35*s],
+                color=color, lw=lw, solid_capstyle="round")
+    elif name == "stop":
+        ax.add_patch(RegularPolygon((cx, cy), numVertices=8, radius=s, orientation=math.pi/8,
+                     fill=False, ec=color, lw=lw))
+        ax.plot([cx - 0.45*s, cx + 0.45*s], [cy, cy], color=color, lw=lw, solid_capstyle="round")
+    elif name == "doc":
+        _rbox(ax, cx - 0.55*s, cy - 0.8*s, 1.1*s, 1.6*s, fc="white", ec=color, lw=lw, r=0.04)
+        for yy in (0.42, 0.05, -0.32):
+            ax.plot([cx - 0.32*s, cx + 0.32*s], [cy + yy*s, cy + yy*s], color=color, lw=lw*0.8)
+    elif name == "clock":
+        ax.add_patch(Circle((cx, cy), s, fill=False, ec=color, lw=lw))
+        ax.plot([cx, cx], [cy, cy + 0.6*s], color=color, lw=lw, solid_capstyle="round")
+        ax.plot([cx, cx + 0.42*s], [cy, cy + 0.05*s], color=color, lw=lw, solid_capstyle="round")
+    elif name == "check":
+        ax.add_patch(Circle((cx, cy), s, fill=False, ec=color, lw=lw))
+        ax.plot([cx - 0.42*s, cx - 0.1*s, cx + 0.45*s], [cy, cy - 0.35*s, cy + 0.42*s],
+                color=color, lw=lw, solid_capstyle="round")
+    elif name == "funnel":
+        ax.add_patch(Polygon([(cx - 0.7*s, cy + 0.7*s), (cx + 0.7*s, cy + 0.7*s),
+                              (cx + 0.16*s, cy - 0.1*s), (cx + 0.16*s, cy - 0.7*s),
+                              (cx - 0.16*s, cy - 0.7*s), (cx - 0.16*s, cy - 0.1*s)],
+                     closed=True, fill=False, ec=color, lw=lw, joinstyle="round"))
+    elif name == "split":
+        ax.plot([cx, cx], [cy - 0.7*s, cy], color=color, lw=lw, solid_capstyle="round")
+        ax.plot([cx, cx - 0.6*s], [cy, cy + 0.55*s], color=color, lw=lw, solid_capstyle="round")
+        ax.plot([cx, cx + 0.6*s], [cy, cy + 0.55*s], color=color, lw=lw, solid_capstyle="round")
+        for ex in (-0.6, 0.6):
+            ax.add_patch(Circle((cx + ex*s, cy + 0.55*s), 0.1*s, fc=color, ec="none"))
+    elif name == "calendar":
+        _rbox(ax, cx - 0.7*s, cy - 0.6*s, 1.4*s, 1.2*s, fc="white", ec=color, lw=lw, r=0.05)
+        ax.plot([cx - 0.7*s, cx + 0.7*s], [cy + 0.26*s, cy + 0.26*s], color=color, lw=lw)
+        for hx in (-0.35, 0.35):
+            ax.plot([cx + hx*s, cx + hx*s], [cy + 0.45*s, cy + 0.78*s], color=color, lw=lw, solid_capstyle="round")
+        for dx in (-0.32, 0, 0.32):
+            for dy in (-0.05, -0.32):
+                ax.add_patch(Circle((cx + dx*s, cy + dy*s), 0.07*s, fc=color, ec="none"))
+    elif name == "percent":
+        ax.add_patch(Circle((cx - 0.3*s, cy + 0.32*s), 0.2*s, fill=False, ec=color, lw=lw))
+        ax.add_patch(Circle((cx + 0.3*s, cy - 0.32*s), 0.2*s, fill=False, ec=color, lw=lw))
+        ax.plot([cx - 0.5*s, cx + 0.5*s], [cy - 0.55*s, cy + 0.55*s], color=color, lw=lw, solid_capstyle="round")
+    elif name == "chartline":
+        xs = [cx - 0.6*s, cx - 0.2*s, cx + 0.15*s, cx + 0.6*s]
+        ys = [cy - 0.4*s, cy + 0.15*s, cy - 0.12*s, cy + 0.5*s]
+        ax.plot(xs, ys, color=color, lw=lw, solid_capstyle="round")
+        for x, y in zip(xs, ys):
+            ax.add_patch(Circle((x, y), 0.08*s, fc=color, ec="none"))
+    elif name == "refresh":
+        _arc_arrow(ax, cx, cy, 0.78*s, 50, 300, color, lw)
+    elif name == "bars":
+        for i, hh in enumerate([0.5, 0.8, 1.15]):
+            ax.add_patch(Rectangle((cx - 0.5*s + i*0.36*s, cy - 0.55*s), 0.24*s, hh*s, fc=color, ec="none"))
+
+
+def _icon_cards(path, items, cols=2, figw=12.0, figh=4.5, wrap=34):
+    rows = -(-len(items) // cols)
+    fig, ax = plt.subplots(figsize=(figw, figh))
+    ax.set_xlim(0, figw); ax.set_ylim(0, figh); ax.axis("off")
+    pad = 0.28
+    cw = (figw - pad * (cols + 1)) / cols
+    ch = (figh - pad * (rows + 1)) / rows
+    for i, (icon, title, desc) in enumerate(items):
+        r = i // cols; c = i % cols
+        x = pad + c * (cw + pad)
+        y = figh - pad - (r + 1) * ch - r * pad
+        _rbox(ax, x, y, cw, ch, fc=PANEL_H, ec=BD_H, r=0.09)
+        ax.add_patch(Rectangle((x, y), 0.09, ch, fc=ACC_H, ec="none"))
+        icx, icy = x + 0.82, y + ch / 2
+        ax.add_patch(Circle((icx, icy), 0.46, fc="white", ec=BD_H, lw=1.0))
+        _icon(ax, icon, icx, icy, 0.28)
+        ax.text(x + 1.55, y + ch - 0.42, title, fontsize=14, color=INK_H, fontproperties=_BOLD, va="top")
+        ax.text(x + 1.55, y + ch - 0.92, textwrap.fill(desc, wrap), fontsize=10.5, color=MUT_H,
+                fontproperties=_REG, va="top", linespacing=1.3)
+    fig.tight_layout(); fig.savefig(path, dpi=170, bbox_inches="tight", facecolor="white")
+    plt.close(fig); return path
+
+
+def fig_data_sources():
+    path = os.path.join(ASSETS, "data_sources.png")
+    fig, ax = plt.subplots(figsize=(12, 5.4)); ax.set_xlim(0, 12); ax.set_ylim(0, 5.4); ax.axis("off")
+    sources = [(4.05, "Alpaca", "Brokerage & market data", "bars", "daily prices · option quotes · trading"),
+               (2.35, "SEC EDGAR", "Official company filings", "doc", "company financials"),
+               (0.65, "Ken French Data Library", "Academic factor data", "chartline", "factor returns for risk")]
+    node_x, node_y = 8.7, 2.05
+    ends = {4.05: 3.05, 2.35: 2.45, 0.65: 1.85}
+    for cy, name, sub, icon, lbl in sources:
+        start, end = (4.7, cy + 0.6), (node_x - 0.05, ends[cy])
+        ax.add_patch(FancyArrowPatch(start, end, arrowstyle="-|>", mutation_scale=18, color=ACC_H,
+                     lw=2.2, shrinkA=0, shrinkB=2, connectionstyle="arc3,rad=0.04"))
+        mx, my = (start[0] + end[0]) / 2 + 0.05, (start[1] + end[1]) / 2 + 0.16
+        ax.text(mx, my, lbl, fontsize=9.5, color=MUT_H, fontproperties=_REG, ha="center",
+                bbox=dict(fc="white", ec="none", pad=1.5))
+    for cy, name, sub, icon, lbl in sources:
+        _rbox(ax, 0.3, cy, 4.4, 1.2, fc=PANEL_H, ec=BD_H, r=0.1)
+        ax.add_patch(Rectangle((0.3, cy), 0.09, 1.2, fc=ACC_H, ec="none"))
+        ax.add_patch(Circle((1.05, cy + 0.6), 0.46, fc="white", ec=BD_H, lw=1.0))
+        _icon(ax, icon, 1.05, cy + 0.6, 0.28)
+        ax.text(1.75, cy + 0.74, name, fontsize=14.5, color=INK_H, fontproperties=_BOLD, va="center")
+        ax.text(1.75, cy + 0.36, sub, fontsize=10.5, color=MUT_H, fontproperties=_REG, va="center")
+    _rbox(ax, node_x, node_y, 3.0, 1.3, fc=INK_H, ec=INK_H, r=0.12)
+    ax.text(node_x + 1.5, node_y + 0.8, "Factor model", fontsize=15, color="white", fontproperties=_BOLD, ha="center")
+    ax.text(node_x + 1.5, node_y + 0.4, "& portfolio", fontsize=15, color="white", fontproperties=_BOLD, ha="center")
+    ax.add_patch(FancyArrowPatch((node_x + 1.5, node_y - 0.05), (node_x + 1.5, node_y - 0.5),
+                 arrowstyle="-|>", mutation_scale=16, color=ACCDK_H, lw=2.2))
+    ax.text(node_x + 1.5, node_y - 0.8, "holdings + covered calls", fontsize=10, color=MUT_H,
+            fontproperties=_REG, ha="center")
+    fig.tight_layout(); fig.savefig(path, dpi=170, bbox_inches="tight", facecolor="white")
+    plt.close(fig); return path
+
+
+def fig_lifecycle():
+    path = os.path.join(ASSETS, "lifecycle.png")
+    fig, ax = plt.subplots(figsize=(12, 3.2)); ax.set_xlim(0, 12); ax.set_ylim(0, 3.2); ax.axis("off")
+    stages = [("Rebalance day", "Sell ~30-day calls\non the new holdings", ACCDK_H),
+              ("Through the month", "Hold the stock,\ncollect the premium", INK_H),
+              ("Before expiry", "Close the calls\n(early, before earnings)", INK_H),
+              ("Next month", "Rewrite fresh calls\non the new holdings", ACCDK_H)]
+    n = len(stages); bw = 2.4; gap = (12 - 0.4 - n * bw) / (n - 1); y = 1.35; bh = 1.45
+    xs = []
+    for i, (t, d, fc) in enumerate(stages):
+        x = 0.2 + i * (bw + gap); xs.append(x)
+        _rbox(ax, x, y, bw, bh, fc=fc, ec=fc, r=0.12)
+        ax.text(x + bw/2, y + bh - 0.34, t, fontsize=12.5, color="white", fontproperties=_BOLD, ha="center")
+        ax.text(x + bw/2, y + 0.5, d, fontsize=9.5, color=LIGHT_H, fontproperties=_REG, ha="center", linespacing=1.25)
+        if i < n - 1:
+            ax.add_patch(FancyArrowPatch((x + bw + 0.06, y + bh/2), (x + bw + gap - 0.06, y + bh/2),
+                         arrowstyle="-|>", mutation_scale=16, color=ACC_H, lw=2.4))
+    ax.add_patch(FancyArrowPatch((xs[-1] + bw/2, y - 0.04), (xs[0] + bw/2, y - 0.04),
+                 connectionstyle="arc3,rad=0.34", arrowstyle="-|>", mutation_scale=15, color=MUT_H, lw=1.8))
+    ax.text(6, 0.22, "repeats every month", fontsize=11, color=MUT_H, fontproperties=_BOLD, ha="center")
+    fig.tight_layout(); fig.savefig(path, dpi=170, bbox_inches="tight", facecolor="white")
+    plt.close(fig); return path
+
+
+def fig_methodology():
+    path = os.path.join(ASSETS, "methodology.png")
+    items = [("calendar", "Walk-forward", "Tested month by month, using only data known then"),
+             ("percent", "Realistic costs", "A trading cost charged on every simulated trade"),
+             ("chartline", "Real option prices", "Actual historical premiums used where available"),
+             ("check", "Index cross-check", "Reproduces the public BuyWrite index closely")]
+    fig, ax = plt.subplots(figsize=(12, 3.0)); ax.set_xlim(0, 12); ax.set_ylim(0, 3.0); ax.axis("off")
+    n = 4; pad = 0.3; cw = (12 - pad * (n + 1)) / n; y = 0.2; ch = 2.6
+    for i, (icon, t, d) in enumerate(items):
+        x = pad + i * (cw + pad)
+        _rbox(ax, x, y, cw, ch, fc=PANEL_H, ec=BD_H, r=0.09)
+        ax.add_patch(Rectangle((x, y + ch - 0.09), cw, 0.09, fc=ACC_H, ec="none"))
+        icx, icy = x + cw/2, y + ch - 0.72
+        ax.add_patch(Circle((icx, icy), 0.46, fc="white", ec=BD_H, lw=1.0)); _icon(ax, icon, icx, icy, 0.28)
+        ax.text(x + cw/2, y + ch - 1.5, t, fontsize=13, color=INK_H, fontproperties=_BOLD, ha="center")
+        ax.text(x + cw/2, y + ch - 1.82, textwrap.fill(d, 26), fontsize=10, color=MUT_H,
+                fontproperties=_REG, ha="center", va="top", linespacing=1.3)
+    fig.tight_layout(); fig.savefig(path, dpi=170, bbox_inches="tight", facecolor="white")
+    plt.close(fig); return path
+
+
+def fig_risk_cards():
+    return _icon_cards(os.path.join(ASSETS, "risk_cards.png"), [
+        ("shield", "Pre-trade check", "No order can break a limit, and no call can be sold uncovered"),
+        ("refresh", "Safe to re-run", "Can stop and restart mid-rebalance without double-trading"),
+        ("stop", "Emergency stop", "One command halts trading or sells the whole book to cash"),
+        ("doc", "Full audit log", "Every score, order, and fill is recorded"),
+    ], cols=2)
+
+
+def fig_integrity_cards():
+    return _icon_cards(os.path.join(ASSETS, "integrity_cards.png"), [
+        ("split", "Corporate actions", "Splits and dividends never look like returns"),
+        ("clock", "Point-in-time", "Only data public on each date is used, with no hindsight"),
+        ("refresh", "Reconciled", "Squared against the broker on every run"),
+        ("funnel", "Clean universe", "Only liquid stocks with reliable filings are eligible"),
+    ], cols=2)
+
+
 print("rendering assets…")
 F_Z = formula(r"z=\dfrac{x-\mu}{\sigma}", "f_z.png", 44)
 F_VALUE = formula(r"\mathrm{Value}=z\left(\,z(E/P)+z(B/P)\,\right)", "f_value.png", 40)
@@ -182,6 +387,11 @@ IMG_BELL = fig_bell()
 IMG_PAYOFF = fig_payoff()
 IMG_RR = fig_risk_return()
 IMG_VRP = fig_vrp()
+IMG_SOURCES = fig_data_sources()
+IMG_LIFECYCLE = fig_lifecycle()
+IMG_METHOD = fig_methodology()
+IMG_RISK = fig_risk_cards()
+IMG_INTEGRITY = fig_integrity_cards()
 
 
 # =========================================================================== #
@@ -724,15 +934,16 @@ content("5 · The income overlay", "Choosing which call to sell", [
       "market rather than chasing.")]},
 ], subtitle="The rule is consistent across every stock, with no discretion")
 
-content("5 · The income overlay", "Managing the options through the month", [
-    {"runs": [("One monthly cycle. ", True), ("At each monthly rebalance we close every existing call "
-      "and write fresh ones against the new holdings. Simple, and always aligned to current positions.")]},
-    {"runs": [("Closed before earnings. ", True), ("A company's earnings announcement can cause a large "
-      "jump. We close any call facing one beforehand, then rewrite afterward.")]},
-    {"runs": [("Closed before expiry. ", True), ("No option is ever left to settle on its own.")]},
-    {"runs": [("Re-entered only if still wanted. ", True), ("If a stock is sold via an option, we buy it "
-      "back only when it still ranks well. We do not chase a stock that has run past the strike.")]},
-], subtitle="A small set of clear, automatic rules govern the whole overlay")
+s = slide(); y = header(s, "5 · The income overlay", "Managing the options through the month",
+                        "One simple monthly cycle, repeated against each new set of holdings")
+image_fit(s, IMG_LIFECYCLE, Inches(0.7), Inches(y + 0.25), Inches(11.93), Inches(3.2), valign="top")
+bullets(s, [
+    {"runs": [("Closed early before earnings, then rewritten afterward, ", True),
+      ("because an earnings announcement can cause a large, unpredictable jump.")]},
+    {"runs": [("Re-entered only if still wanted. ", True), ("If a stock is sold through an option, it "
+      "is bought back only when it still ranks well, never chased above the strike.")]},
+], Inches(0.7), Inches(y + 3.75), Inches(11.93), Inches(1.2), size=13.5, gap=8)
+footer(s)
 
 content("5 · The income overlay", "An honest limit on coverage", [
     {"runs": [("Options trade in blocks of 100 shares. ", True), ("A stock position must be at least "
@@ -770,27 +981,15 @@ text(s, Inches(0.7), Inches(4.75), Inches(11.93), Inches(0.8),
      "manages the options, and keeps its records aligned with the broker.", size=14, color=TEXT, line_spacing=1.25)
 footer(s)
 
-content("6 · The data pipeline", "Three data sources, each with a clear job", [
-    {"runs": [("Alpaca: market data and trading. ", True), ("Daily stock prices, live option quotes, "
-      "and the brokerage account where orders are placed. Prices are adjusted for splits and dividends.")]},
-    {"runs": [("SEC filings (EDGAR): company financials. ", True), ("Official quarterly filings, used "
-      "for the Value and Quality factors. Free, authoritative, and stamped with the real filing date.")]},
-    {"runs": [("Public factor data: risk modelling. ", True), ("Standard published factor returns, used "
-      "to model how the holdings move together.")]},
-    {"runs": [("Stored in two layers. ", True), ("A historical archive for research, and an operational "
-      "database for live orders, positions, and an audit trail.")]},
-], subtitle="A small, low-cost, auditable set of sources")
+s = slide(); y = header(s, "6 · The data pipeline", "Three data sources, each with a clear job",
+                        "A small, low-cost, auditable set of inputs feeding the model")
+image_fit(s, IMG_SOURCES, Inches(0.7), Inches(y + 0.05), Inches(11.93), Inches(4.75), valign="top")
+footer(s)
 
-content("6 · The data pipeline", "Keeping the data trustworthy", [
-    {"runs": [("Adjusted for corporate actions. ", True), ("Stock splits and dividends never masquerade "
-      "as returns.")]},
-    {"runs": [("Point-in-time. ", True), ("Historical tests use only what was public on each date, so "
-      "results are not flattered by hindsight.")]},
-    {"runs": [("Reconciled with the broker every run. ", True), ("The system squares its own records "
-      "against the actual account before trading, and stops if the broker cannot be reached.")]},
-    {"runs": [("A clean, traded universe. ", True), ("Only liquid stocks with reliable filings are "
-      "eligible, which keeps both the data and the options market dependable.")]},
-], subtitle="The unglamorous half of the work, and where many strategies quietly fail")
+s = slide(); y = header(s, "6 · The data pipeline", "Keeping the data trustworthy",
+                        "The unglamorous half of the work, and where many strategies quietly fail")
+image_fit(s, IMG_INTEGRITY, Inches(0.7), Inches(y + 0.1), Inches(11.93), Inches(4.6), valign="top")
+footer(s)
 
 # =========================================================================== #
 # § 7 — EXECUTION, RISK & RESULTS
@@ -836,35 +1035,26 @@ bullets(s, [
 ], Inches(0.7), Inches(y + 0.05 + 0.55 * nrows + 0.25), Inches(11.93), Inches(1.2), size=13.5, gap=8)
 footer(s)
 
-content("7 · Execution and risk", "Controlling risk", [
-    {"runs": [("A pre-trade review on every cycle. ", True), ("No order is sent if it would breach a "
-      "limit, and the overlay can never sell a call the portfolio cannot cover.")]},
-    {"runs": [("Safe to interrupt and re-run. ", True), ("The system can stop and restart mid-rebalance "
-      "without double-trading, and finishes an interrupted rebalance on the next run.")]},
-    {"runs": [("An emergency stop. ", True), ("A single command halts trading and cancels open orders, "
-      "or sells the entire book to cash.")]},
-    {"runs": [("Everything is recorded. ", True), ("Every score, order, and fill is logged, giving a "
-      "complete audit trail.")]},
-], subtitle="For a capital-preservation mandate, this is the most important section")
+s = slide(); y = header(s, "7 · Execution and risk", "Controlling risk",
+                        "For a capital-preservation mandate, this is the most important part")
+image_fit(s, IMG_RISK, Inches(0.7), Inches(y + 0.1), Inches(11.93), Inches(4.6), valign="top")
+footer(s)
 
-content("7 · Execution and risk", "How the strategy was tested", [
-    {"runs": [("A walk-forward simulation, 2021 to 2026. ", True), ("Each month, the strategy is run on "
-      "only the information available at the time, exactly as it would run live.")]},
-    {"runs": [("Realistic trading costs. ", True), ("Every simulated trade is charged a spread cost "
-      "scaled to how liquid the stock is.")]},
-    {"runs": [("Real option prices where available. ", True), ("Covered-call premiums use actual "
-      "historical option prices, not just a model.")]},
-    {"runs": [("Checked against a public index. ", True), ("The option model reproduces the published "
-      "CBOE BuyWrite index closely, which validates the mechanics.")]},
-], subtitle="The test is designed to resist the usual criticism of over-fitting")
+s = slide(); y = header(s, "7 · Execution and risk", "How the strategy was tested",
+                        "A walk-forward simulation over 2021 to 2026, designed to resist over-fitting")
+image_fit(s, IMG_METHOD, Inches(0.7), Inches(y + 0.35), Inches(11.93), Inches(3.0), valign="top")
+text(s, Inches(0.7), Inches(y + 3.75), Inches(11.93), Inches(0.6),
+     "Each month, the strategy runs on only the information available at the time, exactly as it "
+     "would run live. The results, and their limitations, follow.", size=13.5, color=TEXT, line_spacing=1.2)
+footer(s)
 
 # Results
 s = slide(); y = header(s, "7 · Results", "How the strategy performed in testing",
-                        "Higher risk-adjusted return than the market, with lower volatility and drawdown")
+                        "The most dependable result is lower risk: smaller swings and shallower losses than the market")
 image_fit(s, IMG_RR, Inches(0.55), Inches(y + 0.05), Inches(7.3), Inches(4.55), valign="top", halign="left")
-cards = [("1.24", "Risk-adjusted return (Sharpe),\nvs. 0.87 for the S&P 500", ACCENT_DK),
-         ("−16.7%", "Worst peak-to-trough fall,\nvs. −24% for the S&P 500", INK),
-         ("~25% / yr", "Option premium collected\nas income", INK)]
+cards = [("−16.7%", "Worst loss (drawdown) in the test,\nvs. −24% for the S&P 500", ACCENT_DK),
+         ("15.5%", "Volatility, the size of the swings,\nvs. 16% for the S&P 500", INK),
+         ("1.24", "Risk-adjusted return in the test,\nvs. 0.87 for the S&P 500", INK)]
 cx = 8.15
 for i, (big, lab, col) in enumerate(cards):
     cyy = y + 0.1 + i * 1.5
@@ -877,9 +1067,36 @@ for i, (big, lab, col) in enumerate(cards):
          line_spacing=1.05, anchor=MSO_ANCHOR.MIDDLE)
 text(s, Inches(0.7), Inches(6.5), Inches(11.93), Inches(0.55),
      [("Sharpe ratio", True), (" is return per unit of risk; ", False, MUTED),
-      ("drawdown", True), (" is the largest peak-to-trough loss. Strategy figures are from the "
-      "simulation; benchmarks from index history over the same period. Results are simulated and "
-      "from paper trading, not live capital.", False, MUTED)], size=10.5, color=TEXT, line_spacing=1.12)
+      ("drawdown", True), (" is the largest peak-to-trough loss. Benchmarks are from index history; "
+      "strategy figures from the simulation. Simulated and paper-traded, not live capital. "
+      "Limitations on the next slide.", False, MUTED)], size=10.5, color=TEXT, line_spacing=1.12)
+footer(s)
+
+# ---- Limitations ---------------------------------------------------------- #
+s = slide(); y = header(s, "7 · Results", "How to read these results",
+                        "The results are encouraging, but they carry real limitations")
+lim_l = [
+    {"runs": [("Simulated, not live. ", True), ("A historical simulation and paper trading, not a track "
+      "record, and not a prediction of future returns.")]},
+    {"runs": [("One favourable period. ", True), ("The 2021 to 2026 window had specific conditions. A "
+      "sustained bull market would likely show lower relative returns.")]},
+    {"runs": [("Premium is partly modeled. ", True), ("Where real option prices are unavailable, the "
+      "premium is estimated, so the overlay's contribution is uncertain.")]},
+]
+lim_r = [
+    {"runs": [("Costs are estimates. ", True), ("Real trading costs, taxes, and slippage may run higher "
+      "than modeled.")]},
+    {"runs": [("Mild hindsight in the data. ", True), ("Some company financials are restated over time, "
+      "making the factor results modestly optimistic.")]},
+    {"runs": [("Figures are unlevered. ", True), ("Leverage would scale both returns and losses: larger "
+      "gains, but larger drawdowns.")]},
+]
+bullets(s, lim_l, Inches(0.7), Inches(y + 0.2), Inches(5.7), Inches(4.3), size=14, gap=18)
+rect(s, Inches(6.66), Inches(y + 0.1), Pt(1.2), Inches(4.3), fill=RULE)
+bullets(s, lim_r, Inches(6.95), Inches(y + 0.2), Inches(5.7), Inches(4.3), size=14, gap=18)
+text(s, Inches(0.7), Inches(6.5), Inches(11.93), Inches(0.5),
+     [("The real verdict comes from live paper trading on real prices, not from more simulation.",
+       True, INK)], size=13)
 footer(s)
 
 # =========================================================================== #
