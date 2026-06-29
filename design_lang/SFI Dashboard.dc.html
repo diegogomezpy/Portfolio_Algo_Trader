@@ -1,0 +1,1181 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: #0b1322; color: #eaf2fb; font-family: 'Space Grotesk', sans-serif; -webkit-font-smoothing: antialiased; }
+  ::selection { background: rgba(70,184,173,.3); }
+  .sf-scroll::-webkit-scrollbar { width: 9px; height: 9px; }
+  .sf-scroll::-webkit-scrollbar-thumb { background: #1b2740; border-radius: 5px; border: 2px solid #0e1830; }
+  .sf-scroll::-webkit-scrollbar-track { background: transparent; }
+  @keyframes sfpulse { 0%{box-shadow:0 0 0 0 rgba(95,176,136,.5);} 70%{box-shadow:0 0 0 5px rgba(95,176,136,0);} 100%{box-shadow:0 0 0 0 rgba(95,176,136,0);} }
+  @keyframes sfMarq { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+  .sf-marq:hover { animation-play-state: paused; }
+</style>
+</helmet>
+
+<template id="__bundler_thumbnail"><svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><rect width="100" height="100" rx="18" fill="#0b1322"/><circle cx="38" cy="38" r="4" fill="#34425e"/><circle cx="50" cy="38" r="4" fill="#46b8ad"/><circle cx="62" cy="38" r="4" fill="#34425e"/><circle cx="38" cy="50" r="4" fill="#34425e"/><circle cx="50" cy="50" r="4" fill="#46b8ad"/><circle cx="62" cy="50" r="4" fill="#34425e"/><circle cx="38" cy="62" r="4" fill="#34425e"/><circle cx="50" cy="62" r="4" fill="#46b8ad"/><circle cx="62" cy="62" r="4" fill="#34425e"/></svg></template>
+<div style="position:relative;min-height:100vh;background:radial-gradient(120% 80% at 50% -10%, rgba(70,184,173,.06), rgba(7,13,24,0) 55%), #070d18">
+  <div style="position:fixed;inset:0;z-index:0;pointer-events:none;background-image:linear-gradient(rgba(120,150,190,.05) 1px, transparent 1px), linear-gradient(90deg, rgba(120,150,190,.05) 1px, transparent 1px);background-size:30px 30px"></div>
+
+  <!-- ===== top chrome ===== -->
+  <div style="position:sticky;top:0;z-index:30;background:rgba(11,19,34,.9);backdrop-filter:blur(12px);border-bottom:1px solid #1b2740">
+    <div style="max-width:1680px;margin:0 auto;padding:0 22px;display:flex;align-items:center;gap:28px">
+      <!-- logo -->
+      <div style="display:flex;align-items:center;gap:11px;padding:11px 0;flex:none">
+        <svg width="30" height="30" viewBox="0 0 36 36"><circle cx="4" cy="4" r="3.4" fill="#34425e"/><circle cx="18" cy="4" r="3.4" fill="#46b8ad"/><circle cx="32" cy="4" r="3.4" fill="#34425e"/><circle cx="4" cy="18" r="3.4" fill="#34425e"/><circle cx="18" cy="18" r="3.4" fill="#46b8ad"/><circle cx="32" cy="18" r="3.4" fill="#34425e"/><circle cx="4" cy="32" r="3.4" fill="#34425e"/><circle cx="18" cy="32" r="3.4" fill="#46b8ad"/><circle cx="32" cy="32" r="3.4" fill="#34425e"/></svg>
+        <div style="font:600 10px/1.16 'IBM Plex Mono';letter-spacing:.13em;color:#eaf2fb;text-align:center">S<br>F<br>I</div>
+        <div style="width:1px;height:28px;background:#243352"></div>
+        <div style="font:500 25px 'Space Grotesk';letter-spacing:-.015em;color:#eaf2fb">Fund</div>
+      </div>
+      <!-- tabs -->
+      <nav style="display:flex;align-items:stretch;flex:1">
+        <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="4">
+          <button onClick="{{ t.on }}" style="position:relative;background:none;border:0;padding:18px 2px;margin-right:26px;font:600 13px 'Space Grotesk';letter-spacing:.01em;color:{{ t.fg }};cursor:pointer">{{ t.label }}<span style="position:absolute;left:-4px;right:-4px;bottom:0;height:2px;background:{{ t.ind }}"></span></button>
+        </sc-for>
+      </nav>
+      <!-- right -->
+      <div style="display:flex;align-items:center;gap:14px;flex:none">
+        <span style="display:inline-flex;align-items:center;padding:3px 9px;border-radius:4px;background:rgba(216,168,75,.12);border:1px solid rgba(216,168,75,.32);font:600 10px 'Space Grotesk';letter-spacing:.1em;color:#d8a84b">PAPER</span>
+        <span style="display:inline-flex;align-items:center;gap:7px;font:400 11.5px 'IBM Plex Mono';color:#65758c">
+          <span style="width:7px;height:7px;border-radius:50%;background:#5fb088;animation:sfpulse 2.4s infinite"></span>
+streaming · <span style="color:#cdd9e8">live feed</span>
+        </span>
+        <span style="font:400 11.5px 'IBM Plex Mono';color:#65758c">{{ clock }}</span>
+        <button onClick="{{ onRefresh }}" style="width:30px;height:30px;border-radius:6px;background:#0e1830;border:1px solid #1b2740;color:#65758c;cursor:pointer;display:grid;place-items:center">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+        </button>
+      </div>
+    </div>
+    <!-- status ribbon -->
+    <div class="sf-scroll" style="max-width:1680px;margin:0 auto;padding:8px 22px;display:flex;align-items:center;gap:26px;border-top:1px solid #131e34;overflow-x:auto">
+      <sc-for list="{{ ribbon }}" as="r" hint-placeholder-count="6">
+        <span style="display:inline-flex;align-items:center;gap:8px;white-space:nowrap;flex:none">
+          <span style="width:7px;height:7px;border-radius:50%;background:{{ r.dot }};flex:none"></span>
+          <span style="font:500 10px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:#65758c">{{ r.label }}</span>
+          <span style="font:500 11.5px 'IBM Plex Mono';color:#eaf2fb">{{ r.value }}</span>
+        </span>
+      </sc-for>
+    </div>
+    <!-- ticker tape -->
+    <div style="border-top:1px solid #131e34;overflow:hidden">
+      <div style="position:relative;overflow:hidden;padding:7px 0">
+        <div class="sf-marq" style="display:inline-flex;align-items:center;white-space:nowrap;animation:sfMarq 54s linear infinite;will-change:transform">
+          <sc-for list="{{ tickerItems }}" as="t" hint-placeholder-count="16">
+            <span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #18223a">
+              <span style="width:5px;height:5px;border-radius:50%;background:{{ t.dot }}"></span>
+              <span style="font:600 11.5px 'IBM Plex Mono';color:#eaf2fb">{{ t.sym }}</span>
+              <span style="font:400 11.5px 'IBM Plex Mono';color:#aab4c3;font-variant-numeric:tabular-nums">{{ t.px }}</span>
+              <svg width="34" height="13" viewBox="0 0 34 13" preserveAspectRatio="none" style="display:block"><path d="{{ t.sparkPath }}" fill="none" stroke="{{ t.sparkColor }}" stroke-width="1.3" stroke-linejoin="round"></path></svg>
+              <span style="font:500 11.5px 'IBM Plex Mono';color:{{ t.chgColor }};font-variant-numeric:tabular-nums">{{ t.chg }}</span>
+              <span style="font:600 8px 'Space Grotesk';letter-spacing:.05em;color:{{ t.callColor }}">{{ t.callTag }}</span>
+            </span>
+          </sc-for>
+          <sc-for list="{{ tickerItems }}" as="t" hint-placeholder-count="16">
+            <span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #18223a">
+              <span style="width:5px;height:5px;border-radius:50%;background:{{ t.dot }}"></span>
+              <span style="font:600 11.5px 'IBM Plex Mono';color:#eaf2fb">{{ t.sym }}</span>
+              <span style="font:400 11.5px 'IBM Plex Mono';color:#aab4c3;font-variant-numeric:tabular-nums">{{ t.px }}</span>
+              <svg width="34" height="13" viewBox="0 0 34 13" preserveAspectRatio="none" style="display:block"><path d="{{ t.sparkPath }}" fill="none" stroke="{{ t.sparkColor }}" stroke-width="1.3" stroke-linejoin="round"></path></svg>
+              <span style="font:500 11.5px 'IBM Plex Mono';color:{{ t.chgColor }};font-variant-numeric:tabular-nums">{{ t.chg }}</span>
+              <span style="font:600 8px 'Space Grotesk';letter-spacing:.05em;color:{{ t.callColor }}">{{ t.callTag }}</span>
+            </span>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="position:relative;z-index:1;max-width:1680px;margin:0 auto;padding:18px 22px 56px">
+
+    <!-- ============================== OVERVIEW ============================== -->
+    <sc-if value="{{ isOverview }}" hint-placeholder-val="{{ true }}">
+      <div style="display:flex;flex-direction:column;gap:14px">
+        {{ session }}
+        <!-- NAV hero -->
+        <div style="background:#0e1830;border:1px solid #1b2740;border-radius:8px;overflow:hidden">
+          <div style="display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:18px;padding:18px 22px 14px;border-bottom:1px solid #131e34">
+            <div>
+              <div style="font:600 10px 'Space Grotesk';letter-spacing:.16em;text-transform:uppercase;color:#65758c">Net asset value</div>
+              <div style="display:flex;align-items:baseline;gap:14px;margin-top:8px">
+                <div ref="{{ navRef }}" style="font:500 46px/1 'Space Grotesk';letter-spacing:-.01em;color:#eaf2fb;font-variant-numeric:tabular-nums;display:inline-block;padding:1px 6px;margin:-1px -6px;border-radius:6px">{{ navStr }}</div>
+                <div ref="{{ pnlRef }}" style="font:500 14px 'IBM Plex Mono';color:{{ dayColor }};display:inline-block;padding:1px 5px;margin:-1px -5px;border-radius:5px">{{ daySub }}</div>
+              </div>
+              {{ navSpark }}
+            </div>
+            <div style="display:flex;gap:34px;padding-bottom:4px">
+              <div>
+                <div style="font:500 10px 'Space Grotesk';letter-spacing:.12em;text-transform:uppercase;color:#65758c">Change (window)</div>
+                <div style="font:500 16px 'IBM Plex Mono';color:{{ navWinColor }};margin-top:5px">{{ navWinChg }}</div>
+              </div>
+              <div>
+                <div style="font:500 10px 'Space Grotesk';letter-spacing:.12em;text-transform:uppercase;color:#65758c">Window high / low</div>
+                <div style="font:500 16px 'IBM Plex Mono';color:#eaf2fb;margin-top:5px">{{ navHigh }} <span style="color:#65758c">/ {{ navLow }}</span></div>
+              </div>
+            </div>
+          </div>
+          <div style="padding:8px 8px 4px">{{ navChart }}</div>
+          <div style="padding:4px 22px 12px;font:400 10.5px 'IBM Plex Mono';color:#65758c">{{ navRange }}</div>
+        </div>
+
+        <!-- KPI ribbon -->
+        <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:#1b2740;border:1px solid #1b2740;border-radius:8px;overflow:hidden">
+          <div style="background:#0e1830;padding:13px 16px">
+            <div style="font:600 9.5px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:#65758c">Net asset value</div>
+            <div style="font:500 22px 'IBM Plex Mono';margin-top:8px;color:#eaf2fb">{{ navStr }}</div>
+            <div style="font:400 10.5px 'IBM Plex Mono';margin-top:5px;color:{{ dayColor }}">{{ daySub }}</div>
+          </div>
+          <div style="background:#0e1830;padding:13px 16px">
+            <div style="font:600 9.5px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:#65758c">Day P&amp;L</div>
+            <div style="font:500 22px 'IBM Plex Mono';margin-top:8px;color:{{ pnlColor }}">{{ pnlStr }}</div>
+            <div style="font:400 10.5px 'IBM Plex Mono';margin-top:5px;color:#65758c">{{ pnlSub }}</div>
+          </div>
+          <div style="background:#0e1830;padding:13px 16px">
+            <div style="font:600 9.5px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:#65758c">Leverage</div>
+            <div style="font:500 22px 'IBM Plex Mono';margin-top:8px;color:#eaf2fb">{{ levStr }}</div>
+            <div style="height:4px;border-radius:2px;background:#1b2740;margin-top:8px;overflow:hidden"><div style="height:100%;background:#46b8ad;width:{{ levW }}%"></div></div>
+            <div style="font:400 10px 'IBM Plex Mono';margin-top:6px;color:#65758c">{{ levSub }}</div>
+          </div>
+          <div style="background:#0e1830;padding:13px 16px">
+            <div style="font:600 9.5px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:#65758c">Cash</div>
+            <div style="font:500 22px 'IBM Plex Mono';margin-top:8px;color:#eaf2fb">{{ cashStr }}</div>
+            <div style="font:400 10.5px 'IBM Plex Mono';margin-top:5px;color:#65758c">{{ cashSub }}</div>
+          </div>
+          <div style="background:#0e1830;padding:13px 16px">
+            <div style="font:600 9.5px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:#65758c">Premium collected</div>
+            <div style="font:500 22px 'IBM Plex Mono';margin-top:8px;color:#eaf2fb">{{ premStr }}</div>
+            <div style="font:400 10.5px 'IBM Plex Mono';margin-top:5px;color:#65758c">{{ premSub }}</div>
+          </div>
+          <div style="background:#0e1830;padding:13px 16px">
+            <div style="font:600 9.5px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:#65758c">Positions</div>
+            <div style="font:500 22px 'IBM Plex Mono';margin-top:8px;color:#eaf2fb">{{ posStr }}</div>
+            <div style="font:400 10.5px 'IBM Plex Mono';margin-top:5px;color:#65758c">{{ posSub }}</div>
+          </div>
+        </div>
+
+        <!-- live components -->
+        <div style="display:grid;grid-template-columns:1.62fr 1fr;gap:14px">
+          <div style="background:#0e1830;border:1px solid #1b2740;border-radius:8px;overflow:hidden;display:flex;flex-direction:column">
+            <div style="display:flex;align-items:baseline;justify-content:space-between;padding:9px 16px;border-bottom:1px solid #131e34"><span style="font:600 10px 'Space Grotesk';letter-spacing:.13em;text-transform:uppercase;color:#8295ab">Holdings heatmap</span><span style="font:400 10px 'IBM Plex Mono';color:#5f6b80">size = weight · color = day move</span></div>
+            <div style="flex:1;min-height:0;padding:9px">{{ treemap }}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:14px">{{ gauge }}{{ events }}</div>
+        </div>
+        {{ waterfall }}
+
+        <!-- System health -->
+        <div style="background:#0e1830;border:1px solid #1b2740;border-radius:8px;overflow:hidden">
+          <div style="display:flex;align-items:baseline;justify-content:space-between;padding:9px 16px;border-bottom:1px solid #131e34">
+            <div style="font:600 10px 'Space Grotesk';letter-spacing:.13em;text-transform:uppercase;color:#8295ab">System health</div>
+            <div style="font:400 10px 'IBM Plex Mono';color:#5f6b80">monitor heartbeat · every 60s</div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:#131e34">
+            <sc-for list="{{ healthTiles }}" as="h" hint-placeholder-count="8">
+              <div style="background:#0e1830;padding:12px 16px">
+                <div style="font:500 9.5px 'Space Grotesk';letter-spacing:.08em;text-transform:uppercase;color:#65758c">{{ h.label }}</div>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:6px;font:500 13.5px 'IBM Plex Mono';color:#eaf2fb"><span style="width:7px;height:7px;border-radius:50%;background:{{ h.dot }};flex:none"></span>{{ h.val }}</div>
+                <div style="font:400 10.5px 'IBM Plex Mono';color:#65758c;margin-top:5px">{{ h.sub }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- ============================== PORTFOLIO ============================== -->
+    <sc-if value="{{ isPortfolio }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;gap:6px;margin-bottom:14px">
+        <sc-for list="{{ subTabsP }}" as="s" hint-placeholder-count="2">
+          <button onClick="{{ s.on }}" style="background:{{ s.bg }};border:1px solid {{ s.bd }};border-radius:8px;padding:6px 15px;font:600 12px 'Space Grotesk';color:{{ s.fg }};cursor:pointer">{{ s.label }}</button>
+        </sc-for>
+      </div>
+
+      <sc-if value="{{ pHoldings }}" hint-placeholder-val="{{ true }}">
+        <div style="display:grid;grid-template-columns:1.55fr 1fr;gap:14px">
+          <!-- Sector exposure -->
+          <div style="grid-column:1 / -1;background:#0e1830;border:1px solid #1b2740;border-radius:8px;overflow:hidden">
+            <div style="display:flex;align-items:baseline;justify-content:space-between;padding:9px 16px;border-bottom:1px solid #131e34">
+              <div style="font:600 10px 'Space Grotesk';letter-spacing:.13em;text-transform:uppercase;color:#8295ab">Sector exposure</div>
+              <div style="font:400 10px 'IBM Plex Mono';color:#5f6b80">{{ secSub }}</div>
+            </div>
+            <div style="padding:16px 18px">
+              <div style="display:flex;height:14px;border-radius:3px;overflow:hidden;gap:1px;background:#0b1322">
+                <sc-for list="{{ sectorBar }}" as="b" hint-placeholder-count="9">
+                  <div style="width:{{ b.w }}%;background:{{ b.color }}"></div>
+                </sc-for>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:10px 22px;margin-top:16px">
+                <sc-for list="{{ sectorList }}" as="s" hint-placeholder-count="9">
+                  <span style="display:inline-flex;align-items:center;gap:8px;font:400 11.5px 'Space Grotesk';color:#cdd9e8">
+                    <span style="width:9px;height:9px;border-radius:2px;background:{{ s.color }};flex:none"></span>
+                    {{ s.name }}
+                    <b style="font:500 11.5px 'IBM Plex Mono';color:{{ s.pctColor }}">{{ s.pct }}</b>
+                    <span style="font:400 10px 'IBM Plex Mono';color:#65758c">{{ s.n }}</span>
+                  </span>
+                </sc-for>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:8px 30px;margin-top:16px;padding-top:14px;border-top:1px solid #131e34;font:400 11.5px 'Space Grotesk';color:#65758c">
+                <span>Top 5 names <b style="font:500 11.5px 'IBM Plex Mono';color:#cdd9e8">{{ concTop5 }}</b></span>
+                <span>Effective names <b style="font:500 11.5px 'IBM Plex Mono';color:#cdd9e8">{{ concEff }}</b> {{ concEffOf }}</span>
+                <span>Largest position <b style="font:500 11.5px 'IBM Plex Mono';color:#cdd9e8">{{ concLargest }}</b></span>
+                <span>Sectors <b style="font:500 11.5px 'IBM Plex Mono';color:#cdd9e8">{{ concSectors }}</b></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Positions vs target -->
+          <div style="grid-column:1 / -1;background:#0e1830;border:1px solid #1b2740;border-radius:8px;overflow:hidden">
+            <div style="display:flex;align-items:baseline;justify-content:space-between;padding:9px 16px;border-bottom:1px solid #131e34">
+              <div style="font:600 10px 'Space Grotesk';letter-spacing:.13em;text-transform:uppercase;color:#8295ab">Positions vs target</div>
+              <div style="font:400 10px 'IBM Plex Mono';color:#5f6b80">{{ posPanelSub }}</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1.8fr .75fr .72fr .95fr 1fr 1.35fr .8fr;gap:10px;padding:8px 16px;font:600 9.5px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:#65758c;border-bottom:1px solid #131e34">
+              <span>Instrument</span><span style="text-align:right">Last</span><span style="text-align:right">Day</span><span>20-tick</span><span style="text-align:right">Mkt value</span><span>Allocation vs target</span><span style="text-align:right">&Delta; vs tgt</span>
+            </div>
+            <sc-for list="{{ positions }}" as="p" hint-placeholder-count="10">
+              <div style="display:grid;grid-template-columns:1.8fr .75fr .72fr .95fr 1fr 1.35fr .8fr;gap:10px;align-items:center;padding:8px 16px;border-bottom:1px solid #131e34">
+                <span style="display:flex;align-items:center;gap:10px;min-width:0">
+                  <span style="font:600 10px 'IBM Plex Mono';padding:2px 5px;border-radius:3px;background:{{ p.chipBg }};color:{{ p.chipFg }};flex:none">{{ p.sym }}</span>
+                  <span style="display:flex;flex-direction:column;min-width:0">
+                    <span style="font:500 12.5px 'Space Grotesk';color:#eaf2fb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ p.name }}</span>
+                    <span style="font:400 10px 'Space Grotesk';color:#65758c">{{ p.sector }}</span>
+                  </span>
+                </span>
+                <span style="text-align:right;font:400 12px 'IBM Plex Mono';color:#eaf2fb;font-variant-numeric:tabular-nums">{{ p.last }}</span>
+                <span style="text-align:right;font:500 12px 'IBM Plex Mono';color:{{ p.dayColor }};font-variant-numeric:tabular-nums">{{ p.dayStr }}</span>
+                <span><svg width="92" height="22" viewBox="0 0 92 22" preserveAspectRatio="none" style="display:block"><path d="{{ p.sparkPath }}" fill="none" stroke="{{ p.sparkColor }}" stroke-width="1.4" stroke-linejoin="round"></path></svg></span>
+                <span style="text-align:right;font:400 12px 'IBM Plex Mono';color:#eaf2fb">{{ p.mv }}</span>
+                <span style="display:flex;align-items:center;gap:9px">
+                  <span style="position:relative;flex:1;height:5px;border-radius:2px;background:#1b2740">
+                    <span style="position:absolute;left:0;top:0;height:100%;border-radius:2px;background:#46b8ad;width:{{ p.fillW }}%"></span>
+                    <span style="position:absolute;top:-2px;width:2px;height:9px;background:#cdd9e8;left:{{ p.tickW }}%"></span>
+                  </span>
+                  <span style="font:500 11px 'IBM Plex Mono';color:#cdd9e8;min-width:42px;text-align:right">{{ p.wPct }}</span>
+                </span>
+                <span style="text-align:right;font:500 12px 'IBM Plex Mono';color:{{ p.deltaColor }}">{{ p.deltaStr }}</span>
+              </div>
+            </sc-for>
+          </div>
+
+          <!-- Factor tilt + radar -->
+          <div style="grid-column:1 / -1;display:grid;grid-template-columns:1.5fr 1fr;gap:14px">
+          <div style="background:#0e1830;border:1px solid #1b2740;border-radius:8px;overflow:hidden">
+            <div style="display:flex;align-items:baseline;justify-content:space-between;padding:9px 16px;border-bottom:1px solid #131e34">
+              <div style="font:600 10px 'Space Grotesk';letter-spacing:.13em;text-transform:uppercase;color:#8295ab">Factor tilt</div>
+              <div style="font:400 10px 'IBM Plex Mono';color:#5f6b80">book-weighted z-score · 0 = universe average</div>
+            </div>
+            <div style="padding:12px 18px 16px">
+              <div style="display:grid;grid-template-columns:200px 1fr 56px;gap:16px;font:400 10px 'Space Grotesk';color:#65758c;margin-bottom:8px">
+                <span></span><span style="display:flex;justify-content:space-between"><span>&lsaquo; leans away</span><span>neutral</span><span>leans in &rsaquo;</span></span><span></span>
+              </div>
+              <sc-for list="{{ ftRows }}" as="f" hint-placeholder-count="4">
+                <div style="display:grid;grid-template-columns:200px 1fr 56px;gap:16px;align-items:center;padding:9px 0;border-top:1px solid #131e34">
+                  <span style="font:500 12.5px 'Space Grotesk';color:#cdd9e8">{{ f.label }} <span style="color:#65758c;font-weight:400">· {{ f.desc }}</span></span>
+                  <span style="position:relative;height:11px;background:#1b2740;border-radius:5px">
+                    <span style="position:absolute;top:-4px;bottom:-4px;left:50%;width:0;border-left:1px dashed #34425e"></span>
+                    <span style="position:absolute;top:0;height:11px;border-radius:4px;background:{{ f.color }};{{ f.barStyle }}"></span>
+                  </span>
+                  <span style="text-align:right;font:600 13px 'IBM Plex Mono';color:{{ f.color }}">{{ f.val }}</span>
+                </div>
+              </sc-for>
+              <div style="display:flex;flex-wrap:wrap;gap:8px 30px;margin-top:14px;padding-top:13px;border-top:1px solid #131e34;font:400 11.5px 'Space Grotesk';color:#65758c">
+                <span>Composite tilt <b style="font:600 11.5px 'IBM Plex Mono';color:{{ ftCompColor }}">{{ ftComp }}</b></span>
+                <span>Scored coverage <b style="font:500 11.5px 'IBM Plex Mono';color:#cdd9e8">{{ ftCoverage }}</b></span>
+                <span>Names scored <b style="font:500 11.5px 'IBM Plex Mono';color:#cdd9e8">{{ ftScored }}</b> {{ ftScoredOf }}</span>
+              </div>
+            </div>
+          </div>
+          {{ radar }}
+          </div>
+
+          <!-- Covered calls -->
+          <div style="background:#0e1830;border:1px solid #1b2740;border-radius:8px;overflow:hidden">
+            <div style="display:flex;align-items:baseline;justify-content:space-between;padding:9px 16px;border-bottom:1px solid #131e34">
+              <div style="font:600 10px 'Space Grotesk';letter-spacing:.13em;text-transform:uppercase;color:#8295ab">Covered calls</div>
+              <div style="font:400 10px 'IBM Plex Mono';color:#5f6b80">{{ callsSub }}</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1.3fr .6fr .8fr .8fr .55fr .8fr;gap:8px;padding:8px 16px;font:600 9px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:#65758c;border-bottom:1px solid #131e34">
+              <span>Underlying</span><span style="text-align:right">Ct</span><span style="text-align:right">Strike</span><span style="text-align:right">DTE</span><span style="text-align:right">&Delta;</span><span style="text-align:right">Premium</span>
+            </div>
+            <div class="sf-scroll" style="max-height:340px;overflow:auto">
+              <sc-for list="{{ calls }}" as="c" hint-placeholder-count="8">
+                <div style="display:grid;grid-template-columns:1.3fr .6fr .8fr .8fr .55fr .8fr;gap:8px;align-items:center;padding:8px 16px;border-bottom:1px solid #131e34">
+                  <span style="display:flex;align-items:center;gap:8px;min-width:0">
+                    <span style="font:600 10px 'IBM Plex Mono';padding:2px 5px;border-radius:3px;background:{{ c.chipBg }};color:{{ c.chipFg }};flex:none">{{ c.sym }}</span>
+                    <span style="font:400 9px 'Space Grotesk';color:#d8a84b;letter-spacing:.04em;text-transform:uppercase">call</span>
+                  </span>
+                  <span style="text-align:right;font:400 12px 'IBM Plex Mono';color:#cdd9e8">{{ c.contracts }}</span>
+                  <span style="text-align:right;font:400 12px 'IBM Plex Mono';color:#cdd9e8">{{ c.strike }}</span>
+                  <span style="text-align:right;font:500 12px 'IBM Plex Mono';color:{{ c.dteColor }}">{{ c.dte }}</span>
+                  <span style="text-align:right;font:400 12px 'IBM Plex Mono';color:#cdd9e8">{{ c.delta }}</span>
+                  <span style="text-align:right;font:500 12px 'IBM Plex Mono';color:#5fb088">{{ c.prem }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <!-- Factor scores -->
+          <div style="background:#0e1830;border:1px solid #1b2740;border-radius:8px;overflow:hidden">
+            <div style="display:flex;align-items:baseline;justify-content:space-between;padding:9px 16px;border-bottom:1px solid #131e34">
+              <div style="font:600 10px 'Space Grotesk';letter-spacing:.13em;text-transform:uppercase;color:#8295ab">Factor scores</div>
+              <div style="font:400 10px 'IBM Plex Mono';color:#5f6b80">held names · z-score</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1.1fr .7fr .55fr .55fr .55fr .6fr;gap:6px;padding:8px 16px;font:600 9px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:#65758c;border-bottom:1px solid #131e34">
+              <span>Symbol</span><span style="text-align:right">Comp</span><span style="text-align:right">Qual</span><span style="text-align:right">Val</span><span style="text-align:right">Mom</span><span style="text-align:right">LoVol</span>
+            </div>
+            <div class="sf-scroll" style="max-height:340px;overflow:auto">
+              <sc-for list="{{ factors }}" as="f" hint-placeholder-count="10">
+                <div style="display:grid;grid-template-columns:1.1fr .7fr .55fr .55fr .55fr .6fr;gap:6px;align-items:center;padding:7px 16px;border-bottom:1px solid #131e34">
+                  <span style="display:flex;align-items:center;gap:8px"><span style="font:600 10px 'IBM Plex Mono';padding:2px 5px;border-radius:3px;background:{{ f.chipBg }};color:{{ f.chipFg }};flex:none">{{ f.sym }}</span></span>
+                  <span style="text-align:right;font:600 12px 'IBM Plex Mono';color:{{ f.compColor }}">{{ f.comp }}</span>
+                  <span style="text-align:right;font:400 11.5px 'IBM Plex Mono';color:{{ f.qC }}">{{ f.q }}</span>
+                  <span style="text-align:right;font:400 11.5px 'IBM Plex Mono';color:{{ f.vC }}">{{ f.v }}</span>
+                  <span style="text-align:right;font:400 11.5px 'IBM Plex Mono';color:{{ f.mC }}">{{ f.m }}</span>
+                  <span style="text-align:right;font:400 11.5px 'IBM Plex Mono';color:{{ f.lC }}">{{ f.l }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ pActivity }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          {{ blotter }}
+          <div style="background:#0e1830;border:1px solid #1b2740;border-radius:8px;overflow:hidden">
+            <div style="display:flex;align-items:baseline;justify-content:space-between;padding:9px 16px;border-bottom:1px solid #131e34">
+              <div style="font:600 10px 'Space Grotesk';letter-spacing:.13em;text-transform:uppercase;color:#8295ab">Recent orders</div>
+              <div style="font:400 10px 'IBM Plex Mono';color:#5f6b80">limit orders · last session</div>
+            </div>
+            <div style="display:grid;grid-template-columns:2fr .7fr .7fr 1fr .9fr;gap:10px;padding:8px 16px;font:600 9.5px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:#65758c;border-bottom:1px solid #131e34">
+              <span>Instrument</span><span>Side</span><span style="text-align:right">Qty</span><span>Status</span><span style="text-align:right">Fill px</span>
+            </div>
+            <sc-for list="{{ orders }}" as="o" hint-placeholder-count="7">
+              <div style="display:grid;grid-template-columns:2fr .7fr .7fr 1fr .9fr;gap:10px;align-items:center;padding:8px 16px;border-bottom:1px solid #131e34">
+                <span style="display:flex;align-items:center;gap:10px;min-width:0">
+                  <span style="font:600 10px 'IBM Plex Mono';padding:2px 5px;border-radius:3px;background:{{ o.chipBg }};color:{{ o.chipFg }};flex:none">{{ o.sym }}</span>
+                  <span style="font:500 12px 'Space Grotesk';color:#cdd9e8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ o.name }}</span>
+                </span>
+                <span style="font:600 10px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:{{ o.sideColor }}">{{ o.side }}</span>
+                <span style="text-align:right;font:400 12px 'IBM Plex Mono';color:#cdd9e8">{{ o.qty }}</span>
+                <span style="font:400 11px 'IBM Plex Mono';color:#65758c">{{ o.status }}</span>
+                <span style="text-align:right;font:400 12px 'IBM Plex Mono';color:#eaf2fb">{{ o.fill }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="background:#0e1830;border:1px solid #1b2740;border-radius:8px;overflow:hidden">
+            <div style="display:flex;align-items:baseline;justify-content:space-between;padding:9px 16px;border-bottom:1px solid #131e34">
+              <div style="font:600 10px 'Space Grotesk';letter-spacing:.13em;text-transform:uppercase;color:#8295ab">Alerts</div>
+              <div style="font:400 10px 'IBM Plex Mono';color:#5f6b80">{{ alertsSub }}</div>
+            </div>
+            <sc-for list="{{ alerts }}" as="a" hint-placeholder-count="5">
+              <div style="display:grid;grid-template-columns:170px 90px 1fr 80px;gap:12px;align-items:center;padding:9px 16px;border-bottom:1px solid #131e34">
+                <span style="font:400 11px 'IBM Plex Mono';color:#65758c">{{ a.ts }}</span>
+                <span style="font:500 10px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:{{ a.typeColor }}">{{ a.type }}</span>
+                <span style="font:400 12px 'Space Grotesk';color:#cdd9e8">{{ a.msg }}</span>
+                <span style="text-align:right;font:400 11px 'IBM Plex Mono';color:{{ a.delColor }}">{{ a.del }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+    </sc-if>
+
+    <!-- ============================== PERFORMANCE ============================== -->
+    <sc-if value="{{ isPerformance }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;gap:6px;margin-bottom:14px">
+        <sc-for list="{{ subTabsPerf }}" as="s" hint-placeholder-count="3">
+          <button onClick="{{ s.on }}" style="background:{{ s.bg }};border:1px solid {{ s.bd }};border-radius:8px;padding:6px 15px;font:600 12px 'Space Grotesk';color:{{ s.fg }};cursor:pointer">{{ s.label }}</button>
+        </sc-for>
+      </div>
+
+      <sc-if value="{{ perfReturns }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div style="background:#0e1830;border:1px solid #1b2740;border-radius:8px;overflow:hidden">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 16px;border-bottom:1px solid #131e34">
+              <div style="font:600 10px 'Space Grotesk';letter-spacing:.13em;text-transform:uppercase;color:#8295ab">Period performance</div>
+              <div style="display:inline-flex;background:#0a1322;border:1px solid #1b2740;border-radius:8px;padding:2px">
+                <sc-for list="{{ periodTabs }}" as="p" hint-placeholder-count="4">
+                  <button onClick="{{ p.on }}" style="background:{{ p.bg }};border:0;border-radius:5px;padding:4px 13px;font:600 11px 'Space Grotesk';color:{{ p.fg }};cursor:pointer">{{ p.label }}</button>
+                </sc-for>
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:#131e34">
+              <sc-for list="{{ periodKpis }}" as="k" hint-placeholder-count="4">
+                <div style="background:#0e1830;padding:12px 16px">
+                  <div style="font:600 9px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:#65758c">{{ k.label }}</div>
+                  <div style="font:500 21px 'IBM Plex Mono';margin-top:7px;color:{{ k.color }};font-variant-numeric:tabular-nums">{{ k.val }}</div>
+                  <div style="font:400 10px 'IBM Plex Mono';margin-top:4px;color:#65758c">{{ k.sub }}</div>
+                </div>
+              </sc-for>
+            </div>
+            <div style="padding:8px 10px 10px">{{ periodSpark }}</div>
+          </div>
+          {{ calendar }}
+          <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:14px">{{ sharpeStrip }}{{ annualBars }}</div>
+          <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:#1b2740;border:1px solid #1b2740;border-radius:8px;overflow:hidden">
+            <div style="background:#0e1830;padding:13px 16px"><div style="font:600 9.5px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:#65758c">Days live</div><div style="font:500 22px 'IBM Plex Mono';margin-top:8px;color:#eaf2fb">{{ trDays }}</div><div style="font:400 10px 'IBM Plex Mono';margin-top:5px;color:#65758c">since {{ trInception }}</div></div>
+            <div style="background:#0e1830;padding:13px 16px"><div style="font:600 9.5px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:#65758c">Since inception</div><div style="font:500 22px 'IBM Plex Mono';margin-top:8px;color:{{ trSinceColor }}">{{ trSince }}</div><div style="font:400 10px 'IBM Plex Mono';margin-top:5px;color:#65758c">paper, net of costs</div></div>
+            <div style="background:#0e1830;padding:13px 16px"><div style="font:600 9.5px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:#65758c">Ann. return</div><div style="font:500 22px 'IBM Plex Mono';margin-top:8px;color:#eaf2fb">{{ trAnn }}</div><div style="font:400 10px 'IBM Plex Mono';margin-top:5px;color:#65758c">annualized</div></div>
+            <div style="background:#0e1830;padding:13px 16px"><div style="font:600 9.5px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:#65758c">Live Sharpe</div><div style="font:500 22px 'IBM Plex Mono';margin-top:8px;color:#eaf2fb">{{ trSharpe }}</div><div style="font:400 10px 'IBM Plex Mono';margin-top:5px;color:#65758c">annualized</div></div>
+            <div style="background:#0e1830;padding:13px 16px"><div style="font:600 9.5px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:#65758c">Premium collected</div><div style="font:500 22px 'IBM Plex Mono';margin-top:8px;color:#eaf2fb">{{ trPrem }}</div><div style="font:400 10px 'IBM Plex Mono';margin-top:5px;color:#65758c">covered calls</div></div>
+            <div style="background:#0e1830;padding:13px 16px"><div style="font:600 9.5px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:#65758c">Avg slippage</div><div style="font:500 22px 'IBM Plex Mono';margin-top:8px;color:#eaf2fb">{{ trSlip }}</div><div style="font:400 10px 'IBM Plex Mono';margin-top:5px;color:#65758c">vs intended price</div></div>
+          </div>
+
+          <div style="background:#0e1830;border:1px solid #1b2740;border-radius:8px;overflow:hidden">
+            <div style="display:flex;align-items:baseline;justify-content:space-between;padding:9px 16px;border-bottom:1px solid #131e34">
+              <div style="font:600 10px 'Space Grotesk';letter-spacing:.13em;text-transform:uppercase;color:#8295ab">Growth since inception — strategy vs benchmarks</div>
+              <div style="font:400 10px 'IBM Plex Mono';color:#5f6b80">{{ trackSub }}</div>
+            </div>
+            <div style="display:flex;gap:18px;padding:11px 18px 2px">
+              <sc-for list="{{ trackLegend }}" as="l" hint-placeholder-count="4">
+                <span style="display:inline-flex;align-items:center;gap:6px;font:400 11.5px 'Space Grotesk';color:#cdd9e8"><span style="width:14px;height:3px;border-radius:2px;background:{{ l.color }}"></span>{{ l.name }}</span>
+              </sc-for>
+            </div>
+            <div style="padding:6px 8px 10px">{{ trackChart }}</div>
+          </div>
+
+          <div style="background:#0e1830;border:1px solid #1b2740;border-radius:8px;overflow:hidden">
+            <div style="padding:9px 16px;border-bottom:1px solid #131e34;font:600 10px 'Space Grotesk';letter-spacing:.13em;text-transform:uppercase;color:#8295ab">Benchmark comparison</div>
+            <div style="display:grid;grid-template-columns:1.6fr .8fr .8fr .8fr .8fr .8fr;gap:10px;padding:8px 16px;font:600 9.5px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:#65758c;border-bottom:1px solid #131e34">
+              <span>Series</span><span style="text-align:right">Return</span><span style="text-align:right">Ann.</span><span style="text-align:right">Vol</span><span style="text-align:right">Sharpe</span><span style="text-align:right">Max DD</span>
+            </div>
+            <sc-for list="{{ benchRows }}" as="b" hint-placeholder-count="4">
+              <div style="display:grid;grid-template-columns:1.6fr .8fr .8fr .8fr .8fr .8fr;gap:10px;align-items:center;padding:9px 16px;border-bottom:1px solid #131e34">
+                <span style="display:flex;align-items:center;gap:9px;font:500 12.5px 'Space Grotesk';color:#eaf2fb"><span style="width:10px;height:3px;border-radius:2px;background:{{ b.swatch }};flex:none"></span>{{ b.name }}</span>
+                <span style="text-align:right;font:500 12px 'IBM Plex Mono';color:{{ b.retColor }}">{{ b.ret }}</span>
+                <span style="text-align:right;font:400 12px 'IBM Plex Mono';color:#cdd9e8">{{ b.ann }}</span>
+                <span style="text-align:right;font:400 12px 'IBM Plex Mono';color:#cdd9e8">{{ b.vol }}</span>
+                <span style="text-align:right;font:400 12px 'IBM Plex Mono';color:#cdd9e8">{{ b.sharpe }}</span>
+                <span style="text-align:right;font:400 12px 'IBM Plex Mono';color:{{ b.mddColor }}">{{ b.mdd }}</span>
+              </div>
+            </sc-for>
+            <div style="padding:12px 16px 14px">
+              <div style="font:500 10px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:#65758c;margin-bottom:7px">What these benchmarks are</div>
+              <sc-for list="{{ benchDesc }}" as="d" hint-placeholder-count="3">
+                <div style="font:400 11.5px/1.55 'Space Grotesk';color:#65758c;margin-bottom:4px"><b style="color:{{ d.color }};font-weight:600">{{ d.name }}</b> — {{ d.desc }}</div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ perfRisk }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">{{ riskc }}{{ corr }}</div>
+          {{ dist }}
+          <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:#1b2740;border:1px solid #1b2740;border-radius:8px;overflow:hidden">
+            <div style="background:#0e1830;padding:13px 16px"><div style="font:600 9.5px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:#65758c">Max drawdown</div><div style="font:500 22px 'IBM Plex Mono';margin-top:8px;color:{{ rkMddColor }}">{{ rkMdd }}</div><div style="font:400 10px 'IBM Plex Mono';margin-top:5px;color:#65758c">{{ rkMddSub }}</div></div>
+            <div style="background:#0e1830;padding:13px 16px"><div style="font:600 9.5px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:#65758c">Current drawdown</div><div style="font:500 22px 'IBM Plex Mono';margin-top:8px;color:{{ rkCurColor }}">{{ rkCur }}</div><div style="font:400 10px 'IBM Plex Mono';margin-top:5px;color:#65758c">{{ rkCurSub }}</div></div>
+            <div style="background:#0e1830;padding:13px 16px"><div style="font:600 9.5px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:#65758c">Volatility</div><div style="font:500 22px 'IBM Plex Mono';margin-top:8px;color:#eaf2fb">{{ rkVol }}</div><div style="font:400 10px 'IBM Plex Mono';margin-top:5px;color:#65758c">{{ rkVolSub }}</div></div>
+            <div style="background:#0e1830;padding:13px 16px"><div style="font:600 9.5px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:#65758c">1-day VaR (95%)</div><div style="font:500 22px 'IBM Plex Mono';margin-top:8px;color:{{ rkVarColor }}">{{ rkVar }}</div><div style="font:400 10px 'IBM Plex Mono';margin-top:5px;color:#65758c">{{ rkVarSub }}</div></div>
+            <div style="background:#0e1830;padding:13px 16px"><div style="font:600 9.5px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:#65758c">Live Sharpe</div><div style="font:500 22px 'IBM Plex Mono';margin-top:8px;color:#eaf2fb">{{ rkSharpe }}</div><div style="font:400 10px 'IBM Plex Mono';margin-top:5px;color:#65758c">{{ rkSharpeSub }}</div></div>
+            <div style="background:#0e1830;padding:13px 16px"><div style="font:600 9.5px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:#65758c">Leverage</div><div style="font:500 22px 'IBM Plex Mono';margin-top:8px;color:#eaf2fb">{{ rkLev }}</div><div style="height:4px;border-radius:2px;background:#1b2740;margin-top:8px;overflow:hidden"><div style="height:100%;background:#46b8ad;width:{{ rkLevW }}%"></div></div><div style="font:400 10px 'IBM Plex Mono';margin-top:6px;color:#65758c">{{ rkLevSub }}</div></div>
+          </div>
+
+          <div style="background:#0e1830;border:1px solid #1b2740;border-radius:8px;overflow:hidden">
+            <div style="display:flex;align-items:baseline;justify-content:space-between;padding:9px 16px;border-bottom:1px solid #131e34">
+              <div style="font:600 10px 'Space Grotesk';letter-spacing:.13em;text-transform:uppercase;color:#8295ab">Drawdown</div>
+              <div style="font:400 10px 'IBM Plex Mono';color:#5f6b80">{{ ddSub }}</div>
+            </div>
+            <div style="padding:8px 8px 10px">{{ ddChart }}</div>
+          </div>
+
+          <div style="background:#0e1830;border:1px solid #1b2740;border-radius:8px;overflow:hidden">
+            <div style="display:flex;align-items:baseline;justify-content:space-between;padding:9px 16px;border-bottom:1px solid #131e34">
+              <div style="font:600 10px 'Space Grotesk';letter-spacing:.13em;text-transform:uppercase;color:#8295ab">Rolling volatility</div>
+              <div style="font:400 10px 'IBM Plex Mono';color:#5f6b80">{{ rvSub }}</div>
+            </div>
+            <div style="padding:8px 8px 10px">{{ rvChart }}</div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ perfExec }}" hint-placeholder-val="{{ false }}">
+        <div style="background:#0e1830;border:1px solid #1b2740;border-radius:8px;overflow:hidden">
+          <div style="display:flex;align-items:baseline;justify-content:space-between;padding:9px 16px;border-bottom:1px solid #131e34">
+            <div style="font:600 10px 'Space Grotesk';letter-spacing:.13em;text-transform:uppercase;color:#8295ab">Execution quality / slippage</div>
+            <div style="font:400 10px 'IBM Plex Mono';color:#5f6b80">{{ slipSub }}</div>
+          </div>
+          <div style="display:grid;grid-template-columns:2fr .6fr .7fr 1fr 1fr .9fr .9fr;gap:10px;padding:8px 16px;font:600 9.5px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:#65758c;border-bottom:1px solid #131e34">
+            <span>Instrument</span><span>Side</span><span style="text-align:right">Qty</span><span style="text-align:right">Intended</span><span style="text-align:right">Filled</span><span style="text-align:right">Slippage</span><span style="text-align:right">Cost</span>
+          </div>
+          <sc-for list="{{ slip }}" as="r" hint-placeholder-count="7">
+            <div style="display:grid;grid-template-columns:2fr .6fr .7fr 1fr 1fr .9fr .9fr;gap:10px;align-items:center;padding:8px 16px;border-bottom:1px solid #131e34">
+              <span style="display:flex;align-items:center;gap:10px;min-width:0">
+                <span style="font:600 10px 'IBM Plex Mono';padding:2px 5px;border-radius:3px;background:{{ r.chipBg }};color:{{ r.chipFg }};flex:none">{{ r.sym }}</span>
+                <span style="font:500 12px 'Space Grotesk';color:#cdd9e8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.name }}</span>
+              </span>
+              <span style="font:400 11px 'Space Grotesk';color:#65758c;text-transform:uppercase">{{ r.side }}</span>
+              <span style="text-align:right;font:400 12px 'IBM Plex Mono';color:#cdd9e8">{{ r.qty }}</span>
+              <span style="text-align:right;font:400 12px 'IBM Plex Mono';color:#cdd9e8">{{ r.intended }}</span>
+              <span style="text-align:right;font:400 12px 'IBM Plex Mono';color:#eaf2fb">{{ r.filled }}</span>
+              <span style="text-align:right;font:500 12px 'IBM Plex Mono';color:{{ r.bpsColor }}">{{ r.bps }}</span>
+              <span style="text-align:right;font:500 12px 'IBM Plex Mono';color:{{ r.costColor }}">{{ r.cost }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+    </sc-if>
+
+    <!-- ============================== BACKTEST ============================== -->
+    <sc-if value="{{ isBacktest }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;align-items:baseline;gap:12px">
+          <div style="font:500 18px 'Space Grotesk';color:#eaf2fb">Backtest</div>
+          <div style="font:400 11px 'IBM Plex Mono';color:#65758c">{{ btRange }} · representative, walk-forward</div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:#1b2740;border:1px solid #1b2740;border-radius:8px;overflow:hidden">
+          <sc-for list="{{ btTiles }}" as="b" hint-placeholder-count="6">
+            <div style="background:#0e1830;padding:14px 16px">
+              <div style="font:600 9.5px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:#65758c">{{ b.label }}</div>
+              <div style="font:500 26px 'Space Grotesk';margin-top:8px;color:#eaf2fb;font-variant-numeric:tabular-nums">{{ b.val }}</div>
+              <div style="font:400 10px 'IBM Plex Mono';margin-top:5px;color:#65758c">{{ b.sub }}</div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="background:#0e1830;border:1px solid #1b2740;border-radius:8px;overflow:hidden">
+          <div style="display:flex;align-items:baseline;justify-content:space-between;padding:9px 16px;border-bottom:1px solid #131e34">
+            <div style="font:600 10px 'Space Grotesk';letter-spacing:.13em;text-transform:uppercase;color:#8295ab">Equity curve — growth of $1 (log scale)</div>
+            <div style="display:flex;gap:16px">
+              <sc-for list="{{ btLegend }}" as="l" hint-placeholder-count="2">
+                <span style="display:inline-flex;align-items:center;gap:6px;font:400 11px 'Space Grotesk';color:#cdd9e8"><span style="width:14px;height:3px;border-radius:2px;background:{{ l.color }}"></span>{{ l.name }}</span>
+              </sc-for>
+            </div>
+          </div>
+          <div style="padding:8px 8px 10px">{{ btChart }}</div>
+        </div>
+        {{ calendar2 }}
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">{{ annualBars2 }}{{ dist2 }}</div>
+        <div style="background:#0e1830;border:1px solid #1b2740;border-radius:8px;padding:14px 18px;font:400 11.5px/1.6 'Space Grotesk';color:#65758c">
+          <span style="color:#cdd9e8">Methodology.</span> Monthly rebalance into the top factor-composite names (equal-weight Quality / Value / Momentum / Low-Vol z-scores), levered ~2&times; subject to the live risk gate, with a systematic ~0.30-delta covered-call overlay rolled at expiry. Returns are net of modeled commissions and slippage; the curve above is representative and not a guarantee of live results.
+        </div>
+      </div>
+    </sc-if>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1500,&quot;height&quot;:1000}}">
+class Component extends DCLogic {
+  state = { view: "overview", subP: "holdings", subPerf: "returns" };
+  el(html, minH) { return React.createElement("div", { style: { minHeight: (minH||0)+"px", width: "100%" }, dangerouslySetInnerHTML: { __html: html } }); }
+  setView(v) { this.setState({ view: v }); }
+
+  constructor(props){
+    super(props);
+    this.navRef = React.createRef();
+    this.pnlRef = React.createRef();
+    this._t0 = Date.now();
+    this._navDir = 0;
+    const SC = { tech:["Information Technology","#6f93d6"], comm:["Communication Services","#9b87d4"],
+      health:["Health Care","#cf8a86"], fin:["Financials","#4ea6a0"], disc:["Consumer Discretionary","#d8a84b"],
+      stap:["Consumer Staples","#7fae8f"], egy:["Energy","#c2a36b"], ind:["Industrials","#8893a3"], mat:["Materials","#6fb0c4"] };
+    const U = [
+      ["MSFT","Microsoft","tech",0.165,0.160,519.40,1],["NVDA","NVIDIA","tech",0.150,0.145,181.39,1],
+      ["AAPL","Apple","tech",0.142,0.150,243.10,1],["GOOGL","Alphabet","comm",0.138,0.130,204.20,1],
+      ["META","Meta Platforms","comm",0.120,0.125,758.30,1],["LLY","Eli Lilly","health",0.115,0.110,962.10,1],
+      ["JPM","JPMorgan Chase","fin",0.128,0.120,303.80,1],["V","Visa","fin",0.100,0.105,357.40,0],
+      ["UNH","UnitedHealth","health",0.092,0.100,312.50,0],["JNJ","Johnson & Johnson","health",0.085,0.085,158.40,0],
+      ["HD","Home Depot","disc",0.095,0.090,417.60,1],["XOM","Exxon Mobil","egy",0.083,0.085,118.22,0],
+      ["PG","Procter & Gamble","stap",0.082,0.085,171.30,0],["KO","Coca-Cola","stap",0.072,0.075,71.05,0],
+      ["CAT","Caterpillar","ind",0.068,0.070,418.90,0],["LIN","Linde","mat",0.060,0.060,466.20,0]];
+    this.S = U.map(([sym,name,sk,w,t,px,call])=>{
+      const drift=(Math.random()-0.5)*0.02, live=px*(1+drift);
+      const hist=[]; let h=px; for(let i=0;i<22;i++){ h*=1+(Math.random()-0.5)*0.004; hist.push(h);} hist.push(live);
+      return { sym, name, sector:SC[sk][0], col:SC[sk][1], w, t, prev:px, px:live, call:!!call, hist };
+    });
+    this.sumW = this.S.reduce((a,s)=>a+s.w,0);
+    this.maxW = Math.max(...this.S.map(s=>s.w));
+    this.prevNav = 4209000;
+    this.navHist = [];
+    for(let i=0;i<34;i++) this.navHist.push(this.computeNav());
+    const rng=(s)=>()=>{ s=(s*1103515245+12345)&0x7fffffff; return s/0x7fffffff; };
+    const gss=(r)=>{ let u=0,v=0; while(!u)u=r(); while(!v)v=r(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); };
+    let rg=rng(7);
+    this.years=[2024,2025,2026];
+    this.monthly=this.years.map((y)=>{ const row=[]; for(let m=0;m<12;m++){ if(y===2026&&m>5){ row.push(null); continue; } row.push(0.012+gss(rg)*0.026); } return row; });
+    this.sharpeArr=[]; let sh=1.1; for(let i=0;i<64;i++){ sh+=gss(rg)*0.12; sh=Math.max(0.2,Math.min(2.5,sh)); this.sharpeArr.push(sh); }
+    const RC=[["NVDA","#6f93d6"],["MSFT","#6f93d6"],["META","#9b87d4"],["AAPL","#6f93d6"],["GOOGL","#9b87d4"],["LLY","#cf8a86"],["JPM","#4ea6a0"],["HD","#d8a84b"],["XOM","#c2a36b"],["Others","#8893a3"]];
+    let raw=RC.map((x,i)=>({sym:x[0],col:x[1],v:Math.abs(gss(rng(20+i)))*0.6+0.3})); const tot=raw.reduce((a,b)=>a+b.v,0);
+    this.riskArr=raw.map(x=>({sym:x.sym,col:x.col,pct:x.v/tot})).sort((a,b)=>b.pct-a.pct);
+    this.csyms=["MSFT","NVDA","AAPL","GOOGL","META","LLY","JPM","XOM"];
+    this.corrM=this.csyms.map((a,i)=>this.csyms.map((b,j)=>{ if(i===j) return 1; const base=0.2+0.55*rng(100+i*8+j)(); const sec=(i<5&&j<5)?0.2:0; return Math.max(-0.2,Math.min(0.95,base+sec)); }));
+    for(let i=0;i<8;i++) for(let j=0;j<i;j++) this.corrM[i][j]=this.corrM[j][i];
+    this.daily=[]; let rd=rng(55); for(let i=0;i<240;i++) this.daily.push(0.0008+gss(rd)*0.009);
+    this.annualA=[]; let ra=rng(88); for(let y=2017;y<=2026;y++){ const spy=0.06+gss(ra)*0.13; this.annualA.push({y, strat:spy+0.03+Math.abs(gss(ra))*0.04, spy}); }
+    this.orders2=[{sym:"MSFT",side:"buy",qty:140,limit:520.10,fill:520.40,status:"filled",col:"#6f93d6"},{sym:"NVDA",side:"buy",qty:210,limit:181.50,fill:null,status:"working",col:"#6f93d6"},{sym:"XOM",side:"sell",qty:300,limit:118.30,fill:118.22,status:"filled",col:"#c2a36b"},{sym:"JPM",side:"buy",qty:95,limit:303.50,fill:303.55,status:"partial",col:"#4ea6a0"},{sym:"LLY",side:"buy",qty:30,limit:961.00,fill:null,status:"new",col:"#cf8a86"},{sym:"V",side:"buy",qty:60,limit:358.00,fill:357.40,status:"filled",col:"#4ea6a0"},{sym:"KO",side:"sell",qty:180,limit:71.10,fill:71.05,status:"filled",col:"#7fae8f"}];
+    this.fills2=[{sym:"V",px:357.40,qty:60,t:42},{sym:"KO",px:71.05,qty:180,t:96},{sym:"MSFT",px:520.40,qty:140,t:151},{sym:"XOM",px:118.22,qty:300,t:233}];
+  }
+  computeNav(){ let idx=0; this.S.forEach(s=>{ idx += s.w*(s.px/s.prev); }); return this.prevNav*(idx/this.sumW); }
+  componentDidMount(){ this.timer = setInterval(()=>this.advance(), 1000); }
+  componentWillUnmount(){ clearInterval(this.timer); }
+  advance(){
+    const prev=this.navHist[this.navHist.length-1];
+    this.S.forEach(s=>{ if(Math.random()<0.8){ s.px *= 1+(Math.random()-0.5)*0.0042; s.hist.push(s.px); if(s.hist.length>23) s.hist.shift(); } });
+    const nav=this.computeNav(); this.navHist.push(nav); if(this.navHist.length>34) this.navHist.shift();
+    this._navDir=Math.sign(nav-prev);
+    const g=()=>Math.random()-0.5;
+    if(this.sharpeArr){ this.sharpeArr.push(Math.max(0.2,Math.min(2.5,this.sharpeArr[this.sharpeArr.length-1]+g()*0.18))); if(this.sharpeArr.length>64) this.sharpeArr.shift(); }
+    if(this.daily){ this.daily.push(0.0008+g()*0.016); if(this.daily.length>240) this.daily.shift(); }
+    if(this.orders2){ const w=this.orders2.find(o=>o.status==="working"); if(w&&Math.random()<0.5){ w.status="filled"; w.fill=w.limit+(Math.random()-0.3)*0.3; this.fills2.unshift({sym:w.sym,px:w.fill,qty:w.qty,t:Math.floor((Date.now()-this._t0)/1000)}); if(this.fills2.length>6) this.fills2.pop(); const nw=this.orders2.find(o=>o.status==="new"); if(nw) nw.status="working"; } }
+    this.setState(st=>({ t:(st.t||0)+1 }));
+  }
+  componentDidUpdate(){ const f=(ref,dir)=>{ const el=ref&&ref.current; if(!el||!dir) return;
+    el.animate([{backgroundColor:dir>0?'rgba(95,176,136,.30)':'rgba(207,111,102,.30)'},{backgroundColor:'rgba(0,0,0,0)'}],{duration:680,easing:'ease-out'}); };
+    f(this.navRef,this._navDir); f(this.pnlRef,this._navDir); }
+
+  fmt(v,d=0){ return Number(v).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d}); }
+  usd(v){ return (v<0?"-$":"$")+this.fmt(Math.abs(v),0); }
+  spark(arr,w,h,p){ p=p||1.5; let lo=Math.min(...arr),hi=Math.max(...arr); if(hi-lo<1e-9)hi=lo+1;
+    return arr.map((v,i)=>(i?"L":"M")+(p+i/(arr.length-1)*(w-2*p)).toFixed(1)+" "+(p+(hi-v)/(hi-lo)*(h-2*p)).toFixed(1)).join(" "); }
+  simNow(){ return 15*3600+48*60+22 + (Date.now()-this._t0)/1000; }
+  hms(secs){ const s=Math.max(0,Math.floor(secs)); const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),ss=s%60;
+    const p=n=>String(n).padStart(2,"0"); return (d>0?d+"d ":"")+p(h)+":"+p(m)+":"+p(ss); }
+  panel(title,sub,body,pad){ return '<div style="background:#0e1830;border:1px solid #1b2740;border-radius:8px;overflow:hidden">'
+    +'<div style="display:flex;align-items:baseline;justify-content:space-between;padding:9px 16px;border-bottom:1px solid #131e34"><span style="font:600 10px \'Space Grotesk\';letter-spacing:.13em;text-transform:uppercase;color:#8295ab">'+title+'</span><span style="font:400 10px \'IBM Plex Mono\';color:#5f6b80">'+sub+'</span></div>'
+    +'<div style="padding:'+(pad||'14px 16px')+'">'+body+'</div></div>'; }
+
+  navSparkHtml(){ const a=this.navHist,w=240,h=38,up=a[a.length-1]>=a[0],c=up?"#5fb088":"#cf6f66"; const d=this.spark(a,w,h,2);
+    return '<div style="margin-top:11px;display:flex;align-items:center;gap:10px"><svg width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" style="display:block"><path d="'+d+'" fill="none" stroke="'+c+'" stroke-width="1.6" stroke-linejoin="round"/></svg><span style="font:400 10px \'IBM Plex Mono\';color:#65758c">intraday \u00b7 live</span></div>'; }
+
+  gaugeHtml(){ const cov=0.38,theta=4120,nav=this.navHist[this.navHist.length-1];
+    let nd=0; this.S.forEach(s=>{ nd+=s.w*1.0; if(s.call) nd-=s.w*0.30; }); const netDelta=nd/this.sumW;
+    const yld=148200/nav*100*4;
+    const W=230,H=116,cx=115,cy=108,r=88,a0=Math.PI,a1=0,ang=a0+(a1-a0)*cov;
+    const pt=an=>[cx+r*Math.cos(an),cy-r*Math.sin(an)];
+    const arc=(an0,an1,col,wd)=>{ const [x0,y0]=pt(an0),[x1,y1]=pt(an1),large=Math.abs(an1-an0)>Math.PI?1:0,sweep=an1<an0?1:0;
+      return '<path d="M'+x0.toFixed(1)+' '+y0.toFixed(1)+' A'+r+' '+r+' 0 '+large+' '+sweep+' '+x1.toFixed(1)+' '+y1.toFixed(1)+'" fill="none" stroke="'+col+'" stroke-width="'+wd+'" stroke-linecap="round"/>'; };
+    const g='<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" style="display:block">'+arc(a0,a1,"#16223a",11)+arc(a0,ang,"#46b8ad",11)
+      +'<text x="'+cx+'" y="'+(cy-28)+'" text-anchor="middle" font-size="29" fill="#eaf2fb" font-family="IBM Plex Mono" font-weight="500">'+(cov*100).toFixed(0)+'%</text>'
+      +'<text x="'+cx+'" y="'+(cy-11)+'" text-anchor="middle" font-size="9" fill="#65758c" font-family="Space Grotesk" letter-spacing="1.5">COVERED</text></svg>';
+    const st=(l,v,c)=>'<div style="flex:1"><div style="font:600 8.5px \'Space Grotesk\';letter-spacing:.08em;text-transform:uppercase;color:#65758c">'+l+'</div><div style="font:500 16px \'IBM Plex Mono\';color:'+(c||"#eaf2fb")+';margin-top:5px">'+v+'</div></div>';
+    const body='<div style="display:flex;align-items:center;gap:10px"><div style="flex:none">'+g+'</div><div style="flex:1;display:flex;flex-direction:column;gap:12px;padding-left:4px">'
+      +'<div style="display:flex;gap:10px">'+st("Net delta",netDelta.toFixed(2))+st("Theta / day","+"+this.usd(theta),"#5fb088")+'</div>'
+      +'<div style="display:flex;gap:10px">'+st("Prem. yield",yld.toFixed(1)+"%","#5fb088")+st("Calls open","8")+'</div></div></div>';
+    return this.panel("Covered-call overlay","\u0394 \u00b7 \u03b8 \u00b7 coverage", body); }
+
+  treemapHtml(){ const W=1003,H=452;
+    const items=this.S.map(s=>({sym:s.sym,value:s.w,chg:s.px/s.prev-1})).sort((a,b)=>b.value-a.value);
+    const tm=(arr,x,y,w,h,horiz)=>{ if(arr.length===1){ arr[0].rect={x,y,w,h}; return; }
+      const tot=arr.reduce((a,b)=>a+b.value,0),half=tot/2; let c=0,best=0,bd=1e9;
+      for(let k=0;k<arr.length-1;k++){ c+=arr[k].value; if(Math.abs(c-half)<bd){bd=Math.abs(c-half);best=k;} }
+      const A=arr.slice(0,best+1),B=arr.slice(best+1),fa=A.reduce((a,b)=>a+b.value,0)/tot;
+      if(horiz){ tm(A,x,y,w*fa,h,!horiz); tm(B,x+w*fa,y,w*(1-fa),h,!horiz); } else { tm(A,x,y,w,h*fa,!horiz); tm(B,x,y+h*fa,w,h*(1-fa),!horiz); } };
+    tm(items,0,0,W,H,W>=H); let r="";
+    items.forEach(it=>{ const t=Math.max(-1,Math.min(1,it.chg/0.03)),col=t>=0?"95,176,136":"207,111,102",al=(0.12+Math.abs(t)*0.5).toFixed(2),R=it.rect,big=R.w>70&&R.h>34;
+      r+='<rect x="'+R.x.toFixed(1)+'" y="'+R.y.toFixed(1)+'" width="'+(R.w-1.4).toFixed(1)+'" height="'+(R.h-1.4).toFixed(1)+'" fill="rgba('+col+','+al+')" stroke="#0a1322" stroke-width="1.4"/>';
+      r+='<text x="'+(R.x+8)+'" y="'+(R.y+18)+'" font-size="14" font-family="IBM Plex Mono" font-weight="600" fill="#eaf2fb">'+it.sym+'</text>';
+      if(big) r+='<text x="'+(R.x+8)+'" y="'+(R.y+32)+'" font-size="10.5" font-family="IBM Plex Mono" fill="rgba(234,242,251,.72)">'+(it.chg>=0?"+":"")+(it.chg*100).toFixed(2)+'%</text>'; });
+    return '<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" width="100%" height="100%" style="display:block">'+r+'</svg>'; }
+  elFill(html){ return React.createElement("div", { style: { height:"100%", width:"100%" }, dangerouslySetInnerHTML: { __html: html } }); }
+
+  radarHtml(){ const axes=[["Quality",0.62],["Value",-0.16],["Momentum",0.78],["Low Vol",0.48]];
+    const W=360,H=250,cx=180,cy=124,R=84,ang=i=>(-90+i*90)*Math.PI/180,map=z=>Math.max(0.06,Math.min(1,(z+1)/2.2));
+    const ring=rad=>axes.map((_,i)=>[cx+rad*Math.cos(ang(i)),cy+rad*Math.sin(ang(i))]);
+    const poly=(pts,fill,stroke,sw)=>'<polygon points="'+pts.map(p=>p[0].toFixed(1)+","+p[1].toFixed(1)).join(" ")+'" fill="'+fill+'" stroke="'+stroke+'" stroke-width="'+sw+'"/>';
+    let g='<svg viewBox="0 0 '+W+' '+H+'" width="100%" style="display:block;height:250px">';
+    [0.33,0.66,1].forEach(f=>{ g+=poly(ring(R*f),"none","#1b2740",1); });
+    axes.forEach((_,i)=>{ const p=[cx+R*Math.cos(ang(i)),cy+R*Math.sin(ang(i))]; g+='<line x1="'+cx+'" y1="'+cy+'" x2="'+p[0].toFixed(1)+'" y2="'+p[1].toFixed(1)+'" stroke="#1b2740"/>'; });
+    g+=poly(ring(R*map(0)),"none","#2a3a58",1);
+    const bp=axes.map((a,i)=>{ const rad=R*map(a[1]); return [cx+rad*Math.cos(ang(i)),cy+rad*Math.sin(ang(i))]; });
+    g+=poly(bp,"rgba(70,184,173,.18)","#46b8ad",2); bp.forEach(p=>{ g+='<circle cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="2.6" fill="#46b8ad"/>'; });
+    const la=['text-anchor="middle"','text-anchor="start"','text-anchor="middle"','text-anchor="end"'];
+    axes.forEach((a,i)=>{ const p=[cx+(R+16)*Math.cos(ang(i)),cy+(R+16)*Math.sin(ang(i))+3]; g+='<text x="'+p[0].toFixed(1)+'" y="'+p[1].toFixed(1)+'" '+la[i]+' font-size="10.5" fill="#aab4c3" font-family="Space Grotesk" font-weight="500">'+a[0]+'</text>'; });
+    g+='</svg>';
+    const leg='<div style="display:flex;gap:16px;justify-content:center;margin-top:4px"><span style="display:inline-flex;align-items:center;gap:6px;font:400 10.5px \'Space Grotesk\';color:#aab4c3"><span style="width:12px;height:3px;background:#46b8ad;border-radius:2px"></span>Book tilt</span><span style="display:inline-flex;align-items:center;gap:6px;font:400 10.5px \'Space Grotesk\';color:#65758c"><span style="width:12px;height:3px;background:#2a3a58;border-radius:2px"></span>Universe</span></div>';
+    return this.panel("Factor radar","book-weighted z", g+leg, "10px 14px 14px"); }
+
+  waterfallHtml(){ const nav=this.navHist[this.navHist.length-1],dayPnl=nav-this.prevNav,premium=4120,costs=-1240,price=dayPnl-premium-costs;
+    const steps=[["Prior NAV",this.prevNav,"base"],["Price",price,"d"],["Premium",premium,"d"],["Costs",costs,"d"],["Live NAV",nav,"base"]];
+    const W=980,H=210,pl=10,pr=10,pb=34,pt=12,pw=W-pl-pr,ph=H-pt-pb;
+    const vals=[this.prevNav,nav]; let run=this.prevNav; [price,premium,costs].forEach(v=>{ run+=v; vals.push(run); });
+    let lo=Math.min(...vals),hi=Math.max(...vals); const pad=(hi-lo)*0.4||1; lo-=pad; const span=hi-lo;
+    const Y=v=>pt+(hi-v)/span*ph,gap=pw/steps.length,bw=gap*0.5;
+    let g='<svg viewBox="0 0 '+W+' '+H+'" width="100%" style="display:block;height:210px">'; let cum=this.prevNav;
+    steps.forEach((st,i)=>{ const x=pl+gap*i+(gap-bw)/2; let top,bot,col;
+      if(st[2]==="base"){ top=Y(st[1]); bot=Y(lo); col="#3a4a66"; cum=st[1]; }
+      else { const start=cum,end=cum+st[1]; top=Y(Math.max(start,end)); bot=Y(Math.min(start,end)); col=st[1]>=0?"#5fb088":"#cf6f66"; cum=end;
+        const px2=pl+gap*(i-1)+(gap-bw)/2+bw; g+='<line x1="'+px2+'" y1="'+Y(start).toFixed(1)+'" x2="'+x.toFixed(1)+'" y2="'+Y(start).toFixed(1)+'" stroke="#2a3a58" stroke-dasharray="2 2"/>'; }
+      g+='<rect x="'+x.toFixed(1)+'" y="'+top.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(2,bot-top).toFixed(1)+'" rx="2" fill="'+col+'"/>';
+      const lv=st[2]==="base"?this.usd(st[1]):((st[1]>=0?"+":"-")+"$"+this.fmt(Math.abs(st[1]),0));
+      g+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(top-5).toFixed(1)+'" text-anchor="middle" font-size="11" fill="#cdd9e8" font-family="IBM Plex Mono">'+lv+'</text>';
+      g+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(H-12)+'" text-anchor="middle" font-size="11" fill="#65758c" font-family="Space Grotesk">'+st[0]+'</text>'; });
+    g+='</svg>'; return this.panel("P&amp;L attribution \u2014 today","price vs premium vs costs", g, "10px 12px 6px"); }
+
+  eventsHtml(){ const now=this.simNow();
+    const ev=[["Next rebalance","Jul 1","#46b8ad",6*86400-(now-15*3600-48*60-22)],
+      ["MSFT / NVDA / +6 expiry","Jul 17","#d8a84b",24*86400+2*3600],
+      ["NVDA earnings","Aug 27","#9b87d4",62*86400+5*3600],
+      ["LLY earnings","Aug 6","#cf8a86",44*86400+1*3600],
+      ["Factor refresh","nightly","#65758c",6*3600+12*60-(now%3600)]];
+    const rows=ev.map((e,i)=>{ const live=i===0||i===4;
+      return '<div style="display:flex;align-items:center;gap:11px;padding:9px 16px;border-bottom:1px solid #131e34"><span style="width:7px;height:7px;border-radius:50%;background:'+e[2]+';flex:none"></span>'
+        +'<div style="flex:1;min-width:0"><div style="font:500 12px \'Space Grotesk\';color:#cdd9e8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+e[0]+'</div><div style="font:400 10px \'IBM Plex Mono\';color:#65758c">'+e[1]+'</div></div>'
+        +'<span style="font:500 12px \'IBM Plex Mono\';color:'+(live?"#46b8ad":"#aab4c3")+'">'+this.hms(e[3])+'</span></div>'; }).join("");
+    return this.panel("Events","countdown \u00b7 live", '<div style="margin:-14px -16px">'+rows+'</div>'); }
+
+  sessionHtml(){ const now=this.simNow(),open=9.5*3600,close=16*3600,f=Math.max(0,Math.min(1,(now-open)/(close-open)));
+    const head='<div style="display:flex;align-items:center;justify-content:space-between"><div style="display:flex;align-items:baseline;gap:9px"><span style="font:500 22px \'IBM Plex Mono\';color:#eaf2fb;font-variant-numeric:tabular-nums">'+this.hms(now%86400)+'</span><span style="font:400 11px \'IBM Plex Mono\';color:#65758c">ET</span><span style="font:400 11px \'IBM Plex Mono\';color:#65758c">\u00b7 '+(f*100).toFixed(0)+'% through session \u00b7 '+this.hms(close-now%86400)+' to close</span></div><span style="display:inline-flex;align-items:center;gap:6px;font:500 10px \'Space Grotesk\';letter-spacing:.06em;text-transform:uppercase;color:#5fb088"><span style="width:7px;height:7px;border-radius:50%;background:#5fb088"></span>Market open</span></div>';
+    const bar='<div style="position:relative;height:9px;border-radius:5px;background:#16223a;overflow:hidden;margin-top:11px"><div style="position:absolute;left:0;top:0;height:100%;width:'+(f*100).toFixed(1)+'%;background:linear-gradient(90deg,#2a6f63,#46b8ad)"></div><div style="position:absolute;top:-3px;width:2px;height:15px;background:#eaf2fb;left:'+(f*100).toFixed(1)+'%"></div></div>';
+    const marks='<div style="display:flex;justify-content:space-between;margin-top:6px;font:400 9.5px \'IBM Plex Mono\';color:#65758c"><span>09:30 open</span><span>12:45</span><span>16:00 close</span></div>';
+    return this.panel("Trading session","NYSE \u00b7 regular hours", head+bar+marks); }
+
+  liveVals(){
+    const nav=this.navHist[this.navHist.length-1], dayPnl=nav-this.prevNav, dayPct=dayPnl/this.prevNav;
+    const POS="#5fb088",NEG="#cf6f66",MUT="#65758c", pos=dayPnl>=0;
+    const spct=(v,d=2)=>(v>=0?"+":"")+(v*100).toFixed(d)+"%";
+    const col=v=>Math.abs(v)<1e-9?MUT:v>0?POS:NEG;
+    const hexA=(h,a)=>{ const n=parseInt(h.slice(1),16); return "rgba("+((n>>16)&255)+","+((n>>8)&255)+","+(n&255)+","+a+")"; };
+    const tickerItems=this.S.map(s=>{ const chg=s.px/s.prev-1,c=chg>=0?POS:NEG;
+      return { sym:s.sym, dot:s.col, px:s.px.toFixed(2), chg:spct(chg), chgColor:c, sparkColor:c,
+        sparkPath:this.spark(s.hist.slice(-12),34,13,1.5), callTag:s.call?"CALL":"", callColor:s.call?"#d8a84b":"transparent" }; });
+    const positions=this.S.map(s=>{ const chg=s.px/s.prev-1,mv=s.w*nav,d=s.w-s.t;
+      return { sym:s.sym, name:s.name, sector:s.sector, chipBg:hexA(s.col,0.18), chipFg:s.col,
+        last:s.px.toFixed(2), dayStr:spct(chg), dayColor:chg>=0?POS:NEG,
+        sparkPath:this.spark(s.hist.slice(-16),92,22,2), sparkColor:chg>=0?POS:NEG,
+        mv:this.usd(mv), wPct:(s.w*100).toFixed(1)+"%",
+        fillW:(s.w/this.maxW*100).toFixed(1), tickW:(s.t/this.maxW*100).toFixed(1),
+        deltaStr:spct(d,1), deltaColor:col(d) }; });
+    return {
+      navStr:this.usd(nav), dayColor: pos?POS:NEG,
+      daySub:(dayPnl>=0?"+$":"-$")+this.fmt(Math.abs(dayPnl),0)+" \u00b7 "+spct(dayPct)+" today",
+      pnlStr:(dayPnl>=0?"+$":"-$")+this.fmt(Math.abs(dayPnl),0), pnlColor:pos?POS:NEG, pnlSub:spct(dayPct)+" vs prior close",
+      navRef:this.navRef, pnlRef:this.pnlRef, clock:this.hms(this.simNow()%86400)+" ET",
+      tickerItems, positions,
+      navSpark:this.el(this.navSparkHtml()), session:this.el(this.sessionHtml()),
+      treemap:this.elFill(this.treemapHtml()), gauge:this.el(this.gaugeHtml()),
+      events:this.el(this.eventsHtml()), waterfall:this.el(this.waterfallHtml()), radar:this.el(this.radarHtml()),
+      calendar:this.el(this.calendarHtml()), calendar2:this.el(this.calendarHtml()),
+      annualBars:this.el(this.annualHtml()), annualBars2:this.el(this.annualHtml()),
+      sharpeStrip:this.el(this.sharpeHtml()), corr:this.el(this.corrHtml()),
+      dist:this.el(this.distHtml()), dist2:this.el(this.distHtml()), riskc:this.el(this.riskcHtml()),
+      blotter:this.el(this.blotterHtml()), periodSpark:this.el(this.periodSparkHtml()),
+      periodTabs: ["1M","3M","YTD","ITD"].map(p=>({ label:p, on:()=>this.setState({period:p}), bg:(this.state.period||"YTD")===p?"#16223a":"transparent", fg:(this.state.period||"YTD")===p?"#eaf2fb":"#65758c" })),
+      periodKpis: this.periodKpis()
+    };
+  }
+  heat(v,sc){ const t=Math.max(-1,Math.min(1,v/sc)); return t>=0?"rgba(95,176,136,"+(0.1+t*0.55).toFixed(2)+")":"rgba(207,111,102,"+(0.1-t*0.55).toFixed(2)+")"; }
+  clkk(s){ let tot=15*3600+48*60+22+s; const h=Math.floor(tot/3600)%24,m=Math.floor(tot%3600/60),ss=tot%60; const p=n=>String(n).padStart(2,"0"); return p(h)+":"+p(m)+":"+p(ss); }
+  periodKpis(){ const per=this.state.period||"YTD"; const PK={ "1M":{ret:0.021,sh:1.42,dd:-0.018,vol:0.121},"3M":{ret:0.058,sh:1.51,dd:-0.031,vol:0.118},"YTD":{ret:0.143,sh:1.34,dd:-0.052,vol:0.124},"ITD":{ret:0.312,sh:1.38,dd:-0.061,vol:0.127} }; const d=PK[per]; const pc=v=>(v>=0?"+":"")+(v*100).toFixed(1)+"%";
+    return [ {label:"Return",val:pc(d.ret),color:d.ret>=0?"#5fb088":"#cf6f66",sub:per+" \u00b7 net"},{label:"Sharpe",val:d.sh.toFixed(2),color:"#eaf2fb",sub:"annualized"},{label:"Max drawdown",val:pc(d.dd),color:"#cf6f66",sub:"peak-to-trough"},{label:"Volatility",val:(d.vol*100).toFixed(1)+"%",color:"#eaf2fb",sub:"annualized"} ]; }
+  calendarHtml(){ const M=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    let head='<div style="display:grid;grid-template-columns:54px repeat(12,1fr) 64px;gap:3px;margin-bottom:3px"><span></span>'+M.map(m=>'<span style="text-align:center;font:600 9px \'Space Grotesk\';letter-spacing:.04em;text-transform:uppercase;color:#65758c">'+m+'</span>').join("")+'<span style="text-align:center;font:600 9px \'Space Grotesk\';letter-spacing:.04em;text-transform:uppercase;color:#8295ab">YTD</span></div>';
+    let rows=this.years.map((y,yi)=>{ const arr=this.monthly[yi]; let ytd=1; arr.forEach(v=>{ if(v!=null) ytd*=1+v; }); ytd-=1;
+      const cells=arr.map(v=>{ if(v==null) return '<div style="height:38px;border-radius:4px;background:#0c1626"></div>';
+        return '<div style="height:38px;border-radius:4px;background:'+this.heat(v,0.06)+';display:flex;align-items:center;justify-content:center;font:500 10.5px \'IBM Plex Mono\';color:#eaf2fb">'+(v*100).toFixed(1)+'</div>'; }).join("");
+      return '<div style="display:grid;grid-template-columns:54px repeat(12,1fr) 64px;gap:3px;margin-bottom:3px"><span style="display:flex;align-items:center;font:600 12px \'IBM Plex Mono\';color:#cdd9e8">'+y+'</span>'+cells
+        +'<div style="height:38px;border-radius:4px;background:'+this.heat(ytd,0.3)+';display:flex;align-items:center;justify-content:center;font:600 11px \'IBM Plex Mono\';color:#eaf2fb;border:1px solid #1b2740">'+(ytd*100).toFixed(1)+'%</div></div>'; }).join("");
+    return this.panel("Monthly returns","% per month \u00b7 net","<div>"+head+rows+"</div>","13px 16px"); }
+  annualHtml(){ const W=508,H=270,pl=34,pr=10,pt=12,pb=40,pw=W-pl-pr,ph=H-pt-pb;
+    const all=this.annualA.flatMap(a=>[a.strat,a.spy]); const hi=Math.max(...all,0.05),lo=Math.min(...all,-0.05);
+    const Y=v=>pt+(hi-v)/(hi-lo)*ph; const gw=pw/this.annualA.length; const bw=gw*0.32;
+    let g='<svg viewBox="0 0 '+W+' '+H+'" width="100%" style="display:block;height:270px">';
+    [hi,(hi+lo)/2,0,lo].forEach(v=>{ const y=Y(v).toFixed(1); g+='<line x1="'+pl+'" y1="'+y+'" x2="'+(W-pr)+'" y2="'+y+'" stroke="#16223a"/><text x="'+(pl-6)+'" y="'+(+y+3)+'" text-anchor="end" font-size="9" fill="#65758c" font-family="IBM Plex Mono">'+(v*100).toFixed(0)+'</text>'; });
+    const y0=Y(0);
+    this.annualA.forEach((a,i)=>{ const cx=pl+gw*i+gw/2;
+      [["s",a.strat,"#46b8ad",-1],["b",a.spy,"#5a6781",1]].forEach(arr=>{ const v=arr[1],c=arr[2],s=arr[3]; const x=cx+s*bw/2-bw/2; const yy=Y(v); const top=Math.min(yy,y0),hh=Math.abs(yy-y0);
+        g+='<rect x="'+x.toFixed(1)+'" y="'+top.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(1,hh).toFixed(1)+'" rx="1.5" fill="'+c+'"/>'; });
+      g+='<text x="'+cx.toFixed(1)+'" y="'+(H-22)+'" text-anchor="middle" font-size="9" fill="#65758c" font-family="IBM Plex Mono">\u2019'+String(a.y).slice(2)+'</text>'; });
+    g+='</svg>';
+    const leg='<div style="display:flex;gap:16px;justify-content:center;padding-top:2px"><span style="display:inline-flex;align-items:center;gap:6px;font:400 10.5px \'Space Grotesk\';color:#cdd9e8"><span style="width:12px;height:3px;background:#46b8ad;border-radius:2px"></span>Strategy</span><span style="display:inline-flex;align-items:center;gap:6px;font:400 10.5px \'Space Grotesk\';color:#aab4c3"><span style="width:12px;height:3px;background:#5a6781;border-radius:2px"></span>SPY</span></div>';
+    return this.panel("Annual returns","strategy vs SPY", g+leg, "12px 14px 12px"); }
+  sharpeHtml(){ const a=this.sharpeArr,W=508,H=232,pl=34,pr=12,pt=14,pb=26,pw=W-pl-pr,ph=H-pt-pb;
+    const hi=Math.max(...a,2),lo=0; const X=i=>pl+i/(a.length-1)*pw,Y=v=>pt+(hi-v)/(hi-lo)*ph;
+    let g='<svg viewBox="0 0 '+W+' '+H+'" width="100%" style="display:block;height:232px">';
+    g+='<rect x="'+pl+'" y="'+Y(1.5).toFixed(1)+'" width="'+pw+'" height="'+(Y(1.0)-Y(1.5)).toFixed(1)+'" fill="rgba(70,184,173,.07)"/>';
+    [0,0.5,1,1.5,2].forEach(v=>{ if(v>hi)return; const y=Y(v).toFixed(1); g+='<line x1="'+pl+'" y1="'+y+'" x2="'+(W-pr)+'" y2="'+y+'" stroke="#16223a"/><text x="'+(pl-6)+'" y="'+(+y+3)+'" text-anchor="end" font-size="9" fill="#65758c" font-family="IBM Plex Mono">'+v.toFixed(1)+'</text>'; });
+    g+='<line x1="'+pl+'" y1="'+Y(1).toFixed(1)+'" x2="'+(W-pr)+'" y2="'+Y(1).toFixed(1)+'" stroke="#46b8ad" stroke-dasharray="3 3" stroke-opacity=".5"/>';
+    const d=a.map((v,i)=>(i?"L":"M")+X(i).toFixed(1)+" "+Y(v).toFixed(1)).join(" ");
+    g+='<path d="'+d+'" fill="none" stroke="#46b8ad" stroke-width="1.8" stroke-linejoin="round"/><circle cx="'+X(a.length-1).toFixed(1)+'" cy="'+Y(a[a.length-1]).toFixed(1)+'" r="3" fill="#46b8ad"/></svg>';
+    const cur='<div style="display:flex;align-items:baseline;gap:8px;padding:0 2px 8px"><span style="font:500 22px \'IBM Plex Mono\';color:#eaf2fb">'+a[a.length-1].toFixed(2)+'</span><span style="font:400 10.5px \'Space Grotesk\';color:#65758c">rolling 60-day \u00b7 target band 1.0\u20131.5</span></div>';
+    return this.panel("Rolling Sharpe","annualized", cur+g, "12px 14px 10px"); }
+  corrHtml(){ const n=this.csyms.length,W=508,cell=(W-70)/n,H=70+cell*n;
+    let g='<svg viewBox="0 0 '+W+' '+H+'" width="100%" style="display:block;height:'+H+'px">';
+    this.csyms.forEach((s,i)=>{ g+='<text x="'+(64+cell*i+cell/2).toFixed(1)+'" y="14" text-anchor="middle" font-size="9.5" fill="#8295ab" font-family="IBM Plex Mono">'+s+'</text><text x="58" y="'+(26+cell*i+cell/2+3).toFixed(1)+'" text-anchor="end" font-size="9.5" fill="#8295ab" font-family="IBM Plex Mono">'+s+'</text>'; });
+    for(let i=0;i<n;i++)for(let j=0;j<n;j++){ const c=this.corrM[i][j]; const x=64+cell*j,y=22+cell*i;
+      const col=c>=0?"rgba(70,184,173,"+(0.06+c*0.6).toFixed(2)+")":"rgba(207,111,102,"+(0.06-c*0.5).toFixed(2)+")";
+      g+='<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+(cell-2).toFixed(1)+'" height="'+(cell-2).toFixed(1)+'" rx="2" fill="'+col+'"/>';
+      if(cell>40) g+='<text x="'+(x+cell/2-1).toFixed(1)+'" y="'+(y+cell/2+2).toFixed(1)+'" text-anchor="middle" font-size="9" fill="'+(Math.abs(c)>0.5?"#eaf2fb":"#8295ab")+'" font-family="IBM Plex Mono">'+c.toFixed(2)+'</text>'; }
+    g+='</svg>'; return this.panel("Correlation","pairwise \u00b7 trailing 60d", g, "12px 14px"); }
+  distHtml(){ const W=508,H=250,pl=12,pr=12,pt=14,pb=34,pw=W-pl-pr,ph=H-pt-pb;
+    const a=this.daily.slice(); const lo=-0.035,hi=0.035,nb=23; const bins=new Array(nb).fill(0);
+    a.forEach(v=>{ let k=Math.floor((v-lo)/(hi-lo)*nb); k=Math.max(0,Math.min(nb-1,k)); bins[k]++; });
+    const mx=Math.max(...bins); const bw=pw/nb;
+    const sorted=a.slice().sort((x,y)=>x-y); const var95=sorted[Math.floor(sorted.length*0.05)]; const mean=a.reduce((x,y)=>x+y,0)/a.length;
+    const X=v=>pl+(v-lo)/(hi-lo)*pw, Y=c=>pt+(1-c/mx)*ph;
+    let g='<svg viewBox="0 0 '+W+' '+H+'" width="100%" style="display:block;height:250px">';
+    bins.forEach((c,i)=>{ const x=pl+bw*i,y=Y(c),mid=lo+(i+0.5)/nb*(hi-lo); const col=mid<var95?"#cf6f66":(mid<0?"#6e4f55":"#3f7e6e");
+      g+='<rect x="'+(x+1).toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+(bw-2).toFixed(1)+'" height="'+(pt+ph-y).toFixed(1)+'" rx="1.5" fill="'+col+'"/>'; });
+    const vx=X(var95).toFixed(1); g+='<line x1="'+vx+'" y1="'+pt+'" x2="'+vx+'" y2="'+(pt+ph)+'" stroke="#cf6f66" stroke-width="1.5" stroke-dasharray="3 2"/><text x="'+vx+'" y="'+(pt-3)+'" text-anchor="middle" font-size="9.5" fill="#cf6f66" font-family="IBM Plex Mono">VaR '+(var95*100).toFixed(1)+'%</text>';
+    const mxx=X(mean).toFixed(1); g+='<line x1="'+mxx+'" y1="'+pt+'" x2="'+mxx+'" y2="'+(pt+ph)+'" stroke="#46b8ad" stroke-width="1.5"/><text x="'+mxx+'" y="'+(pt-3)+'" text-anchor="middle" font-size="9.5" fill="#46b8ad" font-family="IBM Plex Mono">\u03bc</text>';
+    [-0.03,-0.015,0,0.015,0.03].forEach(v=>{ g+='<text x="'+X(v).toFixed(1)+'" y="'+(H-12)+'" text-anchor="middle" font-size="9" fill="#65758c" font-family="IBM Plex Mono">'+(v*100).toFixed(1)+'%</text>'; });
+    g+='</svg>'; return this.panel("Daily return distribution","240 sessions \u00b7 95% VaR", g, "12px 12px 8px"); }
+  riskcHtml(){ const mx=Math.max(...this.riskArr.map(r=>r.pct));
+    const rows=this.riskArr.map(r=>'<div style="display:grid;grid-template-columns:54px 1fr 46px;gap:10px;align-items:center;padding:6px 0">'
+      +'<span style="font:600 11px \'IBM Plex Mono\';color:#cdd9e8">'+r.sym+'</span>'
+      +'<span style="height:14px;border-radius:3px;background:#0c1626;overflow:hidden;display:block"><span style="display:block;height:100%;width:'+(r.pct/mx*100).toFixed(1)+'%;background:'+r.col+';border-radius:3px"></span></span>'
+      +'<span style="text-align:right;font:500 11px \'IBM Plex Mono\';color:#aab4c3">'+(r.pct*100).toFixed(1)+'%</span></div>').join("");
+    return this.panel("Risk contribution","% of portfolio variance", rows, "10px 15px 12px"); }
+  blotterHtml(){ const pill={filled:["#5fb088","rgba(95,176,136,.14)"],partial:["#d8a84b","rgba(216,168,75,.14)"],working:["#6f93d6","rgba(111,147,214,.14)"],"new":["#8295ab","rgba(130,149,171,.12)"]};
+    const head='<div style="display:grid;grid-template-columns:64px 50px 56px 78px 78px 1fr;gap:8px;padding:7px 0;font:600 9px \'Space Grotesk\';letter-spacing:.05em;text-transform:uppercase;color:#65758c;border-bottom:1px solid #131e34"><span>Sym</span><span>Side</span><span style="text-align:right">Qty</span><span style="text-align:right">Limit</span><span style="text-align:right">Fill</span><span>Status</span></div>';
+    const rows=this.orders2.map(o=>{ const p=pill[o.status];
+      return '<div style="display:grid;grid-template-columns:64px 50px 56px 78px 78px 1fr;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid #131e34">'
+        +'<span style="font:600 10px \'IBM Plex Mono\';padding:2px 5px;border-radius:3px;background:rgba(255,255,255,.04);color:'+o.col+';justify-self:start">'+o.sym+'</span>'
+        +'<span style="font:600 10px \'Space Grotesk\';text-transform:uppercase;color:'+(o.side==="buy"?"#5fb088":"#cf6f66")+'">'+o.side+'</span>'
+        +'<span style="text-align:right;font:400 11px \'IBM Plex Mono\';color:#cdd9e8">'+o.qty+'</span>'
+        +'<span style="text-align:right;font:400 11px \'IBM Plex Mono\';color:#aab4c3">'+o.limit.toFixed(2)+'</span>'
+        +'<span style="text-align:right;font:400 11px \'IBM Plex Mono\';color:#eaf2fb">'+(o.fill==null?"\u2013":o.fill.toFixed(2))+'</span>'
+        +'<span><span style="font:600 9px \'Space Grotesk\';letter-spacing:.04em;text-transform:uppercase;color:'+p[0]+';background:'+p[1]+';padding:2px 7px;border-radius:10px">'+o.status+'</span></span></div>'; }).join("");
+    const fills=this.fills2.map((f,i)=>'<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #131e34"><span style="width:7px;height:7px;border-radius:50%;background:'+(i===0?"#5fb088":"#33405a")+';flex:none"></span><span style="font:600 10px \'IBM Plex Mono\';color:#cdd9e8;width:48px">'+f.sym+'</span><span style="font:400 11px \'IBM Plex Mono\';color:#eaf2fb;flex:1">'+f.qty+' @ '+f.px.toFixed(2)+'</span><span style="font:400 10px \'IBM Plex Mono\';color:#65758c">'+this.clkk(f.t)+'</span></div>').join("");
+    const body='<div style="display:grid;grid-template-columns:1.55fr 1fr;gap:18px"><div>'+head+rows+'</div><div><div style="font:600 9px \'Space Grotesk\';letter-spacing:.06em;text-transform:uppercase;color:#65758c;padding-bottom:4px;border-bottom:1px solid #131e34">Fills \u00b7 session</div>'+fills+'</div></div>';
+    return this.panel("Order blotter","live \u00b7 working \u2192 filled", body, "10px 16px 12px"); }
+  periodSparkHtml(){ const map={"1M":18,"3M":34,"YTD":52,"ITD":64}; const n=map[this.state.period||"YTD"]||52;
+    let a=[1],x=1,rr=(s=>()=>{ s=(s*9301+49297)%233280; return s/233280; })(n*13);
+    for(let i=1;i<n;i++){ x*=1+0.0016+(rr()-0.45)*0.012; a.push(x); }
+    const W=500,H=80; const d=this.spark(a,W,H,4); const up=a[a.length-1]>=a[0],c=up?"#5fb088":"#cf6f66";
+    return '<svg viewBox="0 0 '+W+' '+H+'" width="100%" preserveAspectRatio="none" style="display:block;height:80px"><defs><linearGradient id="psg2" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="'+c+'" stop-opacity=".2"/><stop offset="1" stop-color="'+c+'" stop-opacity="0"/></linearGradient></defs><path d="'+d+' L'+(W-4)+' '+(H-4)+' L4 '+(H-4)+' Z" fill="url(#psg2)"/><path d="'+d+'" fill="none" stroke="'+c+'" stroke-width="1.8" stroke-linejoin="round"/></svg>'; }
+
+  buildData() {
+    const C = { bg:"#0b1322", panel:"#0e1830", line:"#1b2740", soft:"#131e34", grid:"#16223a",
+      fg:"#eaf2fb", fgDim:"#cdd9e8", muted:"#65758c", faint:"#34425e",
+      accent:"#46b8ad", pos:"#5fb088", neg:"#cf6f66", warn:"#d8a84b" };
+    const MF = "font-family:'IBM Plex Mono',ui-monospace,monospace";
+    const fmt = (v,d=0)=> v==null||isNaN(v) ? "\u2013" : Number(v).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+    const usd = v=> v==null ? "\u2013" : (v<0?"-$":"$")+fmt(Math.abs(v),0);
+    const usd2 = v=> v==null ? "\u2013" : (v<0?"-$":"$")+fmt(Math.abs(v),2);
+    const susd = v=> v==null ? "\u2013" : (v>=0?"+$":"-$")+fmt(Math.abs(v),0);
+    const pct = (v,d=1)=> v==null ? "\u2013" : (100*v).toFixed(d)+"%";
+    const spct = (v,d=1)=> v==null ? "\u2013" : (v>=0?"+":"")+(100*v).toFixed(d)+"%";
+    const col = v=> v==null||Math.abs(v)<1e-9 ? C.muted : v>0 ? C.pos : C.neg;
+    const hexA = (h,a)=>{ const n=parseInt(h.slice(1),16); return "rgba("+((n>>16)&255)+","+((n>>8)&255)+","+(n&255)+","+a+")"; };
+
+    const REF = {
+      MSFT:["Microsoft","Information Technology"], NVDA:["NVIDIA","Information Technology"],
+      AAPL:["Apple","Information Technology"], GOOGL:["Alphabet","Communication Services"],
+      META:["Meta Platforms","Communication Services"], LLY:["Eli Lilly","Health Care"],
+      UNH:["UnitedHealth","Health Care"], JNJ:["Johnson & Johnson","Health Care"],
+      JPM:["JPMorgan Chase","Financials"], V:["Visa","Financials"],
+      PG:["Procter & Gamble","Consumer Staples"], KO:["Coca-Cola","Consumer Staples"],
+      HD:["Home Depot","Consumer Discretionary"], XOM:["Exxon Mobil","Energy"],
+      CAT:["Caterpillar","Industrials"], LIN:["Linde","Materials"] };
+    const SECCOL = { "Information Technology":"#6f93d6", "Communication Services":"#9b87d4",
+      "Health Care":"#cf8a86", "Financials":"#4ea6a0", "Consumer Discretionary":"#d8a84b",
+      "Consumer Staples":"#7fae8f", "Energy":"#c2a36b", "Industrials":"#8893a3", "Materials":"#6fb0c4" };
+    const secColor = s=> SECCOL[s] || "#7f868f";
+
+    const genNorm = (n,mu,sd,seed)=>{ let s=seed||1;
+      const r=()=>{ s=(s*1103515245+12345)&0x7fffffff; return s/0x7fffffff; };
+      const g=()=>{ let u=0,v=0; while(!u)u=r(); while(!v)v=r(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); };
+      const out=[1]; let x=1; for(let i=1;i<n;i++){ x=x*(1+mu+sd*g()); out.push(x); } return out; };
+    const genDates = (n,start)=>{ const out=[]; let d=new Date(start+"T00:00:00");
+      while(out.length<n){ const wd=d.getDay(); if(wd!==0&&wd!==6) out.push(d.toISOString().slice(0,10)); d.setDate(d.getDate()+1); } return out; };
+    const mddOf = arr=>{ let pk=-1e9,m=0; arr.forEach(v=>{ pk=Math.max(pk,v); m=Math.min(m,v/pk-1); }); return m; };
+    const metr = norm=>{ const r=[]; for(let i=1;i<norm.length;i++) r.push(norm[i]/norm[i-1]-1);
+      const mean=r.reduce((a,b)=>a+b,0)/r.length, sd=Math.sqrt(r.reduce((a,b)=>a+(b-mean)*(b-mean),0)/r.length);
+      const total=norm[norm.length-1]-1, ann=Math.pow(norm[norm.length-1],252/(norm.length-1))-1,
+        vol=sd*Math.sqrt(252), sharpe=vol?ann/vol:0;
+      return { total, ann, vol, sharpe, maxdd:mddOf(norm), daily:sd, rets:r }; };
+
+    const N = 44, START = 3902000;
+    const dates = genDates(N, "2026-04-21");
+    const sNorm = genNorm(N, 0.00168, 0.0052, 7);
+    const spy = genNorm(N, 0.00104, 0.0083, 19);
+    const xyld = genNorm(N, 0.00066, 0.0044, 23);
+    const jepi = genNorm(N, 0.00086, 0.0047, 31);
+    const navs = sNorm.map(v=> Math.round(START*v));
+    const NAV = navs[N-1];
+    const dayPnl = navs[N-1]-navs[N-2], dayPct = dayPnl/navs[N-2];
+    const ddSeries = (()=>{ let pk=-1e9; return navs.map(v=>{ pk=Math.max(pk,v); return v/pk-1; }); })();
+    const sM = metr(sNorm);
+    const rollVol = sM.rets.map((_,i)=>{ if(i<9) return null; const w=sM.rets.slice(i-9,i+1);
+      const m=w.reduce((a,b)=>a+b,0)/w.length; return Math.sqrt(w.reduce((a,b)=>a+(b-m)*(b-m),0)/w.length)*Math.sqrt(252); });
+    const rollVolFull = [null, ...rollVol];
+
+    const RAW = [
+      ["MSFT",0.165,0.160],["NVDA",0.150,0.145],["AAPL",0.142,0.150],["GOOGL",0.138,0.130],
+      ["META",0.120,0.125],["LLY",0.115,0.110],["JPM",0.128,0.120],["V",0.100,0.105],
+      ["UNH",0.092,0.100],["JNJ",0.085,0.085],["HD",0.095,0.090],["XOM",0.083,0.085],
+      ["PG",0.082,0.085],["KO",0.072,0.075],["CAT",0.068,0.070],["LIN",0.060,0.060] ];
+    const PX = { MSFT:519.40,NVDA:181.39,AAPL:243.10,GOOGL:204.20,META:758.30,LLY:962.10,JPM:303.80,
+      V:357.40,UNH:312.50,JNJ:158.40,HD:417.60,XOM:118.22,PG:171.30,KO:71.05,CAT:418.90,LIN:466.20 };
+    const totW = RAW.reduce((a,p)=>a+p[1],0);
+    const maxW = Math.max(...RAW.map(p=>p[1]));
+    const positions = RAW.map(([sym,w,t])=>{ const [name,sec]=REF[sym], c=secColor(sec), mv=w*NAV;
+      const d=w-t; return { sym, name, sector:sec, chipBg:hexA(c,0.18), chipFg:c,
+        qty:fmt(Math.round(mv/PX[sym])), mv:usd(mv), wPct:pct(w),
+        fillW:(w/maxW*100).toFixed(1), tickW:(t/maxW*100).toFixed(1),
+        deltaStr:spct(d), deltaColor:col(d) }; });
+
+    const bySec = {}; RAW.forEach(([sym,w])=>{ const sec=REF[sym][1]; (bySec[sec]=bySec[sec]||[]).push(w); });
+    const cap = 0.30;
+    const sectors = Object.entries(bySec).map(([sec,ws])=>({ sec, color:secColor(sec),
+      share:ws.reduce((a,b)=>a+b,0)/totW, n:ws.length })).sort((a,b)=>b.share-a.share);
+    const sectorBar = sectors.map(s=>({ w:(s.share*100).toFixed(2), color:s.color }));
+    const sectorList = sectors.map(s=>({ name:s.sec, color:s.color, pct:pct(s.share),
+      pctColor:s.share>cap+1e-9?C.neg:C.fgDim, n:s.n+" name"+(s.n>1?"s":"") }));
+    const shares = RAW.map(p=>p[1]/totW).sort((a,b)=>b-a);
+    const top5 = (shares.slice(0,5).reduce((a,b)=>a+b,0)*100).toFixed(0)+"%";
+    const hhi = shares.reduce((a,b)=>a+b*b,0), effN = (1/hhi).toFixed(1);
+    const largest = (shares[0]*100).toFixed(1)+"%";
+
+    const FAC = { MSFT:[0.78,1.2,-0.4,0.9,0.6], NVDA:[1.05,1.6,-1.1,2.1,-0.5], AAPL:[0.52,0.9,-0.6,0.7,0.5],
+      GOOGL:[0.61,0.8,0.1,0.6,0.3], META:[0.74,0.7,0.3,1.4,-0.2], LLY:[0.66,1.3,-0.9,1.2,0.4],
+      JPM:[0.58,0.7,0.6,0.5,0.2], V:[0.69,1.1,-0.2,0.6,0.8], UNH:[0.34,0.9,0.5,-0.3,0.6],
+      JNJ:[0.41,0.6,0.4,-0.1,1.1], HD:[0.49,0.8,0.0,0.5,0.4], XOM:[0.29,0.3,1.1,0.2,-0.3],
+      PG:[0.45,0.5,0.2,0.1,1.3], KO:[0.38,0.4,0.3,0.0,1.2], CAT:[0.44,0.6,0.4,0.7,0.0], LIN:[0.51,0.8,-0.1,0.4,0.7] };
+    const FK = [["Quality","profitability",1],["Value","cheapness",2],["Momentum","price trend",3],["Low Vol","stability",4]];
+    const tilt = FK.map(([,,idx])=>{ let s=0; RAW.forEach(([sym,w])=>{ s += (w/totW)*FAC[sym][idx]; }); return s; });
+    const dom = Math.max(1.0, ...tilt.map(Math.abs));
+    const ftRows = FK.map(([label,desc],i)=>{ const v=tilt[i], pos=v>=0, half=Math.min(Math.abs(v)/dom,1)*50;
+      const c = pos?C.accent:"#5a6781";
+      return { label, desc, val:(pos?"+":"")+v.toFixed(2), color:c,
+        barStyle: pos ? "left:50%;width:"+half.toFixed(1)+"%" : "left:"+(50-half).toFixed(1)+"%;width:"+half.toFixed(1)+"%" }; });
+    const comp = tilt.reduce((a,b)=>a+b,0)/tilt.length;
+
+    const factors = RAW.map(([sym])=>{ const f=FAC[sym], [name,sec]=REF[sym], c=secColor(sec);
+      return { sym, chipBg:hexA(c,0.18), chipFg:c, name,
+        comp:f[0].toFixed(2), compColor:col(f[0]),
+        q:f[1].toFixed(2), qC:col(f[1]), v:f[2].toFixed(2), vC:col(f[2]),
+        m:f[3].toFixed(2), mC:col(f[3]), l:f[4].toFixed(2), lC:col(f[4]) }; });
+
+    const CALLS = [["MSFT",8,540,"2026-07-17",0.31,9840],["NVDA",12,195,"2026-07-17",0.29,11520],
+      ["AAPL",10,255,"2026-07-17",0.28,6400],["GOOGL",9,215,"2026-07-17",0.30,5220],
+      ["META",5,790,"2026-07-17",0.27,7150],["JPM",7,320,"2026-07-10",0.33,4410],
+      ["LLY",4,1010,"2026-07-17",0.26,8200],["HD",6,440,"2026-07-17",0.30,3960]];
+    const dteOf = exp=> Math.round((new Date(exp+"T00:00:00")-new Date("2026-06-23T00:00:00"))/864e5);
+    const calls = CALLS.map(([sym,ct,k,exp,dl,prem])=>{ const [name,sec]=REF[sym], c=secColor(sec), d=dteOf(exp);
+      return { sym, chipBg:hexA(c,0.18), chipFg:c, name, contracts:fmt(ct), strike:usd2(k), exp,
+        dte:d+"d", dteColor:d<=7?C.warn:C.fgDim, delta:dl.toFixed(2), prem:usd(prem) }; });
+    const coveredSh = CALLS.reduce((a,c)=>a+c[1]*100,0);
+    const callsSub = CALLS.length+" open \u00b7 "+fmt(coveredSh)+" sh covered";
+
+    const ORD = [["MSFT","buy",140,"filled",520.40],["XOM","sell",300,"filled",118.22],
+      ["NVDA","buy",210,"new",null],["LLY","buy",30,"filled",962.10],
+      ["KO","sell",180,"filled",71.05],["JPM","buy",95,"partial",303.80],["V","buy",60,"filled",357.40]];
+    const orders = ORD.map(([sym,side,qty,st,fp])=>{ const [name,sec]=REF[sym], c=secColor(sec);
+      return { sym, chipBg:hexA(c,0.18), chipFg:c, name, side, sideColor:side==="buy"?C.pos:C.neg,
+        qty:fmt(qty), status:st, fill:fp==null?"\u2013":usd2(fp) }; });
+    const ALR = [["2026-06-23 15:42:11","rebalance","Monthly rebalance executed \u2014 12 orders, risk gate passed","info",true],
+      ["2026-06-23 15:40:02","drift","Drift 6.1% below 10% action threshold \u2014 no trade","warn",false],
+      ["2026-06-20 09:31:44","call-roll","Rolled 8 MSFT calls to Jul-17 540C","info",true],
+      ["2026-06-18 14:05:10","data","Factor scores refreshed (asof 2026-06-17)","info",false],
+      ["2026-06-16 10:22:31","coverage","Covered-call coverage 38% \u2014 within target band","info",false]];
+    const sevC = { info:C.muted, warn:C.warn, bad:C.neg };
+    const alerts = ALR.map(([ts,type,msg,sev,del])=>({ ts, type, typeColor:sevC[sev], msg,
+      del:del?"\u2713 sent":"dry-run", delColor:del?C.pos:C.muted }));
+
+    const sMet=metr(sNorm), spyMet=metr(spy), xyldMet=metr(xyld), jepiMet=metr(jepi);
+    const premLife = 148200;
+    const benchDefs = [["SPY", spy, spyMet, "#8893a3", "S&P 500 ETF \u2014 broad large-cap beta benchmark."],
+      ["XYLD", xyld, xyldMet, "#6f93d6", "S&P 500 covered-call ETF \u2014 the overlay peer benchmark."],
+      ["JEPI", jepi, jepiMet, "#9b87d4", "Equity premium income ETF \u2014 active covered-call peer."]];
+    const trackLegend = [{ name:"Strategy", color:C.accent }, ...benchDefs.map(b=>({ name:b[0], color:b[3] }))];
+    const benchRows = [["Strategy (this book)", sMet, C.accent], ...benchDefs.map(b=>[b[0], b[2], b[3]])].map(([nm,m,c])=>({
+      name:nm, swatch:c, ret:spct(m.total), retColor:col(m.total), ann:spct(m.ann), vol:pct(m.vol),
+      sharpe:m.sharpe.toFixed(2), mdd:pct(m.maxdd), mddColor:C.neg }));
+    const benchDesc = benchDefs.map(b=>({ name:b[0], color:b[3], desc:b[4] }));
+
+    const var95 = sM.daily*1.645, varUsd = var95*NAV;
+    const ddDate = dates[ddSeries.indexOf(Math.min(...ddSeries))];
+
+    const SLIP = [["MSFT","buy",140,520.10,520.40],["XOM","sell",300,118.30,118.22],
+      ["NVDA","buy",210,181.50,181.39],["LLY","buy",30,961.00,962.10],
+      ["KO","sell",180,71.10,71.05],["JPM","buy",95,303.50,303.80],["V","buy",60,358.00,357.40]];
+    const slip = SLIP.map(([sym,side,qty,intd,fill])=>{ const [name,sec]=REF[sym], c=secColor(sec);
+      const dir = side==="buy"?1:-1, bps = ((fill-intd)/intd)*dir*10000, usdC = (fill-intd)*qty*dir;
+      return { sym, chipBg:hexA(c,0.18), chipFg:c, name, side, qty:fmt(qty), intended:usd2(intd), filled:usd2(fill),
+        bps:(bps>0?"+":"")+bps.toFixed(1)+" bps", bpsColor:bps>0?C.neg:C.pos,
+        cost:susd(-usdC), costColor:usdC>0?C.neg:C.pos }; });
+    const avgBps = (SLIP.reduce((a,[,side,,intd,fill])=>{ const dir=side==="buy"?1:-1; return a+((fill-intd)/intd)*dir*10000; },0)/SLIP.length);
+    const slipSub = SLIP.length+" filled limit orders \u00b7 +bps = paid up vs mid";
+
+    const BN = 121;
+    const btS = genNorm(BN, 0.0094, 0.030, 99);
+    const btSpy = genNorm(BN, 0.0086, 0.041, 53);
+    const btDates = (()=>{ const o=[]; let d=new Date("2016-06-01T00:00:00"); for(let i=0;i<BN;i++){ o.push(d.toISOString().slice(0,7)); d.setMonth(d.getMonth()+1); } return o; })();
+    const btM = (()=>{ const r=[]; for(let i=1;i<btS.length;i++) r.push(btS[i]/btS[i-1]-1);
+      const cagr=Math.pow(btS[BN-1],12/(BN-1))-1, mean=r.reduce((a,b)=>a+b,0)/r.length,
+        sd=Math.sqrt(r.reduce((a,b)=>a+(b-mean)*(b-mean),0)/r.length), vol=sd*Math.sqrt(12),
+        down=Math.sqrt(r.filter(x=>x<0).reduce((a,b)=>a+b*b,0)/r.length)*Math.sqrt(12);
+      return { cagr, vol, sharpe:cagr/vol, sortino:cagr/down, mdd:mddOf(btS), hit:r.filter(x=>x>0).length/r.length }; })();
+    const btTiles = [
+      { label:"CAGR", val:pct(btM.cagr), sub:"net, 10-yr" },
+      { label:"Sharpe", val:btM.sharpe.toFixed(2), sub:"annualized" },
+      { label:"Sortino", val:btM.sortino.toFixed(2), sub:"downside-adj" },
+      { label:"Max drawdown", val:pct(btM.mdd), sub:"peak-to-trough" },
+      { label:"Volatility", val:pct(btM.vol), sub:"annualized" },
+      { label:"Monthly hit rate", val:pct(btM.hit,0), sub:"positive months" } ];
+    const btLegend = [{ name:"Strategy", color:C.accent }, { name:"SPY", color:"#8893a3" }];
+
+    // ===== charts =====
+    const navChart = (()=>{ const W=1220,H=240,pl=66,pr=18,pt=16,pb=28,pw=W-pl-pr,ph=H-pt-pb;
+      let lo=Math.min(...navs),hi=Math.max(...navs); const pad=(hi-lo)*0.12; lo-=pad; hi+=pad;
+      const X=i=>pl+i/(N-1)*pw, Y=v=>pt+(hi-v)/(hi-lo)*ph;
+      let s='<svg viewBox="0 0 '+W+' '+H+'" width="100%" preserveAspectRatio="none" style="display:block;height:240px">';
+      for(let k=0;k<=4;k++){ const v=lo+(hi-lo)*k/4,y=Y(v).toFixed(1);
+        s+='<line x1="'+pl+'" y1="'+y+'" x2="'+(W-pr)+'" y2="'+y+'" stroke="'+C.grid+'"/>'+
+           '<text x="'+(pl-9)+'" y="'+(+y+3.5)+'" text-anchor="end" font-size="11" fill="'+C.muted+'" style="'+MF+'">$'+Math.round(v/1000)+'k</text>'; }
+      const step=Math.max(1,Math.round(N/8));
+      for(let i=0;i<N;i+=step) s+='<text x="'+X(i).toFixed(1)+'" y="'+(H-9)+'" text-anchor="middle" font-size="10.5" fill="'+C.muted+'" style="'+MF+'">'+dates[i].slice(5)+'</text>';
+      const d=navs.map((v,i)=>(i?"L":"M")+X(i).toFixed(1)+" "+Y(v).toFixed(1)).join(" ");
+      const y0=(H-pb).toFixed(1);
+      s+='<defs><linearGradient id="navg" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="'+C.accent+'" stop-opacity="0.18"/><stop offset="1" stop-color="'+C.accent+'" stop-opacity="0"/></linearGradient></defs>';
+      s+='<path d="'+d+' L'+X(N-1).toFixed(1)+' '+y0+' L'+X(0).toFixed(1)+' '+y0+' Z" fill="url(#navg)"/>';
+      s+='<path d="'+d+'" fill="none" stroke="'+C.accent+'" stroke-width="1.8" stroke-linejoin="round"/>';
+      s+='<circle cx="'+X(N-1).toFixed(1)+'" cy="'+Y(navs[N-1]).toFixed(1)+'" r="3" fill="'+C.accent+'"/>';
+      return s+"</svg>"; })();
+
+    const multiLine = (series)=>{ const W=1160,H=260,pl=58,pr=16,pt=14,pb=28,pw=W-pl-pr,ph=H-pt-pb;
+      let all=[]; series.forEach(se=>se.data.forEach(v=>all.push(v)));
+      let lo=Math.min(...all),hi=Math.max(...all); const pad=(hi-lo)*0.1; lo-=pad; hi+=pad;
+      const X=i=>pl+i/(N-1)*pw, Y=v=>pt+(hi-v)/(hi-lo)*ph;
+      let s='<svg viewBox="0 0 '+W+' '+H+'" width="100%" preserveAspectRatio="none" style="display:block;height:260px">';
+      for(let k=0;k<=4;k++){ const v=lo+(hi-lo)*k/4,y=Y(v).toFixed(1);
+        s+='<line x1="'+pl+'" y1="'+y+'" x2="'+(W-pr)+'" y2="'+y+'" stroke="'+C.grid+'"/>'+
+           '<text x="'+(pl-8)+'" y="'+(+y+3.5)+'" text-anchor="end" font-size="11" fill="'+C.muted+'" style="'+MF+'">'+((v-1)*100).toFixed(0)+'%</text>'; }
+      const step=Math.max(1,Math.round(N/7));
+      for(let i=0;i<N;i+=step) s+='<text x="'+X(i).toFixed(1)+'" y="'+(H-9)+'" text-anchor="middle" font-size="10.5" fill="'+C.muted+'" style="'+MF+'">'+dates[i].slice(5)+'</text>';
+      series.forEach(se=>{ const d=se.data.map((v,i)=>(i?"L":"M")+X(i).toFixed(1)+" "+Y(v).toFixed(1)).join(" ");
+        s+='<path d="'+d+'" fill="none" stroke="'+se.color+'" stroke-width="'+(se.w||1.6)+'" stroke-linejoin="round"/>'; });
+      return s+"</svg>"; };
+    const trackChart = multiLine([{ data:sNorm, color:C.accent, w:2.2 },
+      { data:spy, color:"#8893a3" }, { data:xyld, color:"#6f93d6" }, { data:jepi, color:"#9b87d4" }]);
+
+    const underwater = (()=>{ const W=1160,H=200,pl=58,pr=16,pt=14,pb=26,pw=W-pl-pr,ph=H-pt-pb;
+      const lo=Math.min(...ddSeries,0), top=0, bot=lo-((0-lo)*0.12||0.001);
+      const X=i=>pl+i/(N-1)*pw, Y=v=>pt+(top-v)/(top-bot)*ph;
+      let s='<svg viewBox="0 0 '+W+' '+H+'" width="100%" preserveAspectRatio="none" style="display:block;height:200px">';
+      for(let k=0;k<=4;k++){ const v=top-(top-bot)*k/4,y=Y(v).toFixed(1);
+        s+='<line x1="'+pl+'" y1="'+y+'" x2="'+(W-pr)+'" y2="'+y+'" stroke="'+C.grid+'"/>'+
+           '<text x="'+(pl-8)+'" y="'+(+y+3.5)+'" text-anchor="end" font-size="11" fill="'+C.muted+'" style="'+MF+'">'+(v*100).toFixed(1)+'%</text>'; }
+      const step=Math.max(1,Math.round(N/7));
+      for(let i=0;i<N;i+=step) s+='<text x="'+X(i).toFixed(1)+'" y="'+(H-8)+'" text-anchor="middle" font-size="10.5" fill="'+C.muted+'" style="'+MF+'">'+dates[i].slice(5)+'</text>';
+      const y0=Y(0).toFixed(1);
+      const line=ddSeries.map((v,i)=>(i?"L":"M")+X(i).toFixed(1)+" "+Y(v).toFixed(1)).join(" ");
+      s+='<path d="M'+X(0).toFixed(1)+' '+y0+' '+ddSeries.map((v,i)=>"L"+X(i).toFixed(1)+" "+Y(v).toFixed(1)).join(" ")+' L'+X(N-1).toFixed(1)+' '+y0+' Z" fill="'+C.neg+'" fill-opacity="0.13"/>';
+      s+='<path d="'+line+'" fill="none" stroke="'+C.neg+'" stroke-width="1.8" stroke-linejoin="round"/>';
+      return s+"</svg>"; })();
+
+    const rvChart = (()=>{ const W=1160,H=180,pl=58,pr=16,pt=14,pb=26,pw=W-pl-pr,ph=H-pt-pb;
+      const vals=rollVolFull.filter(v=>v!=null); let lo=Math.min(...vals),hi=Math.max(...vals);
+      const pad=(hi-lo)*0.15||0.01; lo=Math.max(0,lo-pad); hi+=pad;
+      const X=i=>pl+i/(N-1)*pw, Y=v=>pt+(hi-v)/(hi-lo)*ph;
+      let s='<svg viewBox="0 0 '+W+' '+H+'" width="100%" preserveAspectRatio="none" style="display:block;height:180px">';
+      for(let k=0;k<=3;k++){ const v=lo+(hi-lo)*k/3,y=Y(v).toFixed(1);
+        s+='<line x1="'+pl+'" y1="'+y+'" x2="'+(W-pr)+'" y2="'+y+'" stroke="'+C.grid+'"/>'+
+           '<text x="'+(pl-8)+'" y="'+(+y+3.5)+'" text-anchor="end" font-size="11" fill="'+C.muted+'" style="'+MF+'">'+(v*100).toFixed(0)+'%</text>'; }
+      const step=Math.max(1,Math.round(N/7));
+      for(let i=0;i<N;i+=step) s+='<text x="'+X(i).toFixed(1)+'" y="'+(H-8)+'" text-anchor="middle" font-size="10.5" fill="'+C.muted+'" style="'+MF+'">'+dates[i].slice(5)+'</text>';
+      let p=""; rollVolFull.forEach((v,i)=>{ if(v!=null) p+=(p?"L":"M")+X(i).toFixed(1)+" "+Y(v).toFixed(1); });
+      s+='<path d="'+p+'" fill="none" stroke="'+C.warn+'" stroke-width="2" stroke-linejoin="round"/>';
+      return s+"</svg>"; })();
+
+    const btChart = (()=>{ const W=1220,H=300,pl=58,pr=18,pt=16,pb=28,pw=W-pl-pr,ph=H-pt-pb;
+      const all=[...btS,...btSpy]; let lo=Math.min(...all),hi=Math.max(...all);
+      const X=i=>pl+i/(BN-1)*pw, Y=v=>pt+(Math.log(hi)-Math.log(v))/(Math.log(hi)-Math.log(lo))*ph;
+      let s='<svg viewBox="0 0 '+W+' '+H+'" width="100%" preserveAspectRatio="none" style="display:block;height:300px">';
+      [1,2,3,4,5].forEach(v=>{ if(v<lo||v>hi) return; const y=Y(v).toFixed(1);
+        s+='<line x1="'+pl+'" y1="'+y+'" x2="'+(W-pr)+'" y2="'+y+'" stroke="'+C.grid+'"/>'+
+           '<text x="'+(pl-9)+'" y="'+(+y+3.5)+'" text-anchor="end" font-size="11" fill="'+C.muted+'" style="'+MF+'">'+v+'\u00d7</text>'; });
+      for(let i=0;i<BN;i+=12) s+='<text x="'+X(i).toFixed(1)+'" y="'+(H-9)+'" text-anchor="middle" font-size="10.5" fill="'+C.muted+'" style="'+MF+'">'+btDates[i].slice(0,4)+'</text>';
+      const ds=btSpy.map((v,i)=>(i?"L":"M")+X(i).toFixed(1)+" "+Y(v).toFixed(1)).join(" ");
+      s+='<path d="'+ds+'" fill="none" stroke="#8893a3" stroke-width="1.5" stroke-linejoin="round"/>';
+      const d=btS.map((v,i)=>(i?"L":"M")+X(i).toFixed(1)+" "+Y(v).toFixed(1)).join(" ");
+      s+='<path d="'+d+'" fill="none" stroke="'+C.accent+'" stroke-width="2" stroke-linejoin="round"/>';
+      return s+"</svg>"; })();
+
+    const ribbon = [
+      { dot:C.pos, label:"Engine", value:"Live" },
+      { dot:C.pos, label:"Market", value:"Open" },
+      { dot:C.accent, label:"Next rebalance", value:"Jul 1 \u00b7 6d" },
+      { dot:C.pos, label:"Risk gate", value:"Pass" },
+      { dot:C.warn, label:"Drift L1", value:pct(0.061) },
+      { dot:C.muted, label:"Alerts 24h", value:"clear" } ];
+    const healthTiles = [
+      { label:"Engine", dot:C.pos, val:"Live", sub:"monitor \u00b7 data 44s old" },
+      { label:"Market", dot:C.pos, val:"Open", sub:"closes 4:00pm ET" },
+      { label:"Last rebalance", dot:C.pos, val:"Jun 1 \u00b7 scheduled", sub:"risk gate \u2713 passed" },
+      { label:"Next rebalance", dot:C.accent, val:"Jul 1", sub:"in 6 days \u00b7 NYSE confirmed" },
+      { label:"Drift vs target", dot:C.warn, val:pct(0.061)+" L1", sub:"3 names off-target" },
+      { label:"Alerts (24h)", dot:C.muted, val:"all clear", sub:"5 in last 24h" },
+      { label:"Factor data", dot:C.pos, val:"Jun 17", sub:"scores fresh" },
+      { label:"Last order", dot:C.pos, val:"2m ago", sub:"V buy \u00b7 filled" } ];
+
+    return { C,
+      ribbon, clock:"15:48:22 ET",
+      navStr:usd(NAV), daySub:susd(dayPnl)+" \u00b7 "+spct(dayPct)+" today", dayColor:col(dayPct),
+      navRange:N+" snapshots \u00b7 "+dates[0]+" \u2192 "+dates[N-1],
+      navHigh:usd(Math.max(...navs)), navLow:usd(Math.min(...navs)),
+      navWinChg:susd(navs[N-1]-navs[0])+" ("+spct(navs[N-1]/navs[0]-1)+")", navWinColor:col(navs[N-1]-navs[0]),
+      navChart:this.el(navChart,240),
+      pnlStr:susd(dayPnl), pnlColor:col(dayPnl), pnlSub:spct(dayPct)+" vs prior close",
+      levStr:(totW).toFixed(2)+"\u00d7", levW:Math.min(100,totW/2.0*100).toFixed(0), levSub:"cap 2.00\u00d7 \u00b7 gross "+usd(totW*NAV),
+      cashStr:usd(NAV-totW*NAV), cashSub:"margin \u00b7 "+(totW).toFixed(2)+"\u00d7 gross",
+      premStr:usd(premLife), premSub:pct(premLife/NAV)+" of NAV \u00b7 lifetime",
+      posStr:fmt(RAW.length), posSub:"drift "+pct(0.061)+" L1",
+      healthTiles,
+      sectorBar, sectorList, secSub:"share of book \u00b7 over "+(cap*100).toFixed(0)+"% cap flagged",
+      concTop5:top5, concEff:effN, concEffOf:"of "+shares.length, concLargest:largest, concSectors:sectors.length+"",
+      positions, posPanelSub:"gross "+usd(totW*NAV),
+      ftRows, ftComp:(comp>=0?"+":"")+comp.toFixed(2), ftCompColor:comp>=0?C.accent:"#5a6781",
+      ftCoverage:"100%", ftScored:RAW.length+"", ftScoredOf:"of "+RAW.length,
+      calls, callsSub, factors,
+      orders, alerts, alertsSub:ALR.length+" recent",
+      trDays:N+"", trInception:dates[0], trSince:spct(sMet.total), trSinceColor:col(sMet.total),
+      trAnn:spct(sMet.ann), trSharpe:sMet.sharpe.toFixed(2),
+      trPrem:usd(premLife), trSlip:(avgBps>0?"+":"")+avgBps.toFixed(1)+" bps",
+      trackChart:this.el(trackChart,260), trackLegend, trackSub:dates[0]+" \u2192 "+dates[N-1],
+      benchRows, benchDesc,
+      rkMdd:pct(sM.maxdd), rkMddSub:"worst, on "+ddDate.slice(5), rkMddColor:C.neg,
+      rkCur:pct(ddSeries[N-1]), rkCurColor:ddSeries[N-1]<-1e-9?C.neg:C.muted, rkCurSub:"below high-water mark",
+      rkVol:pct(sM.vol), rkVolSub:pct(sM.daily,2)+" / day",
+      rkVar:"\u2212"+pct(var95), rkVarColor:C.neg, rkVarSub:"\u2248 "+usd(varUsd)+" at today's NAV",
+      rkSharpe:sM.sharpe.toFixed(2), rkSharpeSub:"annualized, since go-live",
+      rkLev:(totW).toFixed(2)+"\u00d7", rkLevW:Math.min(100,totW/2.0*100).toFixed(0), rkLevSub:"cap 2.00\u00d7 \u00b7 gross "+usd(totW*NAV),
+      ddChart:this.el(underwater,200), ddSub:dates[0]+" \u2192 "+dates[N-1]+" \u00b7 0% = high-water mark",
+      rvChart:this.el(rvChart,180), rvSub:"10-day window \u00b7 annualized",
+      slip, slipSub,
+      btTiles, btChart:this.el(btChart,300), btLegend, btRange:"Jun 2016 \u2192 Jun 2026 \u00b7 "+BN+" months"
+    };
+  }
+
+  renderVals() {
+    if (!this._d) this._d = this.buildData();
+    const C = this._d.C, view = this.state.view;
+    const tab = (key, label) => ({ label, on: () => this.setView(key),
+      fg: view === key ? C.fg : C.muted, ind: view === key ? C.accent : "transparent" });
+    const tabs = [ tab("overview","Overview"), tab("portfolio","Portfolio"),
+      tab("performance","Performance"), tab("backtest","Backtest") ];
+    const subT = (cur, set) => (key, label) => ({ label, on: () => set(key),
+      fg: cur === key ? C.fg : C.muted, bg: cur === key ? "#16223a" : "transparent",
+      bd: cur === key ? C.line : "transparent" });
+    const sp = subT(this.state.subP, k => this.setState({ subP: k }));
+    const spf = subT(this.state.subPerf, k => this.setState({ subPerf: k }));
+    return Object.assign({}, this._d, this.liveVals(), {
+      tabs,
+      isOverview: view === "overview", isPortfolio: view === "portfolio",
+      isPerformance: view === "performance", isBacktest: view === "backtest",
+      subTabsP: [ sp("holdings","Holdings"), sp("activity","Activity") ],
+      subTabsPerf: [ spf("returns","Returns"), spf("risk","Risk"), spf("execution","Execution") ],
+      pHoldings: this.state.subP === "holdings", pActivity: this.state.subP === "activity",
+      perfReturns: this.state.subPerf === "returns", perfRisk: this.state.subPerf === "risk",
+      perfExec: this.state.subPerf === "execution",
+      onRefresh: () => this.forceUpdate()
+    });
+  }
+}
+</script>
+</body>
+</html>
