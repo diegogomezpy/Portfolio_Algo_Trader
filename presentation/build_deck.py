@@ -23,7 +23,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import (FancyBboxPatch, FancyArrowPatch, Rectangle, Circle,
-                                Polygon, RegularPolygon, Arc)
+                                Polygon, RegularPolygon, Arc, Wedge)
 from matplotlib.font_manager import FontProperties
 
 from pptx import Presentation
@@ -399,6 +399,48 @@ def fig_integrity_cards():
     ], cols=2)
 
 
+def fig_dashboard():
+    """A schematic of the live dashboard, in its actual dark theme (illustrative, no live figures)."""
+    path = os.path.join(ASSETS, "dashboard.png")
+    BG, PANEL, BORD = "#0B1322", "#172439", "#28384f"
+    TEAL, MUT, TXT, FAINT = "#46B8AD", "#8A97AC", "#E6ECF2", "#34425e"
+    fig, ax = plt.subplots(figsize=(12, 4.9)); ax.set_xlim(0, 12); ax.set_ylim(0, 4.9); ax.axis("off")
+    _rbox(ax, 0.2, 0.2, 11.6, 4.5, fc=BG, ec=BORD, lw=1.4, r=0.04)
+    gx, gy = 0.62, 4.32
+    for rr in range(3):
+        for cc in range(3):
+            ax.add_patch(Circle((gx + cc*0.13, gy - rr*0.13), 0.045, fc=(TEAL if cc == 1 else FAINT), ec="none"))
+    ax.text(1.3, 4.18, "Systematic Factor Income Fund", fontsize=12, color=TXT, fontproperties=_BOLD, va="center")
+    ax.add_patch(Circle((9.45, 4.18), 0.06, fc=TEAL, ec="none"))
+    ax.text(9.6, 4.18, "streaming · live", fontsize=9.5, color=TEAL, fontproperties=_REG, va="center")
+    ax.plot([0.2, 11.8], [3.92, 3.92], color=BORD, lw=1)
+    tx = 0.62
+    for name, active in [("Overview", True), ("Portfolio", False), ("Performance", False), ("Backtest", False)]:
+        ax.text(tx, 3.62, name, fontsize=10.5, color=(TEAL if active else MUT),
+                fontproperties=(_BOLD if active else _REG), va="center")
+        w = len(name) * 0.118 + 0.05
+        if active:
+            ax.plot([tx, tx + w], [3.4, 3.4], color=TEAL, lw=2.5)
+        tx += w + 0.55
+    for i, lab in enumerate(["NAV", "Day P&L", "Leverage", "Premium"]):
+        x = 0.62 + i * 2.75
+        _rbox(ax, x, 2.2, 2.55, 0.95, fc=PANEL, ec=BORD, lw=1, r=0.08)
+        ax.text(x + 0.22, 2.87, lab, fontsize=9, color=MUT, fontproperties=_REG, va="center")
+        _rbox(ax, x + 0.22, 2.42, 1.5, 0.2, fc=(TEAL if i == 0 else FAINT), ec=(TEAL if i == 0 else FAINT), r=0.1)
+    _rbox(ax, 0.62, 0.45, 7.2, 1.5, fc=PANEL, ec=BORD, lw=1, r=0.05)
+    xs = np.linspace(0.95, 7.5, 60); base = np.linspace(0, 1, 60)
+    ax.plot(xs, 0.72 + (base + 0.1 * np.sin(np.linspace(0, 7, 60))) * 0.95, color=TEAL, lw=2)
+    ax.plot(xs, 0.72 + base * 0.6, color=MUT, lw=1.4, ls=(0, (4, 3)))
+    ax.text(0.85, 1.78, "Growth vs benchmark", fontsize=8.5, color=MUT, fontproperties=_REG)
+    cx, cy, start = 10.0, 1.15, 90
+    for fr, co in [(0.32, TEAL), (0.27, "#2E8B82"), (0.23, "#3A4C63"), (0.18, "#26354e")]:
+        ax.add_patch(Wedge((cx, cy), 0.6, start, start + fr * 360, width=0.24, fc=co, ec="none"))
+        start += fr * 360
+    ax.text(cx, cy - 0.95, "Allocation", fontsize=8.5, color=MUT, ha="center", fontproperties=_REG)
+    fig.tight_layout(); fig.savefig(path, dpi=170, bbox_inches="tight", transparent=True)
+    plt.close(fig); return path
+
+
 print("rendering assets…")
 F_Z = formula(r"z=\dfrac{x-\mu}{\sigma}", "f_z.png", 44)
 F_VALUE = formula(r"\mathrm{Value}=z\left(\,z(E/P)+z(B/P)\,\right)", "f_value.png", 40)
@@ -417,6 +459,7 @@ IMG_LIFECYCLE = fig_lifecycle()
 IMG_METHOD = fig_methodology()
 IMG_RISK = fig_risk_cards()
 IMG_INTEGRITY = fig_integrity_cards()
+IMG_DASH = fig_dashboard()
 
 
 # =========================================================================== #
@@ -539,8 +582,17 @@ def footer(s):
          color=MUTED, align=PP_ALIGN.RIGHT)
 
 
+def glyph(s, left, top, d=0.17, gap=0.29, faint=RGBColor(0x3A, 0x4C, 0x63)):
+    """The SFI brand mark: a 3x3 grid of dots, centre column teal (for dark backgrounds)."""
+    for rr in range(3):
+        for cc in range(3):
+            rect(s, Inches(left + cc * gap), Inches(top + rr * gap), Inches(d), Inches(d),
+                 fill=(ACCENT if cc == 1 else faint), shape=MSO_SHAPE.OVAL)
+
+
 def divider(num, title, subtitle=None):
     s = slide(); rect(s, 0, 0, EMU_W, EMU_H, fill=INK)
+    glyph(s, 12.0, 0.62, d=0.15, gap=0.26)
     text(s, Inches(0.6), Inches(1.0), Inches(7), Inches(3.2), f"{num:02d}", size=200,
          color=SLATE, bold=True)
     rect(s, Inches(0.95), Inches(4.35), Inches(2.4), Pt(3), fill=ACCENT)
@@ -649,6 +701,7 @@ def stat_slide(kicker, title, stats, subtitle=None, caption=None):
 # =========================================================================== #
 # ---- Cover ---------------------------------------------------------------- #
 s = slide(); rect(s, 0, 0, EMU_W, EMU_H, fill=INK); rect(s, 0, 0, Inches(0.22), EMU_H, fill=ACCENT)
+glyph(s, 11.5, 0.92)
 text(s, Inches(0.9), Inches(0.95), Inches(10), Inches(0.4), "PROPRIETARY INVESTMENT STRATEGY",
      size=13, color=ACCENT, bold=True)
 text(s, Inches(0.85), Inches(2.3), Inches(11.9), Inches(2.0), "Systematic Factor\nIncome Fund",
@@ -1129,16 +1182,14 @@ footer(s)
 # =========================================================================== #
 divider(8, "Operations", "A live, monitored system, running on its own")
 
-content("8 · Operations", "Monitoring: a live dashboard", [
-    {"runs": [("Overview. ", True), ("Account value and cash to the cent, daily profit, and a single "
-      "health bar covering the engine, the market clock, the next rebalance, and any alerts.")]},
-    {"runs": [("Portfolio. ", True), ("Holdings against target, sector and concentration breakdowns, the "
-      "portfolio's factor tilt, the covered calls, and recent activity.")]},
-    {"runs": [("Performance. ", True), ("Growth against the S&P 500 and the BuyWrite index, risk "
-      "measures, and a breakdown of trading costs and option premium.")]},
-    {"runs": [("Always current. ", True), ("The dashboard updates itself from the live account, so it "
-      "reflects the real state rather than a stale snapshot.")]},
-], subtitle="A single page gives the full picture at a glance")
+s = slide(); y = header(s, "8 · Operations", "Monitoring: a live dashboard",
+                        "One page, four tabs, updating itself from the live account")
+image_fit(s, IMG_DASH, Inches(0.7), Inches(y + 0.1), Inches(11.93), Inches(4.4), valign="top")
+text(s, Inches(0.7), Inches(y + 4.55), Inches(11.93), Inches(0.5),
+     [("Overview · Portfolio · Performance · Backtest", True),
+      ("    account value, holdings vs. target, factor tilt, growth vs. benchmarks, risk, and "
+       "execution costs. Served read-only behind a password.", False, MUTED)], size=12)
+footer(s)
 
 content("8 · Operations", "Infrastructure and safeguards", [
     {"runs": [("Runs unattended in the cloud. ", True), ("Hosted on a dedicated server that runs the "
@@ -1189,6 +1240,7 @@ two_col("9 · Status and outlook", "Risks and what comes next",
 
 # ---- Summary -------------------------------------------------------------- #
 s = slide(); rect(s, 0, 0, EMU_W, EMU_H, fill=INK); rect(s, 0, 0, Inches(0.22), EMU_H, fill=ACCENT)
+glyph(s, 12.0, 0.85, d=0.15, gap=0.26)
 text(s, Inches(0.9), Inches(0.85), Inches(11), Inches(0.4), "IN SUMMARY", size=13, color=ACCENT, bold=True)
 summary = [
     ("A disciplined factor portfolio", "Four proven traits, computed transparently and weighted equally."),
