@@ -25,3 +25,8 @@ reports/_dashboard_widget.html
 
 # Local tooling (Claude Code preview config + machine-local settings)
 .claude/
+
+# Generated presentation assets (regenerable via presentation/build_deck.py)
+presentation/assets/
+presentation/sample.pptx
+presentation/~$*
