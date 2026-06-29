@@ -338,24 +338,25 @@ def fig_data_sources():
 
 def fig_lifecycle():
     path = os.path.join(ASSETS, "lifecycle.png")
-    fig, ax = plt.subplots(figsize=(12, 3.2)); ax.set_xlim(0, 12); ax.set_ylim(0, 3.2); ax.axis("off")
+    fig, ax = plt.subplots(figsize=(12, 3.4)); ax.set_xlim(0, 12); ax.set_ylim(0, 3.4); ax.axis("off")
     stages = [("Rebalance day", "Sell ~30-day calls\non the new holdings", ACCDK_H),
               ("Through the month", "Hold the stock,\ncollect the premium", INK_H),
               ("Before expiry", "Close the calls\n(early, before earnings)", INK_H),
               ("Next month", "Rewrite fresh calls\non the new holdings", ACCDK_H)]
-    n = len(stages); bw = 2.4; gap = (12 - 0.4 - n * bw) / (n - 1); y = 1.35; bh = 1.45
+    n = len(stages); bw = 2.4; gap = (12 - 0.4 - n * bw) / (n - 1); y = 1.6; bh = 1.4
     xs = []
     for i, (t, d, fc) in enumerate(stages):
         x = 0.2 + i * (bw + gap); xs.append(x)
         _rbox(ax, x, y, bw, bh, fc=fc, ec=fc, r=0.12)
-        ax.text(x + bw/2, y + bh - 0.34, t, fontsize=12.5, color="white", fontproperties=_BOLD, ha="center")
-        ax.text(x + bw/2, y + 0.5, d, fontsize=9.5, color=LIGHT_H, fontproperties=_REG, ha="center", linespacing=1.25)
+        ax.text(x + bw/2, y + bh - 0.32, t, fontsize=12.5, color="white", fontproperties=_BOLD, ha="center")
+        ax.text(x + bw/2, y + 0.46, d, fontsize=9.5, color=LIGHT_H, fontproperties=_REG, ha="center", linespacing=1.25)
         if i < n - 1:
             ax.add_patch(FancyArrowPatch((x + bw + 0.06, y + bh/2), (x + bw + gap - 0.06, y + bh/2),
                          arrowstyle="-|>", mutation_scale=16, color=ACC_H, lw=2.4))
-    ax.add_patch(FancyArrowPatch((xs[-1] + bw/2, y - 0.04), (xs[0] + bw/2, y - 0.04),
-                 connectionstyle="arc3,rad=0.34", arrowstyle="-|>", mutation_scale=15, color=MUT_H, lw=1.8))
-    ax.text(6, 0.22, "repeats every month", fontsize=11, color=MUT_H, fontproperties=_BOLD, ha="center")
+    # return loop, routed clearly BELOW the boxes
+    ax.add_patch(FancyArrowPatch((xs[-1] + bw/2, y - 0.06), (xs[0] + bw/2, y - 0.06),
+                 connectionstyle="arc3,rad=-0.2", arrowstyle="-|>", mutation_scale=14, color=MUT_H, lw=1.8))
+    ax.text(6, 0.26, "repeats every month", fontsize=11, color=MUT_H, fontproperties=_BOLD, ha="center")
     fig.tight_layout(); fig.savefig(path, dpi=170, bbox_inches="tight", facecolor="white")
     plt.close(fig); return path
 
@@ -444,7 +445,6 @@ def fig_dashboard():
 print("rendering assets…")
 F_Z = formula(r"z=\dfrac{x-\mu}{\sigma}", "f_z.png", 44)
 F_VALUE = formula(r"\mathrm{Value}=z\left(\,z(E/P)+z(B/P)\,\right)", "f_value.png", 40)
-F_VALUE_W = formula(r"E/P=\dfrac{1}{P/E}\qquad B/P=\dfrac{1}{P/B}", "f_value_w.png", 30, MUT_H)
 F_MOM = formula(r"\mathrm{Momentum}=z\left(\dfrac{P_{t-21}}{P_{t-252}}-1\right)", "f_mom.png", 40)
 F_QUAL = formula(r"\mathrm{Quality}=z\left(\,z(\mathrm{ROE})+z(\mathrm{margin})\,\right)", "f_qual.png", 40)
 F_LOWVOL = formula(r"\mathrm{Low\ volatility}=z\left(-\,\sigma\right)", "f_lowvol.png", 40)
@@ -612,19 +612,23 @@ def chip(s, x, y, w, h, head, sub, head_color=INK):
          color=MUTED, line_spacing=1.05)
 
 
-def formula_card(s, x, y, w, h, img, label=None, where_img=None, img_h_frac=0.62):
+def formula_card(s, x, y, w, h, img, label=None, where=None):
+    """Featured formula on a light panel. ``where`` (text runs) is a centred legend that
+    defines each symbol, set off by a hairline below the formula."""
     rect(s, Inches(x), Inches(y), Inches(w), Inches(h), fill=PANEL, line=PANEL_BD, line_w=1,
          shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.05)
-    top = y
+    region_top = y + (0.46 if label else 0.18)
     if label:
         text(s, Inches(x + 0.3), Inches(y + 0.16), Inches(w - 0.6), Inches(0.3), label.upper(),
              size=11, color=ACCENT_DK, bold=True)
-        top = y + 0.5
-    fh = (y + h) - top - (0.0 if not where_img else 0.55)
-    image_fit(s, img, Inches(x + 0.3), Inches(top), Inches(w - 0.6), Inches(fh), valign="middle")
-    if where_img:
-        image_fit(s, where_img, Inches(x + 0.3), Inches(y + h - 0.62), Inches(w - 0.6),
-                  Inches(0.5), valign="middle")
+    where_h = 0.5 if where else 0.0
+    region_h = max(0.4, (y + h) - region_top - where_h - 0.06)
+    image_fit(s, img, Inches(x + 0.4), Inches(region_top), Inches(w - 0.8), Inches(region_h),
+              halign="center", valign="middle")
+    if where:
+        rect(s, Inches(x + 0.55), Inches(y + h - where_h - 0.04), Inches(w - 1.1), Pt(1), fill=PANEL_BD)
+        text(s, Inches(x + 0.4), Inches(y + h - where_h + 0.04), Inches(w - 0.8), Inches(where_h - 0.08),
+             where, size=11.5, color=MUTED, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
 
 
 def content(kicker, title, items, subtitle=None, size=16, body_top=None, body_w=11.93):
@@ -865,23 +869,21 @@ text(s, Inches(0.7), Inches(y), Inches(6.0), Inches(2.1),
        "numbers is.\n\n", False, TEXT),
       ("A score of +1 means one standard deviation better than average. Zero is exactly average.",
        False, TEXT)], size=15, line_spacing=1.25)
-formula_card(s, 0.7, y + 2.4, 6.0, 1.35, F_Z, label="How a score is calculated")
-text(s, Inches(0.95), Inches(y + 3.95), Inches(5.8), Inches(0.5),
-     [("x", True, INK), (" the company's value    ", False, MUTED),
-      ("μ", True, INK), (" the average    ", False, MUTED),
-      ("σ", True, INK), (" standard deviation", False, MUTED)], size=12.5)
+formula_card(s, 0.7, y + 2.25, 6.0, 1.75, F_Z, label="How a score is calculated",
+             where=[("x", True, INK), ("  company value     ", False, MUTED),
+                    ("μ", True, INK), ("  the average     ", False, MUTED),
+                    ("σ", True, INK), ("  standard deviation", False, MUTED)])
 image_fit(s, IMG_BELL, Inches(7.0), Inches(y + 0.1), Inches(5.6), Inches(4.5), valign="top")
 footer(s)
 
 
-def factor_slide(kicker_title, intuition, defs, img, where_img=None, source=None):
+def factor_slide(kicker_title, intuition, defs, img, where=None, source=None):
     s = slide(); y = header(s, "3 · The four factors", kicker_title)
     text(s, Inches(0.7), Inches(y), Inches(11.93), Inches(0.6), intuition, size=15.5, color=TEXT,
          line_spacing=1.2)
     bullets(s, defs, Inches(0.7), Inches(y + 0.85), Inches(11.93), Inches(2.0), size=14)
-    cardh = 1.55 if where_img else 1.4
-    cy = 5.0 if where_img else 5.15
-    formula_card(s, 0.7, cy, 11.93, cardh, img, label="How it is measured", where_img=where_img)
+    cardh, cy = 1.75, 4.8
+    formula_card(s, 0.7, cy, 11.93, cardh, img, label="How it is measured", where=where)
     if source:
         text(s, Inches(0.7), Inches(cy + cardh + 0.12), Inches(11.93), Inches(0.4),
              [("Foundational research:  ", True, MUTED), (source, False, MUTED)], size=10.5)
@@ -896,7 +898,10 @@ factor_slide(
      {"runs": [("Price-to-book (P/B): ", True), ("share price divided by net asset value per share. "
        "Lower is cheaper.")]},
      {"runs": [("We score the inverse (the yield), ", True), ("so a lower price produces a higher Value score.")]}],
-    F_VALUE, where_img=F_VALUE_W,
+    F_VALUE,
+    where=[("E/P", True, INK), ("  earnings yield = 1 ÷ (P/E)         ", False, MUTED),
+           ("B/P", True, INK), ("  book yield = 1 ÷ (P/B)         ", False, MUTED),
+           ("z", True, INK), ("  standardised score", False, MUTED)],
     source="Fama & French (1992, 1993); Basu (1977).")
 
 factor_slide(
@@ -908,6 +913,10 @@ factor_slide(
        "(252 days is about one year, 21 is about one month).")]},
      {"runs": [("The result is then put on the same 0-centred scale ", True), ("as the other factors.")]}],
     F_MOM,
+    where=[("P", True, INK), ("  share price        ", False, MUTED),
+           ("t−21", True, INK), ("  ≈ 1 month ago        ", False, MUTED),
+           ("t−252", True, INK), ("  ≈ 1 year ago        ", False, MUTED),
+           ("z", True, INK), ("  standardised score", False, MUTED)],
     source="Jegadeesh & Titman (1993); Asness, Moskowitz & Pedersen (2013).")
 
 factor_slide(
@@ -920,6 +929,9 @@ factor_slide(
      {"runs": [("Quality companies also tend to hold up better in downturns, ", True),
        ("which adds a defensive tilt without any market timing.")]}],
     F_QUAL,
+    where=[("ROE", True, INK), ("  return on equity         ", False, MUTED),
+           ("margin", True, INK), ("  gross margin         ", False, MUTED),
+           ("z", True, INK), ("  standardised score", False, MUTED)],
     source="Novy-Marx (2013); Asness, Frazzini & Pedersen (2019); Piotroski (2000).")
 
 factor_slide(
@@ -931,6 +943,8 @@ factor_slide(
      {"runs": [("Together with Quality, ", True), ("this is what makes the portfolio defensive on its "
        "own, without a separate risk-off switch.")]}],
     F_LOWVOL,
+    where=[("σ", True, INK), ("  volatility = the size of daily price swings         ", False, MUTED),
+           ("z", True, INK), ("  standardised score", False, MUTED)],
     source="Ang, Hodrick, Xing & Zhang (2006); Frazzini & Pedersen (2014); Baker, Bradley & Wurgler (2011).")
 
 # Composite + discipline
@@ -944,10 +958,10 @@ bullets(s, [
     {"runs": [("Only public information is used. ", True), ("A company's financials enter the score "
       "only once they have actually been filed, so the historical test never sees the future.")]},
 ], Inches(0.7), Inches(y), Inches(6.1), Inches(3.5), size=14.5)
-formula_card(s, 7.1, y + 0.7, 5.5, 1.5, F_SCORE, label="The combined score")
-text(s, Inches(7.1), Inches(y + 2.45), Inches(5.5), Inches(0.6),
-     "Q, V, M, L are the four factor scores. The highest combined scores become the portfolio.",
-     size=12, color=MUTED, line_spacing=1.15)
+formula_card(s, 7.1, y + 0.7, 5.5, 1.7, F_SCORE, label="The combined score",
+             where=[("Q, V, M, L", True, INK), ("  the four factor scores", False, MUTED)])
+text(s, Inches(7.1), Inches(y + 2.6), Inches(5.5), Inches(0.6),
+     "The highest combined scores become the portfolio.", size=12, color=MUTED, line_spacing=1.15)
 footer(s)
 
 # =========================================================================== #
@@ -964,10 +978,12 @@ bullets(s, [
     {"runs": [("The result is roughly equal-weight across about 20 stocks. ", True),
       ("Equal-weight factor portfolios have travelled well in out-of-sample testing.")]},
 ], Inches(0.7), Inches(y), Inches(6.1), Inches(3.2), size=14.5)
-formula_card(s, 7.1, y + 0.65, 5.5, 1.35, F_OBJ, label="What the optimiser solves")
-text(s, Inches(7.1), Inches(y + 2.25), Inches(5.5), Inches(0.7),
-     "w is each stock's weight; score is its combined factor score. Read: choose weights that put "
-     "the most money in the best-scoring names.", size=12, color=MUTED, line_spacing=1.15)
+formula_card(s, 7.1, y + 0.65, 5.5, 1.7, F_OBJ, label="What the optimiser solves",
+             where=[("w", True, INK), ("  each stock's weight       ", False, MUTED),
+                    ("score", True, INK), ("  its combined factor score", False, MUTED)])
+text(s, Inches(7.1), Inches(y + 2.55), Inches(5.5), Inches(0.7),
+     "In plain terms: put the most money in the best-scoring names, within the limits.",
+     size=12, color=MUTED, line_spacing=1.15)
 footer(s)
 
 s = slide(); y = header(s, "4 · Building the portfolio", "The limits are the risk controls",
@@ -1267,9 +1283,12 @@ fcards = [("Value", F_VALUE), ("Momentum", F_MOM), ("Quality", F_QUAL), ("Low vo
 for i, (lab, img) in enumerate(fcards):
     col = i % 2; row = i // 2
     formula_card(s, 0.7 + col * 6.13, y + 0.15 + row * 1.95, 5.7, 1.7, img, label=lab)
-text(s, Inches(0.7), Inches(y + 4.1), Inches(11.93), Inches(0.5),
-     [("z(·)", True, INK), (" is the standardising score from slide 8; each factor is combined "
-      "equally into the final score.", False, MUTED)], size=12)
+text(s, Inches(0.7), Inches(y + 4.05), Inches(11.93), Inches(0.6),
+     [("z(·)", True, INK), ("  standardised score        ", False, MUTED),
+      ("E/P, B/P", True, INK), ("  earnings & book yield        ", False, MUTED),
+      ("ROE", True, INK), ("  return on equity        ", False, MUTED),
+      ("margin", True, INK), ("  gross margin        ", False, MUTED),
+      ("σ", True, INK), ("  volatility", False, MUTED)], size=11.5)
 footer(s)
 
 # Citations
