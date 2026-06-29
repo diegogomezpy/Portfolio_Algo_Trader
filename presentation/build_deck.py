@@ -43,14 +43,14 @@ RULE      = RGBColor(0xE3, 0xE8, 0xEE)
 PANEL     = RGBColor(0xF4, 0xF7, 0xF9)
 PANEL_BD  = RGBColor(0xDD, 0xE4, 0xEA)
 LIGHT     = RGBColor(0xC7, 0xD2, 0xDD)
-FONT = "Arial"
+FONT = "Avenir Next"
 
 INK_H, ACC_H, ACCDK_H = "#0E1B2A", "#14B8A6", "#0E8C7E"
 MUT_H, GRY_H, TEXT_H = "#6B7787", "#9AA7B4", "#1F2A37"
 
 matplotlib.rcParams.update({
     "font.family": "sans-serif",
-    "font.sans-serif": ["Arial", "Helvetica", "DejaVu Sans"],
+    "font.sans-serif": ["Avenir Next", "Helvetica Neue", "Arial", "DejaVu Sans"],
     "mathtext.fontset": "cm",
     "axes.edgecolor": MUT_H, "axes.labelcolor": TEXT_H,
     "text.color": TEXT_H, "xtick.color": TEXT_H, "ytick.color": TEXT_H,
