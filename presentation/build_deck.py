@@ -23,7 +23,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import (FancyBboxPatch, FancyArrowPatch, Rectangle, Circle,
-                                Polygon, RegularPolygon, Arc, Wedge)
+                                Polygon, RegularPolygon, Arc, Wedge, Patch)
 from matplotlib.font_manager import FontProperties
 
 from pptx import Presentation
@@ -442,6 +442,97 @@ def fig_dashboard():
     plt.close(fig); return path
 
 
+def _flow(path, stages, figh=2.8, bh=1.5, accent_idx=(0,), sub_size=9.0):
+    """A horizontal flow of rounded boxes with arrows. stages = [(title, subtext), ...]."""
+    n = len(stages); fig, ax = plt.subplots(figsize=(12, figh))
+    ax.set_xlim(0, 12); ax.set_ylim(0, figh); ax.axis("off")
+    bw = (12 - 0.4 - (n - 1) * 0.6) / n; gap = 0.6; y = (figh - bh) / 2
+    for i, (t, d) in enumerate(stages):
+        x = 0.2 + i * (bw + gap)
+        fc = ACCDK_H if i in accent_idx else INK_H
+        _rbox(ax, x, y, bw, bh, fc=fc, ec=fc, r=0.12)
+        ax.text(x + bw/2, y + bh - 0.34, t, fontsize=12, color="white", fontproperties=_BOLD, ha="center")
+        ax.text(x + bw/2, y + 0.46, d, fontsize=sub_size, color=LIGHT_H, fontproperties=_REG,
+                ha="center", linespacing=1.25)
+        if i < n - 1:
+            ax.add_patch(FancyArrowPatch((x + bw + 0.08, y + bh/2), (x + bw + gap - 0.08, y + bh/2),
+                         arrowstyle="-|>", mutation_scale=15, color=ACC_H, lw=2.4))
+    fig.tight_layout(); fig.savefig(path, dpi=170, bbox_inches="tight", transparent=True)
+    plt.close(fig); return path
+
+
+def fig_portfolio_funnel():
+    return _flow(os.path.join(ASSETS, "funnel.png"), [
+        ("Liquid US stocks", "the eligible\nuniverse"),
+        ("Top ~50 by score", "ranked on the\nfour factors"),
+        ("Optimise", "within the\nposition limits"),
+        ("~20 holdings", "near-equal\nweight"),
+    ], figh=2.8, bh=1.6, accent_idx=(0, 3))
+
+
+def fig_iv():
+    return _flow(os.path.join(ASSETS, "iv.png"), [
+        ("Recent price moves", "measure the stock's\nrealised volatility (σ)"),
+        ("Black–Scholes", "price each strike's\ndelta from σ and spot"),
+        ("Pick the strike", "nearest 0.30 delta\n(~30% chance assigned)"),
+    ], figh=2.6, bh=1.55, accent_idx=(2,), sub_size=9.5)
+
+
+def fig_order_lifecycle():
+    return _flow(os.path.join(ASSETS, "order.png"), [
+        ("Submit", "mid-session,\nfor a liquid window"),
+        ("Work the order", "market if liquid,\nelse marketable limit"),
+        ("Poll for fill", "about\n60 seconds"),
+        ("Resolve", "filled, or cancel and\nfinish next run"),
+    ], figh=2.7, bh=1.55, accent_idx=(3,), sub_size=9.5)
+
+
+def fig_holdings():
+    path = os.path.join(ASSETS, "holdings.png")
+    rng = np.random.default_rng(7); n = 20
+    w = np.sort(np.clip(rng.normal(4.75, 0.4, n), 4.0, 5.0))[::-1]
+    sectors = ["Technology", "Financials", "Health care", "Industrials", "Energy", "Consumer"]
+    pal = {"Technology": "#0E8C7E", "Financials": "#2F6E8F", "Health care": "#6B7787",
+           "Industrials": "#C68A2E", "Energy": "#B5663A", "Consumer": "#7E6BA6"}
+    assign = [sectors[(i * 5 + i // 3) % len(sectors)] for i in range(n)]
+    fig, ax = plt.subplots(figsize=(11, 3.6))
+    ax.bar(range(n), w, color=[pal[s] for s in assign], width=0.74)
+    ax.axhline(5.0, color=MUT_H, ls=(0, (4, 3)), lw=1.2)
+    ax.text(n - 0.5, 5.12, "5% maximum per name", fontsize=9.5, color=MUT_H, ha="right")
+    ax.set_ylabel("position weight (%)", fontsize=11); ax.set_xticks([]); ax.set_ylim(0, 5.8)
+    ax.set_xlabel("about twenty holdings  (illustrative)", fontsize=11)
+    for sp in ("top", "right"):
+        ax.spines[sp].set_visible(False)
+    ax.legend(handles=[Patch(color=pal[s], label=s) for s in sectors], loc="lower center",
+              ncol=6, frameon=False, fontsize=9.5, bbox_to_anchor=(0.5, -0.3))
+    fig.tight_layout(); fig.savefig(path, dpi=170, bbox_inches="tight", transparent=True)
+    plt.close(fig); return path
+
+
+def fig_risk_model():
+    path = os.path.join(ASSETS, "risk_model.png")
+    fig, ax = plt.subplots(figsize=(12, 3.5)); ax.set_xlim(0, 12); ax.set_ylim(0, 3.5); ax.axis("off")
+    ax.text(1.6, 3.24, "Ken French five factors", fontsize=10, color=ACCDK_H, fontproperties=_BOLD, ha="center")
+    factors = ["Market", "Size", "Value", "Profitability", "Investment"]
+    for i, f in enumerate(factors):
+        yy = 2.5 - i * 0.55
+        _rbox(ax, 0.25, yy, 2.7, 0.46, fc=PANEL_H, ec=BD_H, r=0.12)
+        ax.add_patch(Rectangle((0.25, yy), 0.07, 0.46, fc=ACC_H, ec="none"))
+        ax.text(0.52, yy + 0.23, f, fontsize=10.5, color=INK_H, fontproperties=_BOLD, va="center")
+    ax.add_patch(FancyArrowPatch((3.1, 1.5), (4.25, 1.5), arrowstyle="-|>", mutation_scale=16, color=ACC_H, lw=2.2))
+    ax.text(3.67, 1.74, "sensitivities", fontsize=8.5, color=MUT_H, ha="center")
+    rng = np.random.default_rng(3); k = 8
+    A = rng.random((k, k)) * 0.7; C = (A + A.T) / 2; np.fill_diagonal(C, 1.0)
+    ax.imshow(C, extent=[4.6, 8.0, 0.35, 2.95], aspect="auto", cmap="BuGn", vmin=0, vmax=1, zorder=2)
+    ax.text(6.3, 3.12, "covariance: how holdings move together", fontsize=10, color=ACCDK_H,
+            fontproperties=_BOLD, ha="center")
+    ax.add_patch(FancyArrowPatch((8.25, 1.5), (9.35, 1.5), arrowstyle="-|>", mutation_scale=16, color=ACC_H, lw=2.2))
+    ax.text(10.65, 1.5, "monitors risk;\ndoes not pick\nthe weights", fontsize=10.5, color=MUT_H,
+            va="center", ha="center", fontproperties=_REG, linespacing=1.3)
+    fig.tight_layout(); fig.savefig(path, dpi=170, bbox_inches="tight", transparent=True)
+    plt.close(fig); return path
+
+
 print("rendering assets…")
 F_Z = formula(r"z=\dfrac{x-\mu}{\sigma}", "f_z.png", 44)
 F_VALUE = formula(r"\mathrm{Value}=z\left(\,z(E/P)+z(B/P)\,\right)", "f_value.png", 40)
@@ -460,6 +551,11 @@ IMG_METHOD = fig_methodology()
 IMG_RISK = fig_risk_cards()
 IMG_INTEGRITY = fig_integrity_cards()
 IMG_DASH = fig_dashboard()
+IMG_FUNNEL = fig_portfolio_funnel()
+IMG_HOLDINGS = fig_holdings()
+IMG_RISKMODEL = fig_risk_model()
+IMG_IV = fig_iv()
+IMG_ORDER = fig_order_lifecycle()
 
 
 # =========================================================================== #
@@ -969,6 +1065,15 @@ footer(s)
 # =========================================================================== #
 divider(4, "Building the portfolio", "Turning scores into holdings, inside strict risk limits")
 
+s = slide(); y = header(s, "4 · Building the portfolio", "Turning scores into a portfolio",
+                        "From the whole market down to about twenty holdings")
+image_fit(s, IMG_FUNNEL, Inches(0.7), Inches(y + 0.4), Inches(11.93), Inches(2.9), valign="top")
+text(s, Inches(0.7), Inches(y + 3.6), Inches(11.93), Inches(0.8),
+     "Each month the four-factor score ranks the eligible universe. An optimiser funds the "
+     "best-scoring names subject to the limits, then trims anything too small to hold.",
+     size=14.5, color=TEXT, line_spacing=1.3)
+footer(s)
+
 s = slide(); y = header(s, "4 · Building the portfolio", "From scores to holdings",
                         "The scores choose the names. Hard limits keep the portfolio diversified.")
 bullets(s, [
@@ -995,6 +1100,28 @@ limits = [("5% maximum per stock", "No single name can dominate. This is what se
 for i, (h_, d_) in enumerate(limits):
     col = i % 2; row = i // 2
     chip(s, 0.7 + col * 6.13, y + 0.2 + row * 1.55, 5.7, 1.35, h_, d_)
+footer(s)
+
+s = slide(); y = header(s, "4 · Building the portfolio", "What the portfolio looks like",
+                        "About twenty near-equal positions, capped and spread across sectors")
+image_fit(s, IMG_HOLDINGS, Inches(0.7), Inches(y + 0.15), Inches(11.93), Inches(4.0), valign="top")
+text(s, Inches(0.7), Inches(y + 4.25), Inches(11.93), Inches(0.4),
+     "Illustrative. No single name exceeds 5%, no sector exceeds 30%, and every position clears a "
+     "minimum size.", size=11.5, color=MUTED)
+footer(s)
+
+s = slide(); y = header(s, "4 · Building the portfolio", "How we model risk",
+                        "A factor model estimates how the holdings move together")
+image_fit(s, IMG_RISKMODEL, Inches(0.7), Inches(y + 0.2), Inches(11.93), Inches(3.0), valign="top")
+bullets(s, [
+    {"runs": [("Built from the Ken French five-factor data. ", True), ("Daily returns of the market, "
+      "size, value, profitability, and investment factors.")]},
+    {"runs": [("It measures co-movement, not direction. ", True), ("Each stock's sensitivity to those "
+      "factors gives a covariance matrix: how the holdings tend to move together, and which names have "
+      "too little history to trust.")]},
+    {"runs": [("Used to monitor, never to choose. ", True), ("The factor scores pick the holdings; this "
+      "model only reports their risk. It deliberately does not set the weights.")]},
+], Inches(0.7), Inches(y + 3.4), Inches(11.93), Inches(1.4), size=13, gap=6)
 footer(s)
 
 # =========================================================================== #
@@ -1027,6 +1154,17 @@ content("5 · The income overlay", "Choosing which call to sell", [
     {"runs": [("Sold at the quoted middle price. ", True), ("We take a fair price from the live option "
       "market rather than chasing.")]},
 ], subtitle="The rule is consistent across every stock, with no discretion")
+
+s = slide(); y = header(s, "5 · The income overlay", "Estimating the volatility behind the strike",
+                        "The option feed gives prices but no Greeks, so we work out the delta ourselves")
+image_fit(s, IMG_IV, Inches(0.7), Inches(y + 0.45), Inches(11.93), Inches(2.7), valign="top")
+text(s, Inches(0.7), Inches(y + 3.45), Inches(11.93), Inches(0.9),
+     [("We estimate each stock's volatility from its recent daily price movement, annualised, feed "
+       "that into the Black–Scholes formula to get a delta for every listed strike, then sell the "
+       "call nearest 0.30 delta.  ", False, TEXT),
+      ("We do not rely on a market-quoted implied volatility; the estimate from realised volatility "
+       "is the conservative, always-available basis.", False, MUTED)], size=13.5, line_spacing=1.3)
+footer(s)
 
 s = slide(); y = header(s, "5 · The income overlay", "Managing the options through the month",
                         "One simple monthly cycle, repeated against each new set of holdings")
@@ -1077,7 +1215,7 @@ footer(s)
 
 s = slide(); y = header(s, "6 · The data pipeline", "Three data sources, each with a clear job",
                         "A small, low-cost, auditable set of inputs feeding the model")
-image_fit(s, IMG_SOURCES, Inches(0.7), Inches(y + 0.05), Inches(11.93), Inches(4.75), valign="top")
+image_fit(s, IMG_SOURCES, Inches(0.7), Inches(y + 0.1), Inches(11.93), Inches(4.4), valign="top")
 footer(s)
 
 s = slide(); y = header(s, "6 · The data pipeline", "Keeping the data trustworthy",
@@ -1129,6 +1267,17 @@ bullets(s, [
 ], Inches(0.7), Inches(y + 0.05 + 0.55 * nrows + 0.25), Inches(11.93), Inches(1.2), size=13.5, gap=8)
 footer(s)
 
+s = slide(); y = header(s, "7 · Execution and risk", "How an order is worked",
+                        "Fill quickly in-session, and never leave an order resting overnight")
+image_fit(s, IMG_ORDER, Inches(0.7), Inches(y + 0.45), Inches(11.93), Inches(2.7), valign="top")
+bullets(s, [
+    {"runs": [("Marketable limits. ", True), ("For a less-liquid name the limit is set just across the "
+      "spread, so the order fills the same session instead of resting unfilled at the mid-price.")]},
+    {"runs": [("Reconciled first. ", True), ("Before any order, the system squares its own records "
+      "against the broker, and halts if the broker cannot be reached.")]},
+], Inches(0.7), Inches(y + 3.45), Inches(11.93), Inches(1.2), size=13.5, gap=8)
+footer(s)
+
 s = slide(); y = header(s, "7 · Execution and risk", "Controlling risk",
                         "For a capital-preservation mandate, this is the most important part")
 image_fit(s, IMG_RISK, Inches(0.7), Inches(y + 0.1), Inches(11.93), Inches(4.6), valign="top")
@@ -1145,25 +1294,24 @@ footer(s)
 # Results
 s = slide(); y = header(s, "7 · Results", "How the strategy performed in testing",
                         "The most dependable result is lower risk: smaller swings and shallower losses than the market")
-image_fit(s, IMG_RR, Inches(0.55), Inches(y + 0.05), Inches(7.3), Inches(4.55), valign="top", halign="left")
+image_fit(s, IMG_RR, Inches(0.5), Inches(y + 0.15), Inches(7.5), Inches(3.8), valign="top", halign="left")
 cards = [("−16.7%", "Worst loss (drawdown) in the test,\nvs. −24% for the S&P 500", ACCENT_DK),
          ("15.5%", "Volatility, the size of the swings,\nvs. 16% for the S&P 500", INK),
          ("1.24", "Risk-adjusted return in the test,\nvs. 0.87 for the S&P 500", INK)]
-cx = 8.15
+cx = 8.25
 for i, (big, lab, col) in enumerate(cards):
-    cyy = y + 0.1 + i * 1.5
-    rect(s, Inches(cx), Inches(cyy), Inches(4.48), Inches(1.32), fill=PANEL, line=PANEL_BD, line_w=1,
+    cyy = y + 0.15 + i * 1.3
+    rect(s, Inches(cx), Inches(cyy), Inches(4.35), Inches(1.18), fill=PANEL, line=PANEL_BD, line_w=1,
          shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.07)
-    rect(s, Inches(cx), Inches(cyy), Inches(0.09), Inches(1.32), fill=ACCENT)
-    text(s, Inches(cx + 0.28), Inches(cyy), Inches(1.95), Inches(1.32), big, size=29, color=col,
+    rect(s, Inches(cx), Inches(cyy), Inches(0.09), Inches(1.18), fill=ACCENT)
+    text(s, Inches(cx + 0.28), Inches(cyy), Inches(1.9), Inches(1.18), big, size=26, color=col,
          bold=True, anchor=MSO_ANCHOR.MIDDLE)
-    text(s, Inches(cx + 2.1), Inches(cyy), Inches(2.25), Inches(1.32), lab, size=10.5, color=MUTED,
+    text(s, Inches(cx + 2.05), Inches(cyy), Inches(2.2), Inches(1.18), lab, size=10, color=MUTED,
          line_spacing=1.05, anchor=MSO_ANCHOR.MIDDLE)
-text(s, Inches(0.7), Inches(6.5), Inches(11.93), Inches(0.55),
-     [("Sharpe ratio", True), (" is return per unit of risk; ", False, MUTED),
-      ("drawdown", True), (" is the largest peak-to-trough loss. Benchmarks are from index history; "
-      "strategy figures from the simulation. Simulated and paper-traded, not live capital. "
-      "Limitations on the next slide.", False, MUTED)], size=10.5, color=TEXT, line_spacing=1.12)
+text(s, Inches(0.7), Inches(6.45), Inches(11.93), Inches(0.4),
+     [("Simulated and paper-traded results, not live capital.  ", True),
+      ("Sharpe = return per unit of risk; drawdown = worst peak-to-trough loss. Limitations next.",
+       False, MUTED)], size=10.5, color=TEXT, line_spacing=1.1)
 footer(s)
 
 # ---- Limitations ---------------------------------------------------------- #
@@ -1200,8 +1348,8 @@ divider(8, "Operations", "A live, monitored system, running on its own")
 
 s = slide(); y = header(s, "8 · Operations", "Monitoring: a live dashboard",
                         "One page, four tabs, updating itself from the live account")
-image_fit(s, IMG_DASH, Inches(0.7), Inches(y + 0.1), Inches(11.93), Inches(4.4), valign="top")
-text(s, Inches(0.7), Inches(y + 4.55), Inches(11.93), Inches(0.5),
+image_fit(s, IMG_DASH, Inches(0.7), Inches(y + 0.1), Inches(11.93), Inches(4.0), valign="top")
+text(s, Inches(0.7), Inches(y + 4.2), Inches(11.93), Inches(0.5),
      [("Overview · Portfolio · Performance · Backtest", True),
       ("    account value, holdings vs. target, factor tilt, growth vs. benchmarks, risk, and "
        "execution costs. Served read-only behind a password.", False, MUTED)], size=12)
