@@ -24,9 +24,10 @@ Pure functions only here (:func:`select_strike`, :func:`contracts_for`,
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
-from typing import Mapping, Optional, Sequence
+from typing import Callable, Mapping, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -41,6 +42,31 @@ _CONTRACT_SHARES = 100                     # standard equity-option multiplier
 _TRADING_DAYS = 252
 # OCC: ROOT + YYMMDD + (C|P) + strike(×1000, 8 digits).
 _OCC_RE = re.compile(r"^([A-Z0-9]+?)(\d{6})([CP])(\d{8})$")
+# Order states from which no further fill is possible (the option fill poll stops here).
+_TERMINAL = {"filled", "canceled", "cancelled", "rejected", "expired", "done_for_day"}
+
+
+@dataclass
+class OptionChase:
+    """Knobs for executing option orders — fill-tracking, and optionally chasing the touch (4.7).
+
+    Mirrors the equity chaser (:mod:`engine.execute`). With ``touch`` set, each round re-prices
+    the unfilled residual to the option **touch** — ``touch(option_symbol, side)`` returns the
+    bid for a sell-to-open / the ask for a buy-to-close — and re-submits, polling
+    ``poll_attempts`` × ``poll_interval_s`` per round, repeating until the contracts fill or the
+    session comes within ``close_buffer_s`` of ``market_close`` (``max_rounds`` cap). With
+    ``touch`` ``None`` it is a single passive pass at the planned mid (still log-on-fill).
+    ``sleep``/``now`` are injectable so tests run instantly; ``None`` in place of the whole
+    object is the single-pass default with a real ``time.sleep``.
+    """
+    touch: Optional[Callable[[str, str], Optional[float]]] = None
+    now: Optional[Callable[[], datetime]] = None
+    market_close: Optional[datetime] = None
+    close_buffer_s: float = 300.0
+    max_rounds: int = 40
+    poll_attempts: int = 30
+    poll_interval_s: float = 2.0
+    sleep: Callable[[float], None] = time.sleep
 
 
 @dataclass
@@ -248,9 +274,139 @@ def open_call_positions(client) -> list[dict]:
     return out
 
 
+def _execute_option_leg(broker, db_engine, orders: Sequence[CoveredCallOrder], *, side: str,
+                        position_intent: str, event: str, as_of: date,
+                        final_market: bool = False, chase: OptionChase | None = None,
+                        alert=None) -> list[CoveredCallOrder]:
+    """Submit option ``orders`` (all one ``side``/``intent``/``event``), track to fill, and log
+    ``options_lifecycle`` **only for contracts that actually fill — at the real fill price**.
+
+    Logging on the *fill* (not the submission) is what keeps the premium ledger truthful: a
+    write that never fills leaves no row, so the dashboard's premium and covered-call book
+    (sourced from live positions) can never show premium that wasn't collected.
+
+    ``chase.touch`` ``None`` → one passive limit at the planned mid, poll, cancel the remainder
+    (the pre-chase behaviour, now log-on-fill). ``touch`` set → each round re-prices the unfilled
+    residual to the touch (bid to sell-to-open / ask to buy-to-close) and re-submits until the
+    contracts fill or the session nears ``market_close``. ``final_market`` then sweeps any
+    residual at market — used for **closes** (get the risk off); writes leave it uncovered (an
+    income miss, not a breach) for the next cycle.
+
+    Returns the filled orders, each with ``contracts``/``limit_price``/``premium`` set to the
+    actually-filled quantity and average fill price.
+    """
+    if not orders:
+        return []
+    chase = chase or OptionChase()                       # single-pass default (real time.sleep)
+    do_chase = chase.touch is not None
+    stamp = as_of.isoformat() if as_of else "now"        # coid namespace (daily safety pass omits as_of)
+    by_sym = {o.option_symbol: o for o in orders}
+    filled = {o.option_symbol: 0 for o in orders}
+    paid = {o.option_symbol: 0.0 for o in orders}        # Σ fill_px × contracts × 100 (cash)
+    active = {o.option_symbol for o in orders}
+
+    def _price(sym: str, o: CoveredCallOrder, *, force_market: bool) -> tuple[str, Optional[float]]:
+        if force_market:
+            return "market", None
+        if not do_chase:                                 # single passive pass at the planned mid
+            return ("limit", o.limit_price) if o.limit_price else ("market", None)
+        try:
+            px = chase.touch(sym, side)                  # bid (sell) / ask (buy) — cross to the touch
+        except AlpacaAPIError as exc:
+            log.warning("option touch failed; taking it market", extra={"symbol": sym, "error": str(exc)})
+            return "market", None
+        return ("limit", round(float(px), 2)) if px else ("market", None)
+
+    def _round(tag: str, *, force_market: bool) -> None:
+        live: list[tuple[str, str]] = []
+        for sym in list(active):
+            o = by_sym[sym]
+            residual = o.contracts - filled[sym]
+            if residual <= 0:
+                active.discard(sym); continue
+            otype, lp = _price(sym, o, force_market=force_market)
+            coid = f"cc:{stamp}:{o.underlying}:{event}:{tag}"
+            try:
+                resp = broker.submit_option_order(sym, residual, side, position_intent=position_intent,
+                                                  order_type=otype, limit_price=lp, client_order_id=coid)
+            except AlpacaAPIError as exc:
+                log.error("covered-call leg rejected",
+                          extra={"event": event, "underlying": o.underlying, "error": str(exc)})
+                if alert:
+                    alert(f"covered-call {event} rejected {o.underlying}: {exc}")
+                active.discard(sym); continue
+            live.append((resp["id"], sym))
+
+        open_ids = {oid for oid, _ in live}
+        for _ in range(chase.poll_attempts):
+            if not open_ids:
+                break
+            chase.sleep(chase.poll_interval_s)
+            for oid, _sym in live:
+                if oid not in open_ids:
+                    continue
+                try:
+                    st = broker.get_order(oid)
+                except AlpacaAPIError as exc:
+                    log.warning("option poll failed; will retry", extra={"id": oid, "error": str(exc)})
+                    continue
+                if st["status"] in _TERMINAL:
+                    open_ids.discard(oid)
+
+        for oid, sym in live:
+            if oid in open_ids:
+                try:
+                    broker.cancel_order(oid)
+                except AlpacaAPIError as exc:
+                    log.warning("option cancel failed", extra={"id": oid, "error": str(exc)})
+            try:
+                st = broker.get_order(oid)
+            except AlpacaAPIError as exc:   # leave to the position-sourced book; just don't log a phantom
+                log.warning("option round-end read failed", extra={"id": oid, "error": str(exc)})
+                continue
+            fq = int(st.get("filled_qty") or 0)
+            if fq > 0:
+                paid[sym] += float(st.get("filled_avg_price") or 0.0) * fq * _CONTRACT_SHARES
+                filled[sym] += fq
+            if filled[sym] >= by_sym[sym].contracts:
+                active.discard(sym)
+
+    if not do_chase:
+        _round("single", force_market=False)
+    else:
+        now = chase.now or (lambda: datetime.now(timezone.utc))
+        rnd = 0
+        while active and rnd < chase.max_rounds:
+            if chase.market_close is not None and now() >= chase.market_close - timedelta(seconds=chase.close_buffer_s):
+                break
+            rnd += 1
+            _round(f"r{rnd}", force_market=False)
+        if active and final_market:
+            _round("final", force_market=True)
+
+    done: list[CoveredCallOrder] = []
+    for sym, o in by_sym.items():
+        f = filled[sym]
+        if f <= 0:
+            log.warning("covered-call leg unfilled", extra={"event": event, "underlying": o.underlying})
+            if alert:
+                alert(f"covered-call {event} unfilled {o.underlying} ({o.contracts} contract(s))")
+            continue
+        avg_px = round(paid[sym] / (f * _CONTRACT_SHARES), 2)
+        rec = replace(o, contracts=f, limit_price=avg_px, premium=round(paid[sym], 2))
+        _log_lifecycle(db_engine, event, rec)
+        done.append(rec)
+    return done
+
+
 def write_calls(client, broker, db_engine, holdings_shares: Mapping[str, float], *,
-                settings, as_of: date, price_panel: pd.DataFrame, alert=None):
+                settings, as_of: date, price_panel: pd.DataFrame, chase: OptionChase | None = None,
+                alert=None):
     """Write covered calls on the held book: chains → IV → plan → sell-to-open → lifecycle.
+
+    With ``chase`` set, each write is chased to the bid until it fills or the session nears the
+    close (writes never force a market order — an unfilled write just leaves the name uncovered
+    for the cycle). The lifecycle row is written **only on a real fill**.
 
     Returns ``(submitted, skipped)``. A per-name rejection is logged + alerted and skipped;
     it does not abort the batch.
@@ -275,63 +431,49 @@ def write_calls(client, broker, db_engine, holdings_shares: Mapping[str, float],
             alert(f"covered-call coverage gate blocked: {'; '.join(cover_fail)}")
         return [], skipped
 
-    submitted = []
-    for w in writes:
-        coid = f"cc:{as_of.isoformat()}:{w.underlying}:open"
-        try:
-            broker.submit_option_order(w.option_symbol, w.contracts, "sell",
-                                       position_intent="sell_to_open", order_type="limit",
-                                       limit_price=w.limit_price, client_order_id=coid)
-        except AlpacaAPIError as exc:
-            log.error("covered-call write rejected", extra={"underlying": w.underlying, "error": str(exc)})
-            if alert:
-                alert(f"covered-call write rejected {w.underlying}: {exc}")
-            continue
-        _log_lifecycle(db_engine, "write", w)
-        submitted.append(w)
+    submitted = _execute_option_leg(broker, db_engine, writes, side="sell",
+                                    position_intent="sell_to_open", event="write", as_of=as_of,
+                                    final_market=False, chase=chase, alert=alert)
     log.info("covered calls written", extra={"written": len(submitted), "skipped": len(skipped)})
     return submitted, skipped
 
 
-def _submit_closes(broker, db_engine, closes, *, as_of, event, alert=None):
-    """Submit a batch of buy-to-close orders under one lifecycle ``event`` label."""
-    submitted = []
-    stamp = as_of.isoformat() if as_of else "now"
-    for o in closes:
-        coid = f"cc:{stamp}:{o.underlying}:{event}"
-        try:
-            broker.submit_option_order(
-                o.option_symbol, o.contracts, "buy", position_intent="buy_to_close",
-                order_type=("limit" if o.limit_price else "market"),
-                limit_price=o.limit_price, client_order_id=coid)
-        except AlpacaAPIError as exc:
-            log.error("covered-call close rejected",
-                      extra={"event": event, "underlying": o.underlying, "error": str(exc)})
-            if alert:
-                alert(f"covered-call {event} rejected {o.underlying}: {exc}")
-            continue
-        _log_lifecycle(db_engine, event, o)
-        submitted.append(o)
-    return submitted
+def _submit_closes(broker, db_engine, closes, *, as_of, event, chase: OptionChase | None = None,
+                   alert=None):
+    """Submit buy-to-close orders under one lifecycle ``event``, tracked to fill.
+
+    Closes chase to the ask and end in a market sweep (``final_market``) — closing a short call
+    removes risk, so we guarantee it goes through rather than leaving the position dangling.
+    The lifecycle row is written only for contracts that actually close.
+    """
+    return _execute_option_leg(broker, db_engine, closes, side="buy",
+                               position_intent="buy_to_close", event=event, as_of=as_of,
+                               final_market=True, chase=chase, alert=alert)
 
 
-def close_calls(client, broker, db_engine, *, as_of: date | None = None, alert=None):
+def close_calls(client, broker, db_engine, *, as_of: date | None = None,
+                chase: OptionChase | None = None, alert=None):
     """Close every open short call (monthly close-all): buy-to-close → lifecycle."""
     submitted = _submit_closes(broker, db_engine, build_close_plan(open_call_positions(client)),
-                               as_of=as_of, event="close", alert=alert)
+                               as_of=as_of, event="close", chase=chase, alert=alert)
     log.info("covered calls closed", extra={"closed": len(submitted)})
     return submitted
 
 
 def _log_lifecycle(db_engine, event_type: str, order: CoveredCallOrder) -> None:
-    """Append a row to ``options_lifecycle`` (premium +collected on write, −paid on close)."""
+    """Append a row to ``options_lifecycle`` (premium +collected on write, −paid on close).
+
+    Called only from :func:`_execute_option_leg` with an order whose ``contracts``/``premium``/
+    ``limit_price`` are the **actually-filled** quantity and average fill price, so the ledger
+    records real cash, not the modeled mid.
+    """
     if db_engine is None:
         return
     from sqlalchemy import insert
     from engine.db import options_lifecycle
     if event_type == "write":
-        premium = order.premium
-    else:  # close — modeled cost from the limit (the audit log; real fill refines)
+        premium = order.premium                          # +cash collected (real fill)
+    else:  # close — cash paid to buy the call back (real fill avg × contracts × 100)
         premium = -((order.limit_price or 0.0) * order.contracts * _CONTRACT_SHARES)
     with db_engine.begin() as conn:
         conn.execute(insert(options_lifecycle).values(
@@ -415,12 +557,14 @@ def _is_equity(position: Mapping) -> bool:
 
 
 def options_daily_check(client, broker, db_engine, *, settings, as_of: date,
-                        price_panel: pd.DataFrame, earnings_fetch=None, alert=None) -> dict:
+                        price_panel: pd.DataFrame, earnings_fetch=None,
+                        chase: OptionChase | None = None, alert=None) -> dict:
     """Daily overlay safety pass: force-close expiring calls, close calls into earnings,
     and rewrite calls on names whose earnings just passed (DECISIONS D31).
 
     Returns counts ``{expiry_closed, earnings_closed, rewritten}``. Non-rebalance days only;
-    the monthly rebalance handles the full close-all + rewrite.
+    the monthly rebalance handles the full close-all + rewrite. ``chase`` (when supplied) chases
+    every close/rewrite to the touch so they actually fill within the session.
     """
     open_calls = open_call_positions(client)
     held = {str(p["symbol"]): float(p["qty"]) for p in client.all_positions() if _is_equity(p)}
@@ -428,11 +572,11 @@ def options_daily_check(client, broker, db_engine, *, settings, as_of: date,
     earnings = fetch_earnings_dates(universe, fetch=earnings_fetch)
 
     expiry = expiry_close_plan(open_calls, as_of)
-    _submit_closes(broker, db_engine, expiry, as_of=as_of, event="force_close", alert=alert)
+    _submit_closes(broker, db_engine, expiry, as_of=as_of, event="force_close", chase=chase, alert=alert)
 
     nxt = {u: next_earnings(earnings.get(u, []), as_of) for u in universe}
     facing = earnings_close_plan(open_calls, nxt, as_of)
-    _submit_closes(broker, db_engine, facing, as_of=as_of, event="earnings_close", alert=alert)
+    _submit_closes(broker, db_engine, facing, as_of=as_of, event="earnings_close", chase=chase, alert=alert)
 
     # Rewrite names that are held (≥1 contract), now uncovered, and reported very recently.
     closed_now = {o.underlying for o in expiry + facing}
@@ -446,7 +590,7 @@ def options_daily_check(client, broker, db_engine, *, settings, as_of: date,
     rewritten = []
     if to_rewrite:
         rewritten, _ = write_calls(client, broker, db_engine, to_rewrite, settings=settings,
-                                   as_of=as_of, price_panel=price_panel, alert=alert)
+                                   as_of=as_of, price_panel=price_panel, chase=chase, alert=alert)
 
     asg = process_assignments(client, broker, db_engine, settings=settings, as_of=as_of, alert=alert)
     out = {"expiry_closed": len(expiry), "earnings_closed": len(facing),

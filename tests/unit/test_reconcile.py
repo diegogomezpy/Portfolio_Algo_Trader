@@ -103,3 +103,59 @@ def test_blocks_when_alpaca_unreachable():
 def test_no_db_engine_is_fetch_and_report():
     res = reconcile.reconcile(_FakeClient({"AAPL": 10}), None)
     assert res.live_positions == {"AAPL": 10.0} and res.corrected is False
+
+
+# ----------------------------------------------------- reconcile_orders() ----
+class _OrdersClient:
+    def __init__(self, orders, raise_get=False):
+        self._orders = orders
+        self._raise = raise_get
+
+    def get_orders(self, status="all", limit=None, symbols=None):
+        if self._raise:
+            raise AlpacaAPIError("*", "get_orders", "503")
+        return list(self._orders)
+
+
+def _orders(eng):
+    with eng.connect() as c:
+        return {r["id"]: dict(r) for r in c.execute(select(db.orders)).mappings()}
+
+
+def test_reconcile_orders_updates_stale_status_keeps_cycle():
+    # The blotter bug: a row stuck at 'pending_cancel' must be refreshed to Alpaca's 'canceled'
+    # — without clobbering the immutable order facts or the rebalance cycle key.
+    eng = _engine()
+    with eng.begin() as c:
+        c.execute(insert(db.orders).values(
+            id="inbx-1", client_order_id="2026-06-29:INBX:buy", rebalance_cycle="2026-06-29",
+            symbol="INBX", side="buy", qty=108, order_type="limit", status="pending_cancel",
+            filled_qty=0, filled_avg_price=None))
+    client = _OrdersClient([{"id": "inbx-1", "symbol": "INBX", "side": "buy", "qty": 108,
+                             "order_type": "limit", "status": "canceled", "filled_qty": 0,
+                             "filled_avg_price": None}])
+    n = reconcile.reconcile_orders(client, eng)
+    assert n == 1
+    row = _orders(eng)["inbx-1"]
+    assert row["status"] == "canceled"                   # refreshed to Alpaca
+    assert row["rebalance_cycle"] == "2026-06-29"        # cycle key preserved
+
+
+def test_reconcile_orders_inserts_unknown_option_order():
+    # An order the executor never persisted (e.g. an option fill) is inserted so the blotter
+    # shows everything Alpaca has.
+    eng = _engine()
+    client = _OrdersClient([{"id": "opt-1", "symbol": "SLV260731C00057500", "side": "sell",
+                             "qty": 1, "order_type": "limit", "status": "filled", "filled_qty": 1,
+                             "filled_avg_price": 1.19}])
+    n = reconcile.reconcile_orders(client, eng)
+    assert n == 1
+    row = _orders(eng)["opt-1"]
+    assert row["status"] == "filled" and row["filled_qty"] == 1 and row["filled_avg_price"] == 1.19
+    assert row["rebalance_cycle"] is None
+
+
+def test_reconcile_orders_resilient_to_get_orders_failure():
+    eng = _engine()
+    assert reconcile.reconcile_orders(_OrdersClient([], raise_get=True), eng) == 0   # logged, no raise
+    assert reconcile.reconcile_orders(_OrdersClient([]), None) == 0                  # no DB → no-op

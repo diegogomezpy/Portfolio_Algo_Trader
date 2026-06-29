@@ -128,6 +128,34 @@ def _touch_price(client, sym: str, side: str) -> float:
     return ask if side == "buy" else bid
 
 
+def _option_touch(client, option_symbol: str, side: str):
+    """The touch for chasing an option order: hit the bid to sell-to-open, lift the ask to
+    buy-to-close (mirrors :func:`_touch_price` on the option NBBO)."""
+    bid, ask = client.latest_option_quote(option_symbol)
+    return ask if side == "buy" else bid
+
+
+def _market_close(client):
+    """Today's session close as an aware datetime, or ``None`` if the clock read fails (the
+    chaser then runs without a close guarantee rather than blocking)."""
+    try:
+        nc = client.market_clock().get("next_close")
+        return datetime.fromisoformat(nc) if nc else None
+    except Exception as exc:  # noqa: BLE001 — a clock-read failure must not block the rebalance
+        log.warning("market clock read failed; chasing without a close guarantee", extra={"error": str(exc)})
+        return None
+
+
+def _option_chase(client, market_close):
+    """An :class:`OptionChase` that crosses option orders to the touch until they fill (or the
+    session nears ``market_close``). ``None`` when the client can't quote options — the overlay
+    then falls back to a single passive pass at the mid."""
+    if not hasattr(client, "latest_option_quote"):
+        return None
+    return covered_calls.OptionChase(touch=(lambda sym, side: _option_touch(client, sym, side)),
+                                     market_close=market_close)
+
+
 def _format_breakdown(report, written, skipped) -> str:
     """Per-asset / per-call summary of what traded and why — for the rebalance alert + log."""
     rows = ["Equities (filled / target):"]
@@ -203,10 +231,15 @@ def run_cycle(
             alert(f"risk gate blocked rebalance: {rc.reason}")
         return CycleResult("blocked_risk", weights, rc)
 
+    # Session close + the option chaser, built once and reused for the close-all, the equity
+    # chase, and the fresh writes — so every option order crosses to the touch until it fills.
+    mkt_close = _market_close(client)
+    opt_chase = _option_chase(client, mkt_close)
+
     # Overlay (D31): close all existing calls BEFORE equity trades.
     n_closed = 0
     if overlay:
-        closed = close_calls_fn(client, broker, db_engine, as_of=as_of, alert=alert)
+        closed = close_calls_fn(client, broker, db_engine, as_of=as_of, chase=opt_chase, alert=alert)
         n_closed = len(closed or [])
 
     # Deployable base = leverage × account equity (DECISIONS D32). Weights are fractions of
@@ -219,27 +252,22 @@ def run_cycle(
     # Chase fills: re-peg each unfilled name to the touch (ask on a buy / bid on a sell) every
     # round until it fills or the session nears the close, then a market order guarantees it.
     touch_fn = (lambda s, side: _touch_price(client, s, side)) if hasattr(client, "latest_nbbo") else None
-    mkt_close = None
-    try:
-        nc = client.market_clock().get("next_close")
-        mkt_close = datetime.fromisoformat(nc) if nc else None
-    except Exception as exc:  # noqa: BLE001 — a clock-read failure must not block the rebalance
-        log.warning("market clock read failed; chasing without a close guarantee",
-                    extra={"error": str(exc)})
     report = submit_and_track(orders, broker=broker, db_engine=db_engine,
                               cycle_key=as_of.isoformat(), pending=pending,
                               touch=touch_fn, market_close=mkt_close, alert=alert)
 
-    # Overlay (D31): write fresh calls AFTER equity settles, on the shares actually held.
+    # Overlay (D31): write fresh calls AFTER equity settles, on the shares actually held. The
+    # writes chase to the bid so they actually fill, and the lifecycle row lands only on a fill.
     n_written, written, skipped = 0, [], []
     if overlay:
         held = _equity_shares(client)
         written, skipped = write_calls_fn(client, broker, db_engine, held,
                                           settings=settings, as_of=as_of,
-                                          price_panel=plan.panel, alert=alert)
+                                          price_panel=plan.panel, chase=opt_chase, alert=alert)
         n_written = len(written or [])
 
     mon = monitor.monitor_once(client, db_engine, target_weights=weights.to_dict())
+    reconcile.reconcile_orders(client, db_engine, alert=alert)   # blotter ← Alpaca order statuses
     try:                       # reporting must never crash a cycle that already traded
         breakdown = _format_breakdown(report, written, skipped)   # per-asset / per-call detail
         if alert:
@@ -514,14 +542,16 @@ def daily_job(
     # This month's rebalance already landed: keep the DB honest, finish any still-deferred residual,
     # run the overlay safety pass, snapshot.
     reconcile.reconcile(client, db_engine, alert=alert)
+    reconcile.reconcile_orders(client, db_engine, alert=alert)   # blotter ← Alpaca order statuses
     try:                       # cross-day: complete still-deferred names that remain in the target
         pending_work_fn(client, broker, db_engine, settings=settings, as_of=as_of, alert=alert)
     except Exception as exc:   # noqa: BLE001 — a top-up failure must not crash the daily job
         log.error("cross-day top-up failed", extra={"date": as_of.isoformat(), "error": str(exc)})
     if overlay:
         panel = factors.load_close_panel(PRICES_DIR, end=as_of, lookback=10**9)
+        opt_chase = _option_chase(client, _market_close(client))
         options_check_fn(client, broker, db_engine, settings=settings,
-                         as_of=as_of, price_panel=panel, alert=alert)
+                         as_of=as_of, price_panel=panel, chase=opt_chase, alert=alert)
     tgt = monitor.last_target_weights(db_engine)
     mon = monitor.monitor_once(client, db_engine, target_weights=tgt)
     log.info("daily monitor pass (no rebalance)", extra={"date": as_of.isoformat()})

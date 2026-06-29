@@ -51,6 +51,7 @@ from alpaca.data.historical.option import OptionHistoricalDataClient
 from alpaca.data.requests import (
     CorporateActionsRequest,
     OptionChainRequest,
+    OptionLatestQuoteRequest,
     StockBarsRequest,
     StockLatestBarRequest,
     StockLatestQuoteRequest,
@@ -259,6 +260,29 @@ class AlpacaClient:
             last = self.latest_trade(symbol)
             bid = bid if bid is not None else last
             ask = ask if ask is not None else last
+        return bid, ask
+
+    def latest_option_quote(self, option_symbol: str) -> tuple[float | None, float | None]:
+        """Return ``(bid, ask)`` for one OCC option contract — the covered-call chaser's touch.
+
+        Crossing to the touch on an option means **hitting the bid** to sell-to-open and
+        **lifting the ask** to buy-to-close. Either side is ``None`` when the indicative feed
+        omits it (a thin contract, off-hours); the caller then falls back to a market order.
+        Uses the ``indicative`` feed — no OPRA subscription, same feed as the chain reader.
+
+        Raises:
+            AlpacaAPIError: If the request fails.
+        """
+        request = OptionLatestQuoteRequest(symbol_or_symbols=option_symbol, feed="indicative")
+        try:
+            result = self._option_data.get_option_latest_quote(request)
+        except APIError as exc:
+            raise AlpacaAPIError(option_symbol, "latest_option_quote", str(exc)) from exc
+        quote = result.get(option_symbol) if isinstance(result, dict) else None
+        bid = getattr(quote, "bid_price", None) if quote is not None else None
+        ask = getattr(quote, "ask_price", None) if quote is not None else None
+        bid = float(bid) if bid is not None and float(bid) > 0 else None
+        ask = float(ask) if ask is not None and float(ask) > 0 else None
         return bid, ask
 
     def latest_trade(self, symbol: str) -> float:

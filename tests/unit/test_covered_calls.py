@@ -7,7 +7,7 @@ skips), and the buy-to-close plan.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import numpy as np
@@ -133,11 +133,25 @@ class _FakeClient:
         return list(self._activities)
 
 
+def _fast_chase(**kw):
+    """An OptionChase with an instant (no-op) sleep so fill-poll tests don't block."""
+    kw.setdefault("sleep", lambda _s: None)
+    return cc.OptionChase(**kw)
+
+
 class _FakeBroker:
-    def __init__(self, reject=()):
+    """Fake broker with fill-poll support. ``fills`` is a per-option-symbol queue of fill
+    specs consumed one per submission: ``"full"`` fills the whole order, an int fills that many
+    contracts (capped). An empty / exhausted queue defaults to a full fill — so the legacy
+    tests (no ``fills``) see every order fill immediately, as before.
+    """
+    def __init__(self, reject=(), fills=None):
         self.reject = set(reject)
         self.option_orders = []
         self.equity_orders = []
+        self.cancelled = []
+        self._by_id = {}
+        self._fills = {k: list(v) for k, v in (fills or {}).items()}
 
     def submit_order(self, symbol, qty, side, *, order_type="market", limit_price=None,
                      client_order_id=None):
@@ -151,12 +165,36 @@ class _FakeBroker:
         if option_symbol in self.reject:
             from engine.alpaca_client import AlpacaAPIError
             raise AlpacaAPIError(option_symbol, "submit_option_order", "422")
+        if order_type == "market":                       # market orders always fill (the touch sweep)
+            fq = contracts
+        else:
+            queue = self._fills.get(option_symbol)
+            spec = queue.pop(0) if queue else "full"
+            fq = contracts if spec == "full" else min(int(spec), contracts)
         rec = dict(option_symbol=option_symbol, contracts=contracts, side=side,
                    position_intent=position_intent, order_type=order_type,
                    limit_price=limit_price, client_order_id=client_order_id,
-                   id=f"oid-{len(self.option_orders) + 1}", status="accepted")
+                   id=f"oid-{len(self.option_orders) + 1}", status="accepted",
+                   _fq=fq, _px=(limit_price if limit_price is not None else 1.0))
         self.option_orders.append(rec)
+        self._by_id[rec["id"]] = rec
         return rec
+
+    def get_order(self, order_id):
+        rec = self._by_id[order_id]
+        fq = rec["_fq"]
+        if fq >= rec["contracts"]:
+            status = "filled"
+        elif order_id in self.cancelled:
+            status = "canceled"
+        else:
+            status = "accepted"
+        return dict(id=order_id, symbol=rec["option_symbol"], status=status,
+                    filled_qty=fq, filled_avg_price=(rec["_px"] if fq > 0 else None),
+                    side=rec["side"], qty=rec["contracts"])
+
+    def cancel_order(self, order_id):
+        self.cancelled.append(order_id)
 
 
 def _engine():
@@ -212,14 +250,14 @@ def test_write_calls_submits_sell_to_open_and_logs_lifecycle():
     broker = _FakeBroker()
     submitted, skipped = cc.write_calls(
         _FakeClient(chains=chains), broker, eng, {"AAA": 250},
-        settings=_settings(), as_of=as_of, price_panel=panel)
+        settings=_settings(), as_of=as_of, price_panel=panel, chase=_fast_chase())
     assert len(submitted) == 1 and skipped == []
     o = broker.option_orders[0]
     assert o["side"] == "sell" and o["position_intent"] == "sell_to_open"
     assert o["contracts"] == 2 and o["limit_price"] == 2.0
     rows = _lifecycle(eng)
     assert len(rows) == 1 and rows[0]["event_type"] == "write"
-    assert rows[0]["premium"] == 400.0 and rows[0]["contracts"] == 2     # 2 × 100 × 2.0
+    assert rows[0]["premium"] == 400.0 and rows[0]["contracts"] == 2     # 2 × 100 × 2.0 (real fill)
 
 
 def test_close_calls_submits_buy_to_close_and_logs_lifecycle():
@@ -227,7 +265,8 @@ def test_close_calls_submits_buy_to_close_and_logs_lifecycle():
     positions = [{"symbol": "AAA260821C00105000", "qty": -2, "market_value": -620.0,
                   "asset_class": "us_option"}]
     broker = _FakeBroker()
-    submitted = cc.close_calls(_FakeClient(positions=positions), broker, eng, as_of=date(2026, 7, 1))
+    submitted = cc.close_calls(_FakeClient(positions=positions), broker, eng,
+                               as_of=date(2026, 7, 1), chase=_fast_chase())
     assert len(submitted) == 1
     o = broker.option_orders[0]
     assert o["side"] == "buy" and o["position_intent"] == "buy_to_close" and o["contracts"] == 2
@@ -292,12 +331,101 @@ def test_options_daily_check_closes_into_earnings_and_rewrites():
     earn = {"AAPL": [date(2026, 7, 10)], "MSFT": [date(2026, 6, 28)]}
     broker = _FakeBroker()
     out = cc.options_daily_check(client, broker, eng, settings=_settings(), as_of=as_of,
-                                 price_panel=panel, earnings_fetch=lambda s: earn.get(s, []))
+                                 price_panel=panel, earnings_fetch=lambda s: earn.get(s, []),
+                                 chase=_fast_chase())
     assert out == {"expiry_closed": 0, "earnings_closed": 1, "rewritten": 1, "reentered": 0}
     sides = {(o["side"], o["position_intent"]) for o in broker.option_orders}
     assert ("buy", "buy_to_close") in sides and ("sell", "sell_to_open") in sides
     events = {r["event_type"] for r in _lifecycle(eng)}
     assert events == {"earnings_close", "write"}
+
+
+# ====================================================================== #
+# Chase + log-on-fill (4.7) — writes/closes track to the touch; the ledger is fill-only
+# ====================================================================== #
+def _write_setup():
+    panel = _panel(["AAA"])
+    as_of = panel.index[-1].date()
+    exp = (as_of + timedelta(days=35)).isoformat()
+    chains = {"AAA": [{"symbol": "AAA_C105", "strike": 105.0, "expiration": exp, "mid": 2.0}]}
+    return panel, as_of, chains
+
+
+def test_write_chases_to_the_bid_and_logs_real_fill_premium():
+    # Round 1 rests unfilled at the bid; round 2 fills. The lifecycle premium must reflect the
+    # bid we actually filled at (1.90), not the planned mid (2.0).
+    eng = _engine()
+    panel, as_of, chains = _write_setup()
+    broker = _FakeBroker(fills={"AAA_C105": [0]})         # first submission no-fill, then fills
+    chase = _fast_chase(touch=lambda sym, side: 1.90)     # cross to the bid on a sell
+    submitted, _ = cc.write_calls(_FakeClient(chains=chains), broker, eng, {"AAA": 250},
+                                  settings=_settings(), as_of=as_of, price_panel=panel, chase=chase)
+    assert len(broker.option_orders) == 2                 # repegged once
+    assert all(o["order_type"] == "limit" and o["limit_price"] == 1.90 for o in broker.option_orders)
+    assert all(o["side"] == "sell" for o in broker.option_orders)
+    rows = _lifecycle(eng)
+    assert len(rows) == 1 and rows[0]["event_type"] == "write"
+    assert rows[0]["contracts"] == 2 and rows[0]["premium"] == 1.90 * 2 * 100   # real fill, not the mid
+    assert len(submitted) == 1 and submitted[0].limit_price == 1.90
+
+
+def test_write_never_fills_logs_no_lifecycle_and_alerts():
+    # A write that never fills must leave NO ledger row (so premium can't overstate) and alert.
+    eng = _engine()
+    panel, as_of, chains = _write_setup()
+    broker = _FakeBroker(fills={"AAA_C105": [0] * 60})    # never fills across all rounds
+    alerts = []
+    chase = _fast_chase(touch=lambda sym, side: 1.90, max_rounds=5)
+    submitted, _ = cc.write_calls(_FakeClient(chains=chains), broker, eng, {"AAA": 250},
+                                  settings=_settings(), as_of=as_of, price_panel=panel,
+                                  chase=chase, alert=alerts.append)
+    assert submitted == [] and _lifecycle(eng) == []      # writes never force a market order
+    assert any("unfilled" in a and "AAA" in a for a in alerts)
+
+
+def test_write_partial_then_completes_logs_one_row_for_total():
+    # 3 contracts: round 1 fills 1, round 2 fills the rest → a single ledger row for all 3.
+    eng = _engine()
+    panel, as_of, chains = _write_setup()
+    broker = _FakeBroker(fills={"AAA_C105": [1]})         # round 1 fills 1, then full
+    chase = _fast_chase(touch=lambda sym, side: 2.0)
+    cc.write_calls(_FakeClient(chains=chains), broker, eng, {"AAA": 300},   # 3 contracts
+                   settings=_settings(), as_of=as_of, price_panel=panel, chase=chase)
+    assert broker.option_orders[0]["contracts"] == 3 and broker.option_orders[1]["contracts"] == 2
+    rows = _lifecycle(eng)
+    assert len(rows) == 1 and rows[0]["contracts"] == 3
+    assert rows[0]["premium"] == 2.0 * 3 * 100            # 1@2.0 + 2@2.0 over 300 sh
+
+
+def test_write_stops_chasing_within_close_buffer():
+    # The chase must stop once the session is within close_buffer of market_close, leaving the
+    # name uncovered (no row) rather than churning until the bell.
+    eng = _engine()
+    panel, as_of, chains = _write_setup()
+    broker = _FakeBroker(fills={"AAA_C105": [0] * 60})
+    close = datetime(2026, 7, 1, 20, 0, tzinfo=timezone.utc)            # 16:00 ET
+    chase = _fast_chase(touch=lambda s, side: 1.90, market_close=close,
+                        now=lambda: close - timedelta(seconds=120),     # 2 min to close, inside buffer
+                        close_buffer_s=300.0, max_rounds=50)
+    cc.write_calls(_FakeClient(chains=chains), broker, eng, {"AAA": 250},
+                   settings=_settings(), as_of=as_of, price_panel=panel, chase=chase)
+    assert broker.option_orders == [] and _lifecycle(eng) == []         # gated out before any round
+
+
+def test_close_chase_sweeps_residual_at_market():
+    # A close that won't fill on the limit rounds is swept by the final market order — the risk
+    # comes off, and the ledger records the close at the market fill.
+    eng = _engine()
+    positions = [{"symbol": "AAA260821C00105000", "qty": -2, "market_value": -620.0,
+                  "asset_class": "us_option"}]
+    broker = _FakeBroker(fills={"AAA260821C00105000": [0] * 60})        # never fills on limits
+    chase = _fast_chase(touch=lambda s, side: 3.20, max_rounds=3)       # cross to the ask on a buy
+    submitted = cc.close_calls(_FakeClient(positions=positions), broker, eng,
+                               as_of=date(2026, 7, 1), chase=chase)
+    assert len(submitted) == 1
+    assert broker.option_orders[-1]["order_type"] == "market"           # final sweep
+    rows = _lifecycle(eng)
+    assert rows[0]["event_type"] == "close" and rows[0]["contracts"] == 2
 
 
 # ====================================================================== #

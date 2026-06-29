@@ -26,7 +26,8 @@ def _seed(eng):
             weights={"AAPL": 0.05}, positions={"AAPL": 100}, drift=0.0))
         c.execute(insert(db.snapshots).values(
             ts=datetime(2026, 7, 1, 16), nav=202_000.0, cash=9_000.0, last_equity=200_000.0,
-            weights={"AAPL": 0.05, "MSFT": 0.04}, positions={"AAPL": 100, "MSFT": 40}, drift=0.03))
+            weights={"AAPL": 0.05, "MSFT": 0.04, "AAPL260821C00215000": -0.002},
+            positions={"AAPL": 100, "MSFT": 40, "AAPL260821C00215000": -2}, drift=0.03))
         c.execute(insert(db.rebalance_log).values(
             ts=datetime(2026, 7, 1, 16), trigger_reason="monthly",
             target_weights={"AAPL": 0.05, "MSFT": 0.05}, risk_gate_passed=True,
@@ -126,13 +127,48 @@ def test_api_orders_returns_recent():
 
 
 def test_api_calls_only_open_positions():
+    # The book is sourced from the live snapshot's short-call positions, enriched from the
+    # write log. AAPL has a -2 position → shows; XYZ was written+closed and carries no
+    # position → must not show.
     eng = _engine()
     _seed(eng)
     calls = data.api_calls(eng)
     syms = {c["underlying"] for c in calls}
-    assert syms == {"AAPL"}                              # XYZ written then closed → not open
+    assert syms == {"AAPL"}
     aapl = next(c for c in calls if c["underlying"] == "AAPL")
     assert aapl["contracts"] == 2 and aapl["strike"] == 215.0
+    assert aapl["delta"] == 0.30 and aapl["premium"] == 400.0   # enriched from the write log
+
+
+def test_api_calls_ignores_unfilled_write_with_no_position():
+    # The exact discrepancy bug: a write is logged but the order never filled (no position in
+    # the snapshot). The dashboard must NOT show it — it reads Alpaca truth, not the write log.
+    eng = _engine()
+    with eng.begin() as c:
+        c.execute(insert(db.snapshots).values(
+            ts=datetime(2026, 7, 1, 16), nav=200_000.0, cash=9_000.0, last_equity=200_000.0,
+            weights={"AAPL": 0.05}, positions={"AAPL": 100}, drift=0.0))   # no short call held
+        c.execute(insert(db.options_lifecycle).values(   # phantom write, never filled/positioned
+            ts=datetime(2026, 7, 1), event_type="write", underlying="SLV",
+            option_symbol="SLV260731C00057500", strike=57.5, expiration=date(2026, 7, 31),
+            delta=0.31, contracts=1, premium=120.0))
+    assert data.api_calls(eng) == []
+
+
+def test_api_calls_renders_position_without_metadata_from_occ():
+    # A short call held with no write row (e.g. pre-existing) still renders, parsed from OCC.
+    eng = _engine()
+    with eng.begin() as c:
+        c.execute(insert(db.snapshots).values(
+            ts=datetime(2026, 7, 1, 16), nav=200_000.0, cash=9_000.0, last_equity=200_000.0,
+            weights={"IAU": 0.04, "IAU260807C00079000": -0.001},
+            positions={"IAU": 200, "IAU260807C00079000": -2}, drift=0.0))
+    calls = data.api_calls(eng)
+    assert len(calls) == 1
+    c0 = calls[0]
+    assert c0["underlying"] == "IAU" and c0["contracts"] == 2
+    assert c0["strike"] == 79.0 and c0["expiration"] == "2026-08-07"
+    assert c0["delta"] is None and c0["premium"] is None   # no write row → metadata absent
 
 
 def test_api_factors_only_held_names():

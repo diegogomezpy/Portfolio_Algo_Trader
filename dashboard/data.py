@@ -22,6 +22,20 @@ _TRADING_DAYS = 252.0
 # Used to keep the leverage gauge and position count equity-only once the overlay writes
 # options into the same snapshot (a short call carries negative market value).
 _OCC_SUFFIX = re.compile(r"\d{6}[CP]\d{8}$")
+# Full OCC parse (ROOT + YYMMDD + C/P + strike×1000) for the covered-call book, so a held
+# short call renders even if its lifecycle metadata row is missing.
+_OCC_FULL = re.compile(r"^([A-Z0-9]+?)(\d{2})(\d{2})(\d{2})([CP])(\d{8})$")
+
+
+def _parse_occ(symbol: str) -> dict | None:
+    """``{underlying, type, strike, expiration}`` from an OCC symbol, or ``None`` if unparseable."""
+    m = _OCC_FULL.match(str(symbol))
+    if not m:
+        return None
+    root, yy, mm, dd, cp, strike = m.groups()
+    return {"underlying": root, "type": "call" if cp == "C" else "put",
+            "strike": int(strike) / 1000.0,
+            "expiration": f"20{yy}-{mm}-{dd}"}
 
 # Engine-heartbeat thresholds (seconds). The monitor writes a snapshot every ~60s regardless
 # of market hours, so a growing gap means the monitor/engine process is wedged — not a quiet
@@ -145,25 +159,46 @@ def api_orders(db_engine, limit: int = 50) -> list[dict]:
 
 
 def api_calls(db_engine) -> list[dict]:
-    """Currently-open covered calls, derived from the options_lifecycle event log.
+    """Currently-open covered calls, sourced from the **live snapshot's short-call positions**
+    (Alpaca truth via the 60s monitor), enriched with strike/delta/premium from the
+    options_lifecycle write log.
 
-    Net contracts per option symbol = writes − closes; a positive net is still open.
+    Reading the actual position book — not the write log — is what guarantees the panel matches
+    Alpaca: a write that never filled (or was cancelled) carries no position, so it never shows;
+    a closed call disappears the moment the next snapshot lands. The lifecycle log is metadata
+    only here (the contract terms + the premium collected when it was written). Contracts =
+    ``|qty|``; strike/expiry fall back to the OCC symbol when no write row exists.
     """
     with db_engine.connect() as conn:
-        rows = conn.execute(
-            select(db.options_lifecycle).order_by(db.options_lifecycle.c.ts)).mappings().all()
-    net: dict[str, dict] = {}
-    for r in rows:
-        sym = r["option_symbol"]
-        e = net.setdefault(sym, {"option_symbol": sym, "underlying": r["underlying"],
-                                 "strike": r["strike"], "expiration": None, "delta": r["delta"],
-                                 "contracts": 0, "premium": 0.0})
-        e["contracts"] += (r["contracts"] or 0) * (1 if r["event_type"] == "write" else -1)
-        e["premium"] += r["premium"] or 0.0
-        if r["event_type"] == "write":                       # keep the written contract's terms
-            e.update(strike=r["strike"], delta=r["delta"],
-                     expiration=str(r["expiration"]) if r["expiration"] else None)
-    return [e for e in net.values() if e["contracts"] > 0]
+        snap = _latest_snapshot(conn)
+        writes = conn.execute(
+            select(db.options_lifecycle)
+            .where(db.options_lifecycle.c.event_type == "write")
+            .order_by(db.options_lifecycle.c.ts)).mappings().all()
+    positions = (snap or {}).get("positions") or {}
+    weights = (snap or {}).get("weights") or {}
+    nav = (snap or {}).get("nav")
+    # Latest write terms per option symbol (a later rewrite supersedes an earlier one).
+    meta: dict[str, dict] = {}
+    for r in writes:
+        meta[r["option_symbol"]] = {
+            "strike": r["strike"], "delta": r["delta"], "premium": r["premium"],
+            "expiration": str(r["expiration"]) if r["expiration"] else None}
+    out: list[dict] = []
+    for sym, qty in positions.items():
+        occ = _parse_occ(sym)
+        if occ is None or occ["type"] != "call" or float(qty) >= 0:   # short calls only
+            continue
+        m = meta.get(sym, {})
+        mv = (float(weights.get(sym, 0.0)) * nav) if nav is not None else None
+        out.append({
+            "option_symbol": sym, "underlying": occ["underlying"],
+            "contracts": int(round(abs(float(qty)))),
+            "strike": m.get("strike") if m.get("strike") is not None else occ["strike"],
+            "expiration": m.get("expiration") or occ["expiration"],
+            "delta": m.get("delta"), "premium": m.get("premium"),
+            "market_value": round(mv, 2) if mv is not None else None})
+    return out
 
 
 def api_factors(db_engine) -> list[dict]:

@@ -118,11 +118,12 @@ def test_run_cycle_overlay_closes_then_writes_around_equity():
     client = _FakeClient(positions={"AAPL": (100, 10_000.0)})
     seq = []
 
-    def _close(client, broker, db_engine, *, as_of=None, alert=None):
+    def _close(client, broker, db_engine, *, as_of=None, chase=None, alert=None):
         seq.append("close")
         return ["closed-1"]
 
-    def _write(client, broker, db_engine, holdings_shares, *, settings, as_of, price_panel, alert=None):
+    def _write(client, broker, db_engine, holdings_shares, *, settings, as_of, price_panel,
+               chase=None, alert=None):
         seq.append(("write", dict(holdings_shares)))
         return (["wrote-1"], [])
 

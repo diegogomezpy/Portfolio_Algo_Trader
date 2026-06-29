@@ -113,6 +113,23 @@ the newer spec introduces.
 
 ## Requested beyond the handoff
 
+- [x] **No Alpaca↔dashboard discrepancies** — the dashboard must only ever show what Alpaca
+  actually holds/filled. Three fixes:
+  - **Covered-call book** (`api_calls`) is now sourced from the **live snapshot's short-call
+    positions** (Alpaca truth via the 60s monitor), enriched with strike/delta/premium from the
+    lifecycle log — not the write log. An unfilled/cancelled write carries no position, so it can
+    never appear; a closed call disappears on the next snapshot.
+  - **Premium ledger** — `options_lifecycle` is written **only on a real fill, at the real fill
+    price** (`engine/covered_calls.py:_execute_option_leg`), so `premium_collected` can't count
+    money that was never collected. (One-time cleanup: the 3 cancelled-write rows from 2026-06-29
+    were deleted so premium reads its true value.)
+  - **Orders blotter** — `engine.reconcile.reconcile_orders` syncs the `orders` table to Alpaca's
+    current order statuses each cycle/day (stale `pending_cancel` → `canceled`, late fills,
+    inserts option orders), so the activity blotter always matches Alpaca.
+- [x] **Covered-call writes/closes chase to the touch** — option orders now re-peg to the bid
+  (write) / ask (close) until they fill or the session nears the close, mirroring the equity
+  chaser (`engine/covered_calls.py:OptionChase`). Stops the "passive limit at the mid never
+  fills" problem the equities already had fixed.
 - [x] **Performance start-date / window picker** — done (see Overview/Performance above).
 - [x] **~1-second live refetch** — the Overview NAV + KPIs now refresh every **1 s** from `/api/state`
   (one Alpaca quote per tick, well under the ~200/min limit). The heavier Postgres-backed panels
