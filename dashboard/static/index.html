@@ -209,6 +209,16 @@
   .ovl-s .ovl-k { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
   .ovl-s .ovl-v { font-size: 15px; font-weight: 600; margin-top: 2px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
+  /* P&L attribution bars */
+  .attr-row { display: grid; grid-template-columns: 230px 1fr 150px; align-items: center; gap: 12px; padding: 4px 0; }
+  .attr-lbl { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .attr-track { height: 8px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+  .attr-fill { display: block; height: 100%; border-radius: 4px; }
+  .attr-fill.pos { background: var(--green); }
+  .attr-fill.neg { background: var(--red); }
+  .attr-val { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12.5px; font-weight: 600; }
+  .attr-val .attr-sub { color: var(--muted); font-weight: 400; margin-left: 6px; }
+
   /* NAV chart panel */
   #navspark svg { display: block; width: 100%; }
   .spark-meta { display: flex; gap: 22px; padding: 11px 14px 4px; }
@@ -344,6 +354,7 @@
     <div class="subtabs" data-group="performance">
       <button class="subtab active" data-sub="returns">Returns</button>
       <button class="subtab" data-sub="risk">Risk</button>
+      <button class="subtab" data-sub="attribution">Attribution</button>
       <button class="subtab" data-sub="execution">Execution</button>
     </div>
     <div class="winbar" id="winbar" title="window the performance & risk views to a start date">
@@ -403,6 +414,22 @@
         <div class="se-panel span2" style="margin-top:16px">
           <h2>Risk contribution <span class="panel-sub" id="rcsub">share of portfolio risk per holding</span></h2>
           <div class="body" id="riskcontrib"></div>
+        </div>
+      </div>
+    </div>
+    <div class="subview" id="sub-attribution" style="display:none">
+      <div class="se-panel span2">
+        <h2 data-tip="Today's profit &amp; loss decomposed by holding: each name's contribution = its market value × today's return (change vs the prior close). The bars sum to the day's equity P&amp;L. Live — updates as prices move.">Today's P&amp;L by holding <span class="panel-sub" id="attrsub"></span></h2>
+        <div class="body" id="attrnames"></div>
+      </div>
+      <div class="se-panel span2" style="margin-top:16px">
+        <h2 data-tip="The same day's P&amp;L rolled up by GICS sector — which parts of the book drove today's move.">By sector <span class="panel-sub" id="attrsecsub"></span></h2>
+        <div class="body" id="attrsectors"></div>
+      </div>
+      <div class="se-panel span2" style="margin-top:16px">
+        <div style="font-size:11.5px;color:var(--muted);line-height:1.55">
+          <div style="text-transform:uppercase;letter-spacing:.05em;font-size:10px;margin-bottom:5px">Coming next</div>
+          Since-inception source split (equity vs option premium) and factor-level attribution need per-name cost basis / factor P&amp;L the engine doesn't persist yet — tracked as a follow-up. This view is today's live equity P&amp;L.
         </div>
       </div>
     </div>
@@ -478,7 +505,7 @@ document.addEventListener("mousemove", e=>{ if(tipEl) posTip(e); });
 
 // ---- two-level nav: top tabs + sub-tabs -----------------------------------
 const VIEWS = ["overview","portfolio","performance","backtest"];
-const SUBS  = {portfolio:["holdings","activity"], performance:["returns","risk","execution"]};
+const SUBS  = {portfolio:["holdings","activity"], performance:["returns","risk","attribution","execution"]};
 let activeView = "overview";
 const activeSub = {portfolio:"holdings", performance:"returns"};
 
@@ -552,7 +579,47 @@ async function loadPerformance(){
   renderReturns(tr, slip, fees);   // Returns sub-view
   renderRisk(risk, st);            // Risk sub-view
   renderRiskContrib(rcx);          // Risk sub-view — per-name risk decomposition
+  renderAttribution(st);           // Attribution sub-view — today's P&L by holding / sector
   renderExecution(slip, fees);     // Execution sub-view
+}
+
+// Today's P&L attribution: each holding's dollar contribution to the day = market value × today's
+// return (day%). Exact intraday decomposition; the bars sum to the day's equity P&L. Rolled up by
+// sector too. Needs the live day% (from the price feed) — degrades to a wait-note when absent.
+function attrContribs(st){
+  return (st && st.positions || [])
+    .filter(r => r.symbol && !_isOpt(r.symbol) && r.day_pct!=null && r.market_value!=null)
+    // contribution = mv − prior-close value = mv − mv/(1+day%) = mv·day%/(1+day%)
+    .map(r => ({sym:r.symbol, pnl: r.market_value * r.day_pct/(1+r.day_pct),
+                sector:(REF[r.symbol.toUpperCase()]||{}).sector || "—"}));
+}
+function attrBar(label, pnl, max, sub){
+  const w = max>0 ? Math.min(100, Math.abs(pnl)/max*100) : 0;
+  const pos = pnl>=0;
+  return `<div class="attr-row"><div class="attr-lbl">${label}</div>`
+    + `<div class="attr-track"><span class="attr-fill ${pos?'pos':'neg'}" style="width:${w.toFixed(1)}%"></span></div>`
+    + `<div class="attr-val ${sgn(pnl)}">${susd(pnl)}${sub?`<span class="attr-sub">${sub}</span>`:""}</div></div>`;
+}
+function renderAttribution(st){
+  const c = attrContribs(st);
+  if(!c.length){
+    const note = '<div class="se-empty">Today\'s attribution appears once live prices are streaming (each holding\'s day P&L vs the prior close). It\'s live during market hours.</div>';
+    $("attrnames").innerHTML = note; $("attrsectors").innerHTML = ""; $("attrsub").textContent = ""; $("attrsecsub").textContent = ""; return;
+  }
+  const total = c.reduce((a,x)=>a+x.pnl, 0);
+  const max = Math.max(...c.map(x=>Math.abs(x.pnl)), 1e-9);
+  c.sort((a,b)=>b.pnl-a.pnl);                                   // biggest winners first, losers last
+  $("attrsub").textContent = `day total ${susd(total)} · ${c.length} holdings`;
+  $("attrnames").innerHTML = c.map(x=>attrBar(symCell(x.sym), x.pnl, max)).join("");
+  // sector rollup
+  const bySec = {};
+  c.forEach(x => { bySec[x.sector] = (bySec[x.sector]||0) + x.pnl; });
+  const secs = Object.entries(bySec).map(([sector,pnl])=>({sector,pnl})).sort((a,b)=>b.pnl-a.pnl);
+  const smax = Math.max(...secs.map(s=>Math.abs(s.pnl)), 1e-9);
+  $("attrsecsub").textContent = `${secs.length} sector${secs.length>1?'s':''}`;
+  $("attrsectors").innerHTML = secs.map(s=>attrBar(
+    `<span style="display:inline-flex;align-items:center;gap:7px"><i style="width:9px;height:9px;border-radius:2px;background:${secColor(s.sector)}"></i>${s.sector}</span>`,
+    s.pnl, smax)).join("");
 }
 
 function renderReturns(tr, slip, fees){
