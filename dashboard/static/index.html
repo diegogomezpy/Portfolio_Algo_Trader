@@ -29,11 +29,6 @@
             text-transform: uppercase; letter-spacing: .04em; }
   .sbchip .sbk { color: var(--muted); }
   .sbchip .sbv { color: var(--fg); font-weight: 600; font-family: var(--mono); font-variant-numeric: tabular-nums; }
-  .sbtoggle { margin-left: auto; flex: none; background: var(--panel-2); border: 1px solid var(--line);
-              color: var(--muted); border-radius: var(--r-sm); padding: 3px 10px; font: inherit; font-size: 10.5px;
-              text-transform: uppercase; letter-spacing: .05em; font-weight: 600; cursor: pointer;
-              white-space: nowrap; transition: all .15s var(--ease); }
-  .sbtoggle:hover { color: var(--fg); border-color: var(--accent); }
 
   /* tooltips — any element carrying a data-tip attribute */
   [data-tip] { cursor: help; }
@@ -251,17 +246,7 @@
 </header>
 <div class="statusbar" id="statusbar" style="display:none">
   <div class="sbchips" id="sbchips"></div>
-  <button class="sbtoggle" id="sbtoggle" aria-expanded="false">Details ▾</button>
 </div>
-</div>
-
-<div id="healthpanel" style="display:none">
-  <div class="wrap" style="padding-top:14px">
-    <div class="se-panel">
-      <h2>System health <span class="panel-sub" id="healthsub"></span></h2>
-      <div class="health" id="healthtiles"></div>
-    </div>
-  </div>
 </div>
 
 <div id="overview-view">
@@ -273,6 +258,10 @@
       <h2>Net asset value <span class="panel-sub" id="navrange"></span></h2>
       <div class="spark-meta" id="sparkmeta"></div>
       <div id="navspark"></div>
+    </div>
+    <div class="se-panel" style="margin-top:16px">
+      <h2>System health <span class="panel-sub" id="healthsub"></span></h2>
+      <div class="health" id="healthtiles"></div>
     </div>
     <div class="footstrip" id="footstrip"></div>
   </div>
@@ -1373,13 +1362,6 @@ async function boot(){
   loadActive();
 }
 $("refreshbtn").onclick = () => { $("refreshbtn").classList.add("spin"); setTimeout(()=>$("refreshbtn").classList.remove("spin"),700); loadActive(); };
-let healthOpen = false;
-$("sbtoggle").onclick = () => {
-  healthOpen = !healthOpen;
-  $("healthpanel").style.display = healthOpen ? "block" : "none";
-  $("sbtoggle").setAttribute("aria-expanded", healthOpen);
-  $("sbtoggle").innerHTML = healthOpen ? "Hide ▴" : "Details ▾";
-};
 boot();
 // ---- Performance window picker wiring -------------------------------------
 function syncWin(){
