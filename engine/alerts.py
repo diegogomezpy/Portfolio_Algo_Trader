@@ -20,6 +20,7 @@ SMTP send is injectable (``send=``) so tests run with a fake transport and no ne
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime, timezone
 from typing import Callable, Optional
 
@@ -34,19 +35,54 @@ ALERT_TYPES = (
 
 
 def classify(message: str) -> str:
-    """Map an alert message to a SPEC alert type (first match wins; default system_error)."""
+    """Map an alert message to a SPEC alert type (first match wins).
+
+    Error phrases are checked **before** the "complete" branch so *"failed to complete"* is a
+    ``system_error``, not a ``rebalance_completed`` (the old ordering got this backwards).
+    """
     m = message.lower()
-    if "rebalance" in m and "complet" in m:
-        return "rebalance_completed"
+    if "system error" in m or "failed" in m or "unreachable" in m or "exception" in m:
+        return "system_error"
     if "risk gate" in m:
         return "risk_gate_block"
-    if "assign" in m:
+    if "assign" in m or "called away" in m or "re-enter" in m:
         return "assignment"
-    if "reject" in m or "partial fill" in m or "unfilled" in m:
+    if "complet" in m or "top-up" in m:            # rebalance/top-up finished
+        return "rebalance_completed"
+    if "reject" in m or "partial fill" in m or "unfilled" in m or "coverage gate" in m:
         return "fill_failure"
     if "divergence" in m or "stale" in m:
         return "data_staleness"
     return "system_error"
+
+
+# Severity drives the dashboard's colour (info/warn/error). It is derived from the **message**
+# (the descriptive, stable text), not the coarse alert_type — a top-up that *filled* deferred
+# names is info, while "failed to complete" is an error even though it contains "complete".
+_SEV_ERROR = ("system error", "failed", "unreachable", "no target weights",
+              "coverage gate blocked", "risk gate blocked", "exception", "traceback")
+_SEV_DONE = ("complet", "top-up", "re-enter", "called away")     # an operation that finished
+_SEV_ERROR_LATE = ("rejected", "blocked")
+_SEV_WARN = ("unfilled", "divergence", "stale", "partial")
+_SEV_PROBLEM_COUNT = re.compile(r"[1-9]\d*\s+(?:rejected|partial|unfilled)")
+
+
+def severity(message: str) -> str:
+    """Classify a message's severity as ``"error"`` / ``"warn"`` / ``"info"`` (dashboard colour).
+
+    Ordered so a *completed* operation reads as info unless it reports a non-zero problem count
+    (then warn), and hard failures read as error regardless of the word "complete" appearing.
+    """
+    m = (message or "").lower()
+    if any(p in m for p in _SEV_ERROR):
+        return "error"
+    if any(p in m for p in _SEV_DONE):
+        return "warn" if _SEV_PROBLEM_COUNT.search(m) else "info"
+    if any(p in m for p in _SEV_ERROR_LATE):
+        return "error"
+    if any(p in m for p in _SEV_WARN):
+        return "warn"
+    return "info"
 
 
 def make_alerter(db_engine, settings=None, *, send: Optional[Callable] = None,

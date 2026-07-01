@@ -705,9 +705,11 @@ function renderHealth(h){
            "Result of the last rebalance's pre-trade risk checks (leverage, single-name caps, covered-call coverage)."),
     sbChip(dr.l1==null?"mut":dr.l1>0.10?"warn":"ok", "Drift", dr.l1==null?"—":pct(dr.l1),
            "L1 distance between the live book and the last target weights. Telemetry only — drift never triggers a trade."),
-    sbChip({ok:"ok",warn:"warn",error:"bad"}[a.worst]||"ok", "Alerts 24h",
-           a.errors?`${a.errors} err`:a.warnings?`${a.warnings} warn`:"clear",
-           "Alerts raised in the last 24 hours, coloured by worst severity."),
+    sbChip({ok:"ok",warn:"warn",error:"bad"}[a.worst]||"ok", "Alerts",
+           a.latest ? (a.latest.message.length>46 ? a.latest.message.slice(0,45)+"…" : a.latest.message)
+                    : "clear",
+           (a.latest ? `Latest (${a.latest.severity}) · ${String(a.latest.ts).replace("T"," ").slice(0,19)} UTC:\n${a.latest.message}\n\n` : "")
+             + `${a.total||0} alert(s) in last 24h · dot = worst severity`),
   ].join("");
   // --- full detail tiles (hidden behind the Details toggle) ---
   $("healthtiles").innerHTML = [
@@ -728,7 +730,7 @@ function renderHealth(h){
           dr.n_drifting?`${dr.n_drifting} name${dr.n_drifting===1?"":"s"} off-target`:"on target"),
     htile("Alerts (24h)", {ok:"ok",warn:"warn",error:"bad"}[a.worst]||"ok",
       a.errors?`${a.errors} error${a.errors===1?"":"s"}`:a.warnings?`${a.warnings} warning${a.warnings===1?"":"s"}`:"all clear",
-      a.total?`${a.total} in last 24h`:"none in 24h"),
+      a.latest ? a.latest.message : (a.total?`${a.total} in last 24h`:"none in 24h")),
   ].join("");
   const fr=h.freshness||{}, bits=[];
   if(e.snapshot_ts) bits.push(`snapshot ${String(e.snapshot_ts).replace("T"," ").slice(0,19)} UTC`);
@@ -1030,11 +1032,13 @@ function renderOrders(orders){
 }
 
 function renderAlerts(alerts){
-  const sev = t => /block|error|fail|breach|halt/i.test(t||"") ? "bad" : /warn|stale|drift/i.test(t||"") ? "warn" : "info";
+  // Colour by the backend's message-derived severity (single source of truth), not the type name.
+  const cls = sv => sv==="error" ? "bad" : sv==="warn" ? "warn" : "info";
   $("alertssub").textContent = alerts && alerts.length ? `${alerts.length} recent` : "";
   $("alerts").innerHTML = table(alerts, [
     {h:"Time", cls:()=>"mut", f:r=>(r.ts||"").replace("T"," ").slice(0,19)},
-    {h:"Type", f:r=>`<span class="se-pill ${sev(r.type)}" style="font-size:10px">${r.type}</span>`},
+    {h:"Severity", f:r=>`<span class="se-pill ${cls(r.severity)}" style="font-size:10px">${r.severity||"info"}</span>`},
+    {h:"Type", cls:()=>"mut", f:r=>r.type},
     {h:"Message", cls:()=>"mut", f:r=>r.message},
     {h:"Emailed", cls:r=>r.delivered?"pos":"mut", f:r=>r.delivered?"✓ sent":"dry-run"},
   ]);

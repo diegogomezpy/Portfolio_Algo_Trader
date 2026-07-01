@@ -184,6 +184,7 @@ def test_api_alerts_recent():
     _seed(eng)
     al = data.api_alerts(eng)
     assert al[0]["type"] == "rebalance_completed" and al[0]["delivered"] is False
+    assert al[0]["severity"] == "info"          # "rebalance ... complete" → info, not a red error
 
 
 def test_series_stats_pure():
@@ -370,16 +371,19 @@ def test_api_health_heartbeat_thresholds():
 
 
 def test_api_health_alert_severity_and_window():
+    # Severity is message-derived now (not the type name), so use realistic message text.
     eng = _engine()
     with eng.begin() as c:
-        c.execute(insert(db.alerts).values(ts=datetime(2026, 7, 1, 15), alert_type="risk_gate_blocked",
-                  message="leverage breach", delivered=True))          # error, in-window
-        c.execute(insert(db.alerts).values(ts=datetime(2026, 7, 1, 15), alert_type="drift_warning",
-                  message="drift high", delivered=True))                # warn, in-window
-        c.execute(insert(db.alerts).values(ts=datetime(2026, 6, 1, 15), alert_type="error_old",
-                  message="stale", delivered=True))                     # >24h → excluded
+        c.execute(insert(db.alerts).values(ts=datetime(2026, 7, 1, 15, 30), alert_type="risk_gate_block",
+                  message="risk gate blocked rebalance: leverage breach", delivered=True))   # error, in-window
+        c.execute(insert(db.alerts).values(ts=datetime(2026, 7, 1, 15), alert_type="data_staleness",
+                  message="position divergence on 2 name(s)", delivered=True))               # warn, in-window
+        c.execute(insert(db.alerts).values(ts=datetime(2026, 6, 1, 15), alert_type="system_error",
+                  message="ingest produced stale prices", delivered=True))                   # >24h → excluded
     a = data.api_health(eng, now=datetime(2026, 7, 1, 16, tzinfo=UTC))["alerts_24h"]
-    assert a == {"total": 2, "errors": 1, "warnings": 1, "worst": "error"}
+    assert a["total"] == 2 and a["errors"] == 1 and a["warnings"] == 1 and a["worst"] == "error"
+    assert a["latest"]["severity"] == "error"        # most recent overall (15:30) surfaced for the header
+    assert "leverage breach" in a["latest"]["message"]
 
 
 def test_api_health_empty_is_safe():

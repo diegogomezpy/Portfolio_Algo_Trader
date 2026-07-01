@@ -15,6 +15,7 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import desc, func, select
 
 from engine import db
+from engine.alerts import severity as alert_severity
 
 _TRADING_DAYS = 252.0
 
@@ -44,9 +45,6 @@ _HB_LIVE_S = 180
 _HB_STALE_S = 600
 # Per-name |weight − target| above this counts a name as "drifting" in the reconciliation tile.
 _DRIFT_NAME_EPS = 0.005
-# Alert severity from the alert_type string (mirrors the dashboard's front-end classifier).
-_ALERT_ERR = re.compile(r"block|error|fail|breach|halt", re.I)
-_ALERT_WARN = re.compile(r"warn|stale|drift", re.I)
 
 
 def _is_option(symbol: str) -> bool:
@@ -219,12 +217,16 @@ def api_factors(db_engine) -> list[dict]:
 
 
 def api_alerts(db_engine, limit: int = 50) -> list[dict]:
-    """Most recent alerts (descending)."""
+    """Most recent alerts (descending), each with a message-derived ``severity``.
+
+    Severity comes from :func:`engine.alerts.severity` on the message text — the single source
+    of truth the dashboard colours by — so a top-up that *filled* deferred names reads as info,
+    not a red error (the old type-name regex mislabelled it)."""
     with db_engine.connect() as conn:
         rows = conn.execute(
             select(db.alerts).order_by(desc(db.alerts.c.ts)).limit(limit)).mappings().all()
     return [{"ts": str(r["ts"]), "type": r["alert_type"], "message": r["message"],
-             "delivered": r["delivered"]} for r in rows]
+             "severity": alert_severity(r["message"]), "delivered": r["delivered"]} for r in rows]
 
 
 # ====================================================================== #
@@ -249,13 +251,9 @@ def _as_utc(ts) -> datetime | None:
     return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts.astimezone(timezone.utc)
 
 
-def _alert_severity(alert_type: str) -> str:
-    t = alert_type or ""
-    if _ALERT_ERR.search(t):
-        return "error"
-    if _ALERT_WARN.search(t):
-        return "warn"
-    return "info"
+def _alert_severity(message: str) -> str:
+    """Severity for the ribbon/health worst-of roll-up — message-derived (see api_alerts)."""
+    return alert_severity(message)
 
 
 def _first_weekday(year: int, month: int) -> date:
@@ -297,7 +295,8 @@ def api_health(db_engine, *, now: datetime | None = None) -> dict:
         reb = _latest_rebalance(conn)
         last_order_ts = conn.execute(select(func.max(db.orders.c.submitted_at))).scalar()
         last_factor_date = conn.execute(select(func.max(db.factor_scores.c.date))).scalar()
-        alert_rows = conn.execute(select(db.alerts.c.alert_type, db.alerts.c.ts)).all()
+        alert_rows = conn.execute(
+            select(db.alerts.c.message, db.alerts.c.ts).order_by(desc(db.alerts.c.ts))).all()
 
     # --- engine heartbeat (snapshot freshness) ---
     snap_ts = _as_utc(snap.get("ts")) if snap else None
@@ -322,11 +321,18 @@ def api_health(db_engine, *, now: datetime | None = None) -> dict:
         if abs(v) > abs(max_dev):
             max_name, max_dev = s, v
 
-    # --- alerts in the last 24h, by severity ---
+    # --- alerts in the last 24h, by severity (message-derived) ---
     since = now - timedelta(hours=24)
-    sev = [_alert_severity(t) for t, ts in alert_rows
-           if (_as_utc(ts) is not None and _as_utc(ts) >= since)]
+    recent = [(msg, ts) for msg, ts in alert_rows
+              if (_as_utc(ts) is not None and _as_utc(ts) >= since)]
+    sev = [_alert_severity(msg) for msg, _ts in recent]
     errs, warns = sev.count("error"), sev.count("warn")
+    # The single most recent alert (any age) — surfaced in the header so "alert of what?" is
+    # answered at a glance, not just a count.
+    latest = None
+    if alert_rows:
+        lmsg, lts = alert_rows[0]
+        latest = {"message": lmsg, "severity": _alert_severity(lmsg), "ts": str(lts)}
 
     reb_ts = _as_utc((reb or {}).get("ts")) if reb else None
     est = _next_rebalance_estimate(today)
@@ -346,7 +352,8 @@ def api_health(db_engine, *, now: datetime | None = None) -> dict:
         "drift": {"l1": (snap or {}).get("drift"), "n_drifting": n_drifting,
                   "max_name": max_name, "max_dev": (max_dev if max_name else None)},
         "alerts_24h": {"total": len(sev), "errors": errs, "warnings": warns,
-                       "worst": ("error" if errs else "warn" if warns else "ok")},
+                       "worst": ("error" if errs else "warn" if warns else "ok"),
+                       "latest": latest},
         "freshness": {"snapshot_ts": str(snap.get("ts")) if snap else None,
                       "last_order_ts": str(last_order_ts) if last_order_ts else None,
                       "factors_date": str(last_factor_date) if last_factor_date else None},

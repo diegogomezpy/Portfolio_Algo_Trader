@@ -40,6 +40,32 @@ def test_classify_covers_the_six_types():
     assert set(cases.values()) <= set(alerts.ALERT_TYPES)
 
 
+def test_classify_checks_errors_before_complete():
+    # The old ordering matched "complete" in "failed to complete" → wrong green type.
+    assert alerts.classify("system error: monthly rebalance failed to complete (bad date)") == "system_error"
+    assert alerts.classify("cross-day top-up 2026-06-30: filled 1/1 previously-deferred name(s)") == "rebalance_completed"
+
+
+def test_severity_is_message_derived():
+    cases = {
+        # the exact bug: a successful top-up must be info, not a red error
+        "cross-day top-up 2026-06-30: filled 1/1 previously-deferred name(s)": "info",
+        "rebalance 2026-06-29 complete — equity: 18/19 filled (0 partial, 0 rejected, 1 deferred)": "info",
+        "assignment: 1 name(s) called away, 1 re-entered": "info",
+        # a completed op that reports non-zero problems downgrades to warn
+        "rebalance complete — equity 10/19 filled (2 partial, 3 rejected, 4 deferred)": "warn",
+        "covered-call write unfilled NVDA (2 contract(s))": "warn",
+        "position divergence on 2 name(s); DB corrected to Alpaca": "warn",
+        # hard failures are error even when the word "complete" appears
+        "system error: monthly rebalance failed to complete (bad date)": "error",
+        "order rejected AAPL buy 50: 422": "error",
+        "risk gate blocked rebalance: sector cap breached": "error",
+        "reconcile blocked: Alpaca unreachable": "error",
+    }
+    for msg, expected in cases.items():
+        assert alerts.severity(msg) == expected, msg
+
+
 def test_dry_run_records_without_sending():
     eng = _engine()
     sent = []
