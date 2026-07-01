@@ -5,6 +5,7 @@
 # Broker / market data
 alpaca-py==0.43.4
 yfinance==1.4.1
+lxml==6.1.1              # yfinance needs it to parse earnings dates (dashboard Events tab)
 # NOTE: pandas-datareader was removed — it import-crashes under pandas 3.0 and is
 # unused. engine/covariance.py fetches the Ken French FF5 file directly via urllib.
 
