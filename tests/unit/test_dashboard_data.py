@@ -217,6 +217,33 @@ def test_api_track_record_empty():
     assert tr["available"] is False and tr["dates"] == [] and tr["premium_collected"] == 0.0
 
 
+def test_api_track_record_monthly_returns_chain_across_months():
+    eng = _engine()
+    with eng.begin() as c:
+        rows = [(datetime(2026, 6, 1, 16), 100_000.0), (datetime(2026, 6, 2, 16), 101_000.0),
+                (datetime(2026, 6, 3, 16), 102_000.0),                       # June: 3 trading days
+                (datetime(2026, 7, 1, 16), 103_000.0), (datetime(2026, 7, 2, 16), 104_040.0)]  # July: 2
+        for ts, nv in rows:
+            c.execute(insert(db.snapshots).values(
+                ts=ts, nav=nv, cash=0.0, last_equity=100_000.0, weights={}, positions={}, drift=0.0))
+    m = data.api_track_record(eng)["monthly"]
+    assert len(m) == 2
+    jun, jul = m
+    # June is the first (partial) month → based off its own first NAV: 102000/100000 − 1 = 2%
+    assert jun["year"] == 2026 and jun["month"] == 6 and jun["days"] == 3
+    assert abs(jun["ret"] - 0.02) < 1e-9
+    # July chains off June's last close (102000): 104040/102000 − 1 = 2%
+    assert jul["month"] == 7 and jul["days"] == 2 and abs(jul["ret"] - 0.02) < 1e-9
+
+
+def test_api_risk_exposes_daily_returns_for_distribution():
+    eng = _engine()
+    _seed_curve(eng, [100, 110, 105, 120, 90, 100])
+    r = data.api_risk(eng)
+    assert len(r["returns"]) == r["days"] - 1                      # one return per day-over-day step
+    assert abs(r["returns"][0] - 0.10) < 1e-9                      # 100 → 110
+
+
 def _seed_curve(eng, navs):
     with eng.begin() as c:
         for i, nv in enumerate(navs):

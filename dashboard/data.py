@@ -458,6 +458,33 @@ def _daily_nav(rows) -> tuple[list[str], list[float]]:
            [by_day[d] for d in days]
 
 
+def _monthly_returns(dates: list[str], navs: list[float]) -> list[dict]:
+    """Month-over-month returns from the daily NAV curve (for the calendar heatmap).
+
+    Each calendar month's return chains off the **prior month's last NAV** (the standard monthly
+    return); the very first month is based off the first NAV in the series, so it reads as a
+    partial-month return from inception. ``days`` (trading days seen in the month) lets the UI mark
+    a one- or two-day partial month as provisional rather than a full month.
+    """
+    by_month: dict[str, list[float]] = {}
+    order: list[str] = []
+    for d, v in zip(dates, navs):
+        ym = str(d)[:7]                       # YYYY-MM
+        if ym not in by_month:
+            by_month[ym] = []
+            order.append(ym)
+        by_month[ym].append(v)
+    out: list[dict] = []
+    prev_close: float | None = None
+    for ym in order:
+        vals = by_month[ym]
+        base = prev_close if prev_close is not None else vals[0]
+        ret = (vals[-1] / base - 1) if base else None
+        out.append({"year": int(ym[:4]), "month": int(ym[5:7]), "ret": ret, "days": len(vals)})
+        prev_close = vals[-1]
+    return out
+
+
 def api_track_record(db_engine, *, start: str | None = None) -> dict:
     """Realized paper performance since inception, from the ``snapshots`` equity curve.
 
@@ -486,7 +513,7 @@ def api_track_record(db_engine, *, start: str | None = None) -> dict:
     return {"available": True, "inception": dates[0], "days": len(dates),
             "mature": len(dates) >= 10, "nav0": navs[0], "nav_now": navs[-1],
             "premium_collected": float(premium or 0.0), "dates": dates, "nav": navs,
-            "norm": norm, **stats}
+            "norm": norm, "monthly": _monthly_returns(dates, navs), **stats}
 
 
 # ====================================================================== #
@@ -587,6 +614,7 @@ def api_risk(db_engine, *, window: int = 10, start: str | None = None) -> dict:
         "sharpe": stats["sharpe"], "var95_1d_pct": var_param,
         "var95_1d_usd": (var_param * nav_now) if var_param is not None else None,
         "hist_var95_1d_pct": var_hist, "cvar95_1d_pct": cvar,
+        "returns": rets,   # daily-return series → distribution histogram
     }
 
 

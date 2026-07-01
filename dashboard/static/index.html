@@ -174,6 +174,18 @@
 
   .panel-sub { font-size: 10.5px; color: var(--muted); font-weight: 500; text-transform: none; letter-spacing: 0; margin-left: auto; }
 
+  /* monthly-returns calendar heatmap */
+  .heat { width: 100%; border-collapse: separate; border-spacing: 3px; margin: 6px 0 2px; table-layout: fixed; }
+  .heat th { font-size: 10px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; text-align: center; padding: 2px 0; }
+  .heat thead th:first-child, .heat tbody th { text-align: left; }
+  .heat tbody th { font-family: var(--mono); font-size: 12px; color: var(--fg); padding-right: 6px; }
+  .heat th.yr { color: var(--fg); }
+  .heat-c { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 11.5px; text-align: center;
+            padding: 7px 2px; border-radius: var(--r-sm); color: var(--fg); border: 1px solid var(--line); }
+  .heat-empty { background: var(--panel-2); border-color: transparent; }
+  .heat-yr { font-weight: 600; border-color: var(--line-2, var(--line)); }
+  .heat-prov { color: var(--muted); margin-left: 1px; }
+
   /* NAV chart panel */
   #navspark svg { display: block; width: 100%; }
   .spark-meta { display: flex; gap: 22px; padding: 11px 14px 4px; }
@@ -334,6 +346,10 @@
           <div class="spark-meta" id="tracklegend"></div>
           <div id="trackchart"></div>
         </div>
+        <div class="se-panel span2" style="margin-top:16px">
+          <h2>Monthly returns <span class="panel-sub" id="monthlysub">calendar of month-over-month paper returns</span></h2>
+          <div id="monthlyheat"></div>
+        </div>
         <div class="se-panel" style="margin-top:16px">
           <h2>Benchmark comparison <span class="panel-sub">paper, since go-live</span></h2>
           <div class="body" id="trackbench"></div>
@@ -355,6 +371,10 @@
         <div class="se-panel span2" style="margin-top:16px">
           <h2>Rolling volatility <span class="panel-sub" id="rvsub"></span></h2>
           <div id="rvchart"></div>
+        </div>
+        <div class="se-panel span2" style="margin-top:16px">
+          <h2>Daily return distribution <span class="panel-sub" id="distsub"></span></h2>
+          <div id="distchart"></div>
         </div>
       </div>
     </div>
@@ -550,6 +570,39 @@ function renderReturns(tr, slip, fees){
       + `</div>`
     : "";
 
+  $("monthlyheat").innerHTML = monthlyHeatmap(tr.monthly);
+  const mret=(tr.monthly||[]).filter(c=>c.ret!=null);
+  $("monthlysub").textContent = mret.length
+    ? `${mret.length} month${mret.length>1?'s':''} · green = up, red = down · intensity scales with size · “·” = partial month`
+    : "calendar of month-over-month paper returns";
+}
+
+// Monthly-returns calendar heatmap: one row per year, one cell per month, coloured green/red
+// by sign with intensity scaling to the largest move (design language §8 — signed-P&L colours).
+function monthlyHeatmap(monthly){
+  const cells=(monthly||[]).filter(c=>c.ret!=null);
+  if(!cells.length) return '<div class="se-empty">monthly returns appear once a calendar month of live history accumulates</div>';
+  const byYear={}; let maxAbs=0;
+  (monthly||[]).forEach(c=>{ (byYear[c.year]||(byYear[c.year]={}))[c.month]=c;
+    if(c.ret!=null) maxAbs=Math.max(maxAbs, Math.abs(c.ret)); });
+  maxAbs=maxAbs||0.01;
+  const green=cssv('--green','#4bbf7b'), red=cssv('--red','#cf6f66');
+  const heatColor=r=>{ if(r==null) return "transparent";
+    const t=Math.min(1, Math.abs(r)/maxAbs), base=r>=0?green:red;
+    return `color-mix(in srgb, ${base} ${(14+t*66).toFixed(0)}%, transparent)`; };
+  const years=Object.keys(byYear).map(Number).sort();
+  let h='<table class="heat"><thead><tr><th></th>'+MON.map(m=>`<th>${m}</th>`).join('')+'<th class="yr">Year</th></tr></thead><tbody>';
+  years.forEach(y=>{
+    let comp=1, any=false, row='';
+    for(let m=1;m<=12;m++){ const c=byYear[y][m];
+      if(c && c.ret!=null){ comp*=(1+c.ret); any=true;
+        const prov = c.days<5 ? '<span class="heat-prov">·</span>' : '';
+        row+=`<td class="heat-c" style="background:${heatColor(c.ret)}" data-tip="${MON[m-1]} ${y}: ${spct(c.ret)} over ${c.days} trading day${c.days>1?'s':''}${c.days<5?' (partial month)':''}">${spct(c.ret,1)}${prov}</td>`;
+      } else row+='<td class="heat-c heat-empty"></td>'; }
+    const ytd=any?comp-1:null;
+    h+=`<tr><th>${y}</th>${row}<td class="heat-c heat-yr" style="background:${heatColor(ytd)}" data-tip="${y} compounded: ${spct(ytd)}">${ytd==null?'':spct(ytd,1)}</td></tr>`;
+  });
+  return h+'</tbody></table>';
 }
 
 function renderExecution(slip, fees){
@@ -627,6 +680,49 @@ function renderRisk(risk, st){
     rvPanel.style.display=""; $("rvsub").textContent = `${risk.rolling_window}-day window · annualized`;
     $("rvchart").innerHTML = lineChart(risk.dates, risk.rolling_vol, {floor0:true, fmt:v=>pct(v,0), color:cssv('--amber','#d8a84b')});
   } else { rvPanel.style.display="none"; }
+
+  const rets=risk.returns||[];
+  const distPanel=$("distchart").closest(".se-panel");
+  if(rets.filter(v=>v!=null).length>=3){
+    distPanel.style.display="";
+    $("distsub").textContent = `${rets.length} daily returns · red band = 5th-pct VaR ${pct(risk.hist_var95_1d_pct)}`;
+    $("distchart").innerHTML = distChart(rets, risk.hist_var95_1d_pct!=null?-risk.hist_var95_1d_pct:null);
+  } else { distPanel.style.display="none"; }
+}
+
+// Daily-return distribution histogram: bars binned across the return range, coloured by sign,
+// with a dashed line at 0 and a red marker at the empirical 5th-percentile (1-day 95% VaR).
+function distChart(returns, varLevel){
+  const data=(returns||[]).filter(v=>v!=null);
+  if(data.length<3) return '<div class="se-empty">the return distribution appears once a few days of history accumulate</div>';
+  const W=720,H=210,pl=40,pr=14,pt=12,pb=30,pw=W-pl-pr,ph=H-pt-pb;
+  let lo=Math.min(...data,0), hi=Math.max(...data,0); const span=(hi-lo)||0.02;
+  lo-=span*0.04; hi+=span*0.04; const range=hi-lo;
+  const nb=Math.min(23, Math.max(7, Math.round(Math.sqrt(data.length))*2+1)), bw=range/nb;
+  const bins=new Array(nb).fill(0);
+  data.forEach(v=>{ let i=Math.floor((v-lo)/bw); if(i>=nb)i=nb-1; if(i<0)i=0; bins[i]++; });
+  const maxc=Math.max(...bins,1);
+  const sx=v=>pl+((v-lo)/range)*pw, sy=c=>pt+(1-c/maxc)*ph;
+  const grid=cssv('--grid','#16223a'), mut=cssv('--muted','#65758c'), green=cssv('--green','#4bbf7b'), red=cssv('--red','#cf6f66');
+  let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" style="display:block">`;
+  for(let k=0;k<=4;k++){ const c=maxc*k/4, y=sy(c).toFixed(1);
+    s+=`<line x1="${pl}" y1="${y}" x2="${W-pr}" y2="${y}" stroke="${grid}"/><text x="${pl-7}" y="${(+y+3.5).toFixed(1)}" text-anchor="end" font-size="11" fill="${mut}">${Math.round(c)}</text>`; }
+  const y0=sy(0).toFixed(1);
+  for(let i=0;i<nb;i++){ if(!bins[i]) continue;
+    const x0=sx(lo+i*bw), x1=sx(lo+(i+1)*bw), yb=sy(bins[i]), center=lo+(i+0.5)*bw;
+    const col=center>=0?green:red;
+    s+=`<rect x="${(x0+0.6).toFixed(1)}" y="${yb.toFixed(1)}" width="${Math.max(0.5,x1-x0-1.2).toFixed(1)}" height="${(y0-yb).toFixed(1)}" fill="${col}" fill-opacity="0.5"/>`; }
+  // x-axis ticks as percentages
+  for(let k=0;k<=4;k++){ const v=lo+range*k/4, x=sx(v).toFixed(1);
+    s+=`<text x="${x}" y="${H-9}" text-anchor="middle" font-size="11" fill="${mut}">${(v*100).toFixed(1)}%</text>`; }
+  // zero line
+  const xz=sx(0).toFixed(1);
+  s+=`<line x1="${xz}" y1="${pt}" x2="${xz}" y2="${(pt+ph).toFixed(1)}" stroke="${mut}" stroke-dasharray="3 3" opacity="0.55"/>`;
+  // VaR marker
+  if(varLevel!=null && varLevel>lo && varLevel<hi){ const xv=sx(varLevel).toFixed(1);
+    s+=`<line x1="${xv}" y1="${pt}" x2="${xv}" y2="${(pt+ph).toFixed(1)}" stroke="${red}" stroke-width="1.5"/>`
+      +`<text x="${xv}" y="${(pt+9).toFixed(1)}" text-anchor="middle" font-size="10" fill="${red}">VaR</text>`; }
+  return s+"</svg>";
 }
 
 // Underwater (drawdown) area chart: 0% at the top (high-water mark), losses shaded below.
