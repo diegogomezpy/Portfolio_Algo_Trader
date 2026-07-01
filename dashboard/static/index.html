@@ -185,6 +185,16 @@
   .heat-yr { font-weight: 600; border-color: var(--line-2, var(--line)); }
   .heat-prov { color: var(--muted); margin-left: 1px; }
 
+  /* covered-call overlay indicator */
+  .ovl { padding: 12px 14px 4px; }
+  .ovl-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+  .ovl-cov { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: var(--fg); }
+  .ovl-track { height: 7px; border-radius: 4px; background: var(--panel-2); overflow: hidden; border: 1px solid var(--line); }
+  .ovl-track i { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width .4s var(--ease); }
+  .ovl-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 11px; }
+  .ovl-s .ovl-k { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .ovl-s .ovl-v { font-size: 15px; font-weight: 600; margin-top: 2px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
   /* NAV chart panel */
   #navspark svg { display: block; width: 100%; }
   .spark-meta { display: flex; gap: 22px; padding: 11px 14px 4px; }
@@ -288,15 +298,16 @@
         <div class="body" id="positions"></div>
       </div>
       <div class="se-panel span2">
-        <h2>Factor tilt <span class="panel-sub" id="ftsub"></span></h2>
+        <h2 data-tip="How far the book leans toward each equity factor vs the universe average. Each bar is the book-weighted average z-score of holdings on that factor — positive = the portfolio tilts into it, 0 = neutral. This is the intended style exposure the optimizer builds.">Factor tilt <span class="panel-sub" id="ftsub"></span></h2>
         <div class="body" id="ftilt"></div>
       </div>
       <div class="se-panel">
-        <h2>Covered calls <span class="panel-sub" id="callssub"></span></h2>
+        <h2 data-tip="The covered-call income overlay: after each rebalance the engine sells ~0.30-delta calls (30–45 DTE) against holdings of ≥100 shares, collecting premium in exchange for capping upside above the strike. The indicator shows how much of the coverable book is currently written.">Covered calls <span class="panel-sub" id="callssub"></span></h2>
+        <div id="overlayind"></div>
         <div class="body" id="calls"></div>
       </div>
       <div class="se-panel">
-        <h2>Factor scores <span class="panel-sub">held names</span></h2>
+        <h2 data-tip="Per-name factor scores for the current book. Composite is the equal-weight blend of the four sub-factors (each a cross-sectional z-score); the optimizer sizes toward higher composites. Higher = more attractive on that factor.">Factor scores <span class="panel-sub">held names · z-scores</span></h2>
         <div class="body" id="factors"></div>
       </div>
     </div>
@@ -1238,6 +1249,48 @@ function renderPositions(s){
   ]);
 }
 
+// OCC option symbols end in a 6-digit expiry + C/P + 8-digit strike (e.g. AAPL260717C00210000).
+function _isOpt(sym){ return /\d{6}[CP]\d{8}$/.test(String(sym||"")); }
+
+// Covered-call overlay indicator: a status strip above the calls table showing how much of the
+// coverable book (holdings of ≥100 shares) is actually written, by notional, plus premium and the
+// nearest expiry. Overlay state is inferred from the data — no separate config flag exists.
+function overlayIndicator(s, calls){
+  const px = {};
+  (s.positions||[]).forEach(r => { px[r.symbol] = r.last_price!=null ? r.last_price : (r.qty ? r.market_value/r.qty : null); });
+  const held = {}; (s.positions||[]).forEach(r => { if(!_isOpt(r.symbol)) held[r.symbol]=r.qty||0; });
+  const coverableNames = Object.keys(held).filter(sym => held[sym] >= 100);
+  let eligNotional = 0; coverableNames.forEach(sym => { eligNotional += held[sym]*(px[sym]||0); });
+  const covUnders = new Set();
+  let covNotional = 0;
+  (calls||[]).forEach(c => { const u=c.underlying; covUnders.add(u);
+    const shares = Math.min((c.contracts||0)*100, held[u]||(c.contracts||0)*100);
+    covNotional += shares*(px[u]||0); });
+  const cov = eligNotional ? Math.min(1, covNotional/eligNotional) : null;
+  const nCov = covUnders.size, nCoverable = coverableNames.length;
+  const dtes = (calls||[]).map(c=>dte(c.expiration)).filter(d=>d!=null);
+  const nearest = dtes.length ? Math.min(...dtes) : null;
+  const deltas = (calls||[]).map(c=>c.delta).filter(d=>d!=null);
+  const avgDelta = deltas.length ? deltas.reduce((a,b)=>a+b,0)/deltas.length : null;
+  // status: active (calls written) / idle (coverable names but nothing written) / n/a (nothing ≥100sh)
+  const state = (calls&&calls.length) ? {cls:"ok",txt:"Active"} : nCoverable ? {cls:"warn",txt:"Idle — no calls written"} : {cls:"mut",txt:"n/a — no ≥100-share holdings"};
+  const covPct = cov==null ? "–" : pct(cov);
+  const stat = (label,val,cls)=>`<div class="ovl-s"><div class="ovl-k">${label}</div><div class="ovl-v ${cls||''}">${val}</div></div>`;
+  return `<div class="ovl">
+    <div class="ovl-head">
+      <span class="se-pill ${state.cls==='ok'?'ok':state.cls==='warn'?'warn':'neutral'}" style="font-size:10.5px">Overlay · ${state.txt}</span>
+      <span class="ovl-cov" data-tip="Covered notional ÷ coverable notional. Coverable = holdings of ≥100 shares; covered = the share-equivalent of written calls, at live prices.">${covPct} covered</span>
+    </div>
+    <div class="ovl-track" data-tip="Share of the coverable book (by notional) currently written."><i style="width:${cov==null?0:(cov*100).toFixed(0)}%"></i></div>
+    <div class="ovl-row">
+      ${stat("Names written", `${nCov} / ${nCoverable}`)}
+      ${stat("Premium collected", usd(s.premium_collected), "pos")}
+      ${stat("Nearest expiry", nearest==null?"–":nearest+"d", nearest!=null&&nearest<=7?"warn":"")}
+      ${stat("Avg delta", avgDelta==null?"–":avgDelta.toFixed(2))}
+    </div>
+  </div>`;
+}
+
 function renderCalls(s, calls){
   const totShares = (s.positions||[]).reduce((a,r)=>a+(r.qty||0),0);
   const coveredShares = (calls||[]).reduce((a,r)=>a+(r.contracts||0)*100,0);
@@ -1245,6 +1298,7 @@ function renderCalls(s, calls){
   $("callssub").innerHTML = (calls&&calls.length)
     ? `${calls.length} open · ${fmt(coveredShares)} sh covered${totShares?` (${pct(coveredShares/totShares)})`:""}`
     : (coverable?`0 open · ${coverable} names coverable`:"");
+  $("overlayind").innerHTML = overlayIndicator(s, calls);
   const px = {};
   (s.positions||[]).forEach(r => { px[r.symbol] = r.last_price!=null ? r.last_price : (r.qty ? r.market_value/r.qty : null); });
   $("calls").innerHTML = table(calls, [
