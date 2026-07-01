@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -130,24 +130,48 @@ def _arrival_mid(client, symbol, submitted_at):
         return _ARRIVAL_MID_CACHE[key]
     ref = None
     try:
-        start = datetime.fromisoformat(str(submitted_at))
-        end = start + timedelta(seconds=30)
+        start = _as_aware(datetime.fromisoformat(str(submitted_at)))
         quotes = client.historical_quotes(symbol, start=start.isoformat(),
-                                           end=end.isoformat(), limit=1)
+                                           end=(start + timedelta(seconds=60)).isoformat(), limit=1)
         bid = quotes[0].get("bid_px") if quotes else None
         ask = quotes[0].get("ask_px") if quotes else None
-        trade = None
-        try:
-            trades = client.historical_trades(symbol, start=start.isoformat(),
-                                              end=end.isoformat(), limit=1)
-            trade = trades[0].get("price") if trades else None
-        except Exception as exc:  # noqa: BLE001 — trades are the fallback; a miss just leaves the mid
-            log.warning("arrival-trade lookup failed for %s @ %s: %s", symbol, submitted_at, exc)
+        trade = _closest_trade(client, symbol, start)   # thin names may not print within 60s
         ref = data.arrival_reference(bid, ask, trade)
     except Exception as exc:  # noqa: BLE001 — a quote miss just drops that order from slippage
         log.warning("arrival-mid lookup failed for %s @ %s: %s", symbol, submitted_at, exc)
     _ARRIVAL_MID_CACHE[key] = ref
     return ref
+
+
+def _as_aware(dt: datetime) -> datetime:
+    """Coerce a datetime to UTC-aware (Alpaca timestamps are aware; stored ones may be naive)."""
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+def _closest_trade(client, symbol, at: datetime, *, window_s: int = 180):
+    """The trade price nearest ``at`` within ±``window_s`` — the prevailing print at submit.
+
+    A wider window than the quote so thin names (which may not trade for minutes) still yield a
+    real executed price for the spread guard to fall back on. ``None`` if none resolve."""
+    try:
+        trades = client.historical_trades(
+            symbol, start=(at - timedelta(seconds=window_s)).isoformat(),
+            end=(at + timedelta(seconds=window_s)).isoformat(), limit=500)
+    except Exception as exc:  # noqa: BLE001 — trades are the fallback; a miss just leaves the mid
+        log.warning("arrival-trade lookup failed for %s @ %s: %s", symbol, at, exc)
+        return None
+    best, best_dt = None, None
+    for t in trades or []:
+        px, tm = t.get("price"), t.get("time")
+        if not px or not tm:
+            continue
+        try:
+            gap = abs((_as_aware(datetime.fromisoformat(str(tm))) - at).total_seconds())
+        except ValueError:
+            continue
+        if best_dt is None or gap < best_dt:
+            best, best_dt = px, gap
+    return best
 
 
 def _live_slippage(client, limit: int = 200) -> dict:
