@@ -37,6 +37,13 @@ class _MarketClient(_FakeClient):
                 {"date": "2026-07-02", "open": "2026-07-02T09:30:00-04:00", "close": "2026-07-02T16:00:00-04:00"}]
 
 
+class _BarsClient(_FakeClient):
+    """FakeClient plus the bars surface the sparkline-seeding route reads."""
+
+    def bars_multi(self, symbols, start, end, timeframe="1Day"):
+        return {s: [{"close": 100.0 + i} for i in range(5)] for s in symbols}
+
+
 def _route(app, path):
     return next(r for r in app.routes if getattr(r, "path", None) == path).endpoint
 
@@ -85,6 +92,26 @@ def test_orders_route_uses_live_alpaca_when_client_present():
     # comes from Alpaca (a pending 'new' order the engine never wrote to Postgres)
     assert len(out) == 1 and out[0]["symbol"] == "AAPL" and out[0]["status"] == "new"
     assert _route(app, "/api/meta")()["live"] is True
+
+
+def test_price_history_route_seeds_from_bars():
+    eng = create_engine("sqlite://")
+    db.create_all(eng)
+    with eng.begin() as c:
+        c.execute(insert(db.snapshots).values(
+            ts=datetime(2026, 7, 1, 16), nav=100_000.0, cash=0.0, last_equity=100_000.0,
+            weights={"AAPL": 0.5}, positions={"AAPL": 100}, drift=0.0))
+    app = create_app(eng, client=_BarsClient([]), live=True)
+    out = _route(app, "/api/price_history")()
+    assert out["available"] is True
+    assert out["history"]["AAPL"] == [100.0, 101.0, 102.0, 103.0, 104.0]   # closes only, chronological
+
+
+def test_price_history_route_empty_without_client():
+    eng = create_engine("sqlite://")
+    db.create_all(eng)
+    out = _route(create_app(eng, live=False), "/api/price_history")()
+    assert out["available"] is False and out["history"] == {}
 
 
 def test_health_route_postgres_only_omits_market():

@@ -966,7 +966,7 @@ function sparkline(hist){
 const _px = {};
 let _navBase = [];
 let _calls = [];
-const PX_KEEP = 60;
+const PX_KEEP = 140;
 
 function livePx(r){ return r.last_price != null ? r.last_price : (r.qty ? r.market_value / r.qty : null); }
 
@@ -977,6 +977,17 @@ function pushPx(s){
     if (buf[buf.length - 1] !== p) buf.push(p);
     if (buf.length > PX_KEEP) buf.shift();
   });
+}
+
+// Seed each row's sparkline with a real intraday price window (Alpaca hourly bars) so it shows a
+// meaningful path immediately, instead of growing one point per live tick on the sparse IEX feed
+// (the "dead / 2-3 points" problem). Called once on boot; live ticks then extend the tail.
+async function seedSparklines(){
+  const h = await get("/api/price_history");
+  if (!h || !h.history) return;
+  for (const [sym, arr] of Object.entries(h.history)) {
+    if (Array.isArray(arr) && arr.length >= 2) _px[sym] = arr.slice(-PX_KEEP);
+  }
 }
 
 // A tiny inline sparkline (teal series — green/red are reserved for signed P&L per the design language).
@@ -1176,7 +1187,7 @@ function renderPositions(s){
     {h:"Last", tip:"Live last trade price (updates every second).", f:r=>r.last_price!=null?usd2(r.last_price):"–"},
     {h:"Day %", tip:"Change vs the prior day's close (live).",
       cls:r=>r.day_pct==null?"mut":sgn(r.day_pct), f:r=>r.day_pct==null?"–":spct(r.day_pct)},
-    {h:"Trend", tip:"Intraday live price path since the dashboard connected.", f:r=>miniSpark(_px[r.symbol])},
+    {h:"Trend", tip:"Recent price path — ~7 sessions of hourly bars, extended live.", f:r=>miniSpark(_px[r.symbol])},
     {h:"Mkt value", tip:"Position market value = qty × live price.", f:r=>usd(r.market_value)},
     {h:"Allocation", tip:"Current weight (bar) vs target (tick). Weight = market value ÷ NAV.",
       f:r=>allocBar(r.weight, r.target_weight, maxW)},
@@ -1198,7 +1209,7 @@ function renderCalls(s, calls){
     {h:"Under.", cls:()=>"sym", f:r=>symCell(r.underlying, "call")},
     {h:"Under. px", tip:"Live price of the underlying (updates every second). Watch it vs the strike.",
       f:r=>usd2(px[r.underlying])},
-    {h:"Trend", tip:"Intraday live price path of the underlying.", f:r=>miniSpark(_px[r.underlying])},
+    {h:"Trend", tip:"Recent price path of the underlying — ~7 sessions of hourly bars, extended live.", f:r=>miniSpark(_px[r.underlying])},
     {h:"Contr.", tip:"Contracts written. Each contract = 100 shares of coverage.", f:r=>fmt(r.contracts)},
     {h:"Strike", tip:"Strike price — shares can be called away above this.", f:r=>usd2(r.strike)},
     {h:"Expiry", tip:"Option expiration date.", f:r=>r.expiration||"–"},
@@ -1305,6 +1316,7 @@ async function boot(){
   eb.textContent = (META.env||"paper").toUpperCase();
   eb.className = "se-pill " + (live ? "bad" : "warn");
   eb.title = live ? "LIVE trading — real money" : "paper trading — simulated";
+  seedSparklines();          // hydrate row sparklines with an intraday window (live ticks extend it)
   loadActive();
 }
 $("refreshbtn").onclick = () => { $("refreshbtn").classList.add("spin"); setTimeout(()=>$("refreshbtn").classList.remove("spin"),700); loadActive(); };

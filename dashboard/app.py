@@ -395,6 +395,32 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
                 log.warning("live fees read failed: %s", exc)
         return data.api_fees(db_engine)
 
+    @app.get("/api/price_history")
+    def price_history() -> dict:
+        """Recent intraday price path per held name + call underlying, to seed the row sparklines.
+
+        Live-only (Alpaca bars). The sparklines otherwise start empty and grow one point per live
+        tick, so on the sparse IEX feed many rows never reach two points and read as "dead". Seeding
+        with real bars gives every row a proper window that live ticks then extend. No client (or a
+        read failure) → empty, and the front-end just keeps its tick-built buffer.
+        """
+        if client is None:
+            return {"available": False, "history": {}}
+        try:
+            underlyings = [c.get("underlying") for c in data.api_calls(db_engine) if c.get("underlying")]
+            syms = sorted({*_held_equities(db_engine), *underlyings})
+            if not syms:
+                return {"available": True, "history": {}, "timeframe": "1Hour"}
+            end = datetime.now(timezone.utc)
+            start = end - timedelta(days=8)                       # ~7 sessions of hourly bars
+            bars = client.bars_multi(syms, start.isoformat(), end.isoformat(), timeframe="1Hour")
+            hist = {sym: [b["close"] for b in rows if b.get("close") is not None][-80:]
+                    for sym, rows in bars.items()}
+            return {"available": True, "history": hist, "timeframe": "1Hour"}
+        except Exception as exc:  # noqa: BLE001 — sparklines are cosmetic; never break the page
+            log.warning("price history read failed: %s", exc)
+            return {"available": False, "history": {}}
+
     @app.get("/api/risk")
     def risk(start: str | None = None) -> dict:
         """Drawdown / volatility / VaR analytics from the equity curve (Postgres-only).
