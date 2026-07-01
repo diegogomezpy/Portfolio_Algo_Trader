@@ -575,6 +575,26 @@ def _rolling_vol(rets: list[float], window: int) -> list[float | None]:
     return out
 
 
+def _rolling_sharpe(rets: list[float], window: int) -> list[float | None]:
+    """Annualized rolling Sharpe over a trailing ``window`` of daily returns; ``None`` until it fills.
+
+    Rolling Sharpe is inherently jumpy on short windows — a near-flat stretch sends the ratio toward
+    ±∞ — so a near-zero window volatility yields ``None`` rather than a spike (the guard the plain
+    rolling-vol chart avoids by construction). Shown alongside rolling vol so a rising Sharpe reads
+    as improving risk-adjusted return, not just calmer markets.
+    """
+    out: list[float | None] = []
+    for i in range(len(rets)):
+        if i + 1 < window:
+            out.append(None)
+            continue
+        w = rets[i + 1 - window: i + 1]
+        mean = sum(w) / len(w)
+        sd = math.sqrt(sum((r - mean) ** 2 for r in w) / (len(w) - 1)) if len(w) > 1 else 0.0
+        out.append((mean / sd) * math.sqrt(_TRADING_DAYS) if sd > 1e-9 else None)
+    return out
+
+
 def api_risk(db_engine, *, window: int = 10, start: str | None = None) -> dict:
     """Risk analytics from the ``snapshots`` equity curve (Postgres-only, unit-testable).
 
@@ -605,9 +625,11 @@ def api_risk(db_engine, *, window: int = 10, start: str | None = None) -> dict:
     tail = [r for r in asc if q05 is not None and r <= q05]
     cvar = (-sum(tail) / len(tail)) if tail else var_hist
     roll = [None] + _rolling_vol(rets, window)            # align to dates (first day has no return)
+    roll_sharpe = [None] + _rolling_sharpe(rets, window)
     return {
         "available": True, "mature": len(dates) >= 10, "days": len(dates),
-        "dates": dates, "drawdown": dd, "rolling_vol": roll, "rolling_window": window,
+        "dates": dates, "drawdown": dd, "rolling_vol": roll, "rolling_sharpe": roll_sharpe,
+        "rolling_window": window,
         "current_drawdown": cur_dd, "max_drawdown": max_dd, "max_drawdown_date": dates[mdd_idx],
         "days_in_drawdown": dci, "peak_nav": max(navs), "nav_now": nav_now,
         "ann_vol": stats["ann_vol"], "daily_vol": daily_vol, "ann_return": stats["ann_return"],

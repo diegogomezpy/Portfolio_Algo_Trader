@@ -378,6 +378,10 @@
           <div id="rvchart"></div>
         </div>
         <div class="se-panel span2" style="margin-top:16px">
+          <h2 data-tip="Annualized Sharpe over a trailing window of daily returns — mean ÷ standard deviation, annualized. Reads as risk-adjusted return: above 0 the book is being paid for its risk. Jumpy on short windows, so near-flat stretches are dropped rather than spiking.">Rolling Sharpe <span class="panel-sub" id="rssub"></span></h2>
+          <div id="rschart"></div>
+        </div>
+        <div class="se-panel span2" style="margin-top:16px">
           <h2>Daily return distribution <span class="panel-sub" id="distsub"></span></h2>
           <div id="distchart"></div>
         </div>
@@ -690,6 +694,13 @@ function renderRisk(risk, st){
     rvPanel.style.display=""; $("rvsub").textContent = `${risk.rolling_window}-day window · annualized`;
     $("rvchart").innerHTML = lineChart(risk.dates, risk.rolling_vol, {floor0:true, fmt:v=>pct(v,0), color:cssv('--amber','#d8a84b')});
   } else { rvPanel.style.display="none"; }
+
+  const rsPts = (risk.rolling_sharpe||[]).filter(v=>v!=null).length;
+  const rsPanel = $("rschart").closest(".se-panel");
+  if(risk.mature && rsPts>=2){
+    rsPanel.style.display=""; $("rssub").textContent = `${risk.rolling_window}-day window · annualized · 0 = break-even`;
+    $("rschart").innerHTML = lineChart(risk.dates, risk.rolling_sharpe, {zero:true, fmt:v=>v.toFixed(1), color:cssv('--accent','#46b8ad')});
+  } else { rsPanel.style.display="none"; }
 
   const rets=risk.returns||[];
   const distPanel=$("distchart").closest(".se-panel");

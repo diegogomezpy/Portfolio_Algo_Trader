@@ -307,6 +307,10 @@ def test_api_risk_rolling_vol_alignment_and_mature():
     assert r["rolling_vol"][1] is None
     vals = [v for v in r["rolling_vol"] if v is not None]
     assert vals and all(v >= 0 for v in vals)                                          # vol is non-negative
+    # rolling Sharpe aligns to dates too and is finite where present (near-flat windows → None)
+    assert len(r["rolling_sharpe"]) == r["days"] and r["rolling_sharpe"][0] is None
+    sh = [v for v in r["rolling_sharpe"] if v is not None]
+    assert sh and all(abs(v) < 1e6 for v in sh)                                        # never ±∞
 
 
 def test_api_risk_empty_is_safe():
