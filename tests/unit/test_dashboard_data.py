@@ -447,3 +447,11 @@ def test_apply_live_prices_noop_without_prices():
     state = {"nav": 100.0, "day_pnl": 0.0, "positions": [{"symbol": "AAPL", "qty": 1, "market_value": 100.0}]}
     out = data.apply_live_prices(state, {})
     assert out["nav"] == 100.0 and "prices_live" not in out and "last_price" not in out["positions"][0]
+
+
+def test_apply_live_prices_computes_day_pct_from_prev_close():
+    state = {"nav": 100_000.0, "day_pnl": 0.0, "positions": [
+        {"symbol": "AAPL", "qty": 100, "market_value": 20_000.0}]}
+    out = data.apply_live_prices(state, {"AAPL": 210.0}, {"AAPL": 200.0})   # prior close 200 → +5%
+    row = out["positions"][0]
+    assert abs(row["day_pct"] - 0.05) < 1e-9

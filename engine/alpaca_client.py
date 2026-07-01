@@ -1044,6 +1044,7 @@ class AlpacaClient:
             "market_value": self._float_or_zero(getattr(position, "market_value", None)),
             "unrealized_pl": self._float_or_zero(getattr(position, "unrealized_pl", None)),
             "asset_class": self._enum_str(getattr(position, "asset_class", None)),
+            "lastday_px": self._opt_float(getattr(position, "lastday_price", None)),  # prior close → day %
         }
 
     def _parse_asset(self, asset: Any) -> dict:

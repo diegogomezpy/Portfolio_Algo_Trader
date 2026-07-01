@@ -251,6 +251,7 @@
   <div class="wrap">
     <div class="gatebar" id="gatebar"></div>
     <div class="kpis" id="kpis"></div>
+    <div class="kpis" id="perfkpis" style="margin-top:12px"></div>
     <div class="se-panel" style="margin-top:16px">
       <h2>Net asset value <span class="panel-sub" id="navrange"></span></h2>
       <div class="spark-meta" id="sparkmeta"></div>
@@ -462,8 +463,10 @@ async function get(p){ try { const r = await fetch(p); return r.ok ? await r.jso
 
 // ---- Track record (live paper performance vs benchmarks + slippage) -------
 const cssv = (n,f) => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || f;
-const BENCH_VAR = {SPY:"--spy", XYLD:"--accent", JEPI:"--amber", QYLD:"--purple", DIVO:"--pink"};
-function bcol(sym,i){ const palette=["--spy","--accent","--amber","--purple"]; return cssv(BENCH_VAR[sym]||palette[i%palette.length], "#8893a3"); }
+// Benchmarks are the engine's set (SPY + CBOE BXMD/BXRD). Neutral/purple/blue only — teal is the
+// strategy series and green/red are signed-P&L only (design language §8).
+const BENCH_VAR = {SPY:"--spy", BXMD:"--purple", BXRD:"--sec-tech"};
+function bcol(sym,i){ const palette=["--spy","--purple","--sec-tech"]; return cssv(BENCH_VAR[sym]||palette[i%palette.length], "#8893a3"); }
 
 function trackChart(dates, series){
   const W=720,H=240,pl=52,pr=14,pt=12,pb=24,pw=W-pl-pr,ph=H-pt-pb;
@@ -774,6 +777,22 @@ function kpis(s){
     "Number of equity names held (options excluded)."));
   $("kpis").innerHTML = cards.join("");
 }
+// Performance KPI strip on the Overview (design language: Return · Sharpe · Max-DD · Volatility).
+// Data already in /api/track_record (series_stats). '*' until ≥10 days of history.
+function perfStrip(tr){
+  if(!tr || !tr.available){ $("perfkpis").innerHTML = ""; return; }
+  const star = tr.mature ? "" : "*";
+  $("perfkpis").innerHTML = [
+    kpi("Return (ITD)", `<span class="${sgn(tr.total_return)}">${spct(tr.total_return)}</span>`,
+        "since inception, net", "Cumulative return of the paper book since go-live."),
+    kpi("Sharpe"+star, tr.mature&&tr.sharpe!=null?tr.sharpe.toFixed(2):"—",
+        tr.mature?"annualized":"needs ≥10 days", "Annualized return ÷ annualized volatility (rf ≈ 0)."),
+    kpi("Max drawdown", `<span class="${sgn(tr.max_drawdown)}">${pct(tr.max_drawdown)}</span>`,
+        "worst peak-to-trough", "Largest peak-to-trough NAV decline since inception."),
+    kpi("Volatility"+star, tr.mature&&tr.ann_vol!=null?pct(tr.ann_vol):"—",
+        tr.mature?"annualized":"needs ≥10 days", "Annualized standard deviation of daily returns."),
+  ].join("");
+}
 function kpi(label, val, sub, tip){
   return `<div class="se-kpi"${tip?` data-tip="${esc(tip)}"`:""}><div class="label">${label}</div><div class="val">${val}</div>${sub?`<div class="sub">${sub}</div>`:""}</div>`;
 }
@@ -864,14 +883,14 @@ function noteFresh(s){
 
 // Overview — System health + risk gate + KPIs + NAV (the daily glance)
 async function loadOverview(){
-  const [s, hist] = await Promise.all(["/api/state","/api/nav_history"].map(get));
+  const [s, hist, tr] = await Promise.all(["/api/state","/api/nav_history","/api/track_record"].map(get));
   noteFresh(s);
   if(!s){ $("kpis").innerHTML =
       '<div class="errbox"><div class="big">Backend unreachable</div>Postgres or the dashboard API is not responding.</div>';
     return; }
   _navBase = hist || [];
   pushPx(s);
-  renderGate(s); kpis(s); drawNav(s.nav); renderFootstrip(s);
+  renderGate(s); kpis(s); perfStrip(tr); drawNav(s.nav); renderFootstrip(s);
 }
 
 // Portfolio — Holdings (positions/calls/factors) + Activity (orders/alerts)
@@ -1029,6 +1048,8 @@ function renderPositions(s){
     {h:"Symbol", cls:()=>"sym", f:r=>symCell(r.symbol, "stock")},
     {h:"Qty", tip:"Shares held.", f:r=>fmt(r.qty)},
     {h:"Last", tip:"Live last trade price (updates every second).", f:r=>r.last_price!=null?usd2(r.last_price):"–"},
+    {h:"Day %", tip:"Change vs the prior day's close (live).",
+      cls:r=>r.day_pct==null?"mut":sgn(r.day_pct), f:r=>r.day_pct==null?"–":spct(r.day_pct)},
     {h:"Trend", tip:"Intraday live price path since the dashboard connected.", f:r=>miniSpark(_px[r.symbol])},
     {h:"Mkt value", tip:"Position market value = qty × live price.", f:r=>usd(r.market_value)},
     {h:"Allocation", tip:"Current weight (bar) vs target (tick). Weight = market value ÷ NAV.",

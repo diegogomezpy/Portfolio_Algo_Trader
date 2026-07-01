@@ -115,15 +115,17 @@ def api_state(db_engine) -> dict:
             "n_positions": sum(1 for s, q in positions.items() if q and not _is_option(s))}
 
 
-def apply_live_prices(state: dict, prices: dict) -> dict:
+def apply_live_prices(state: dict, prices: dict, prev_close: dict | None = None) -> dict:
     """Overlay live streamed trade ``prices`` onto an :func:`api_state` dict for sub-second
     headline metrics (Phase 2 latency). Each equity position is marked to its live price and NAV
     to the **mark-to-market delta** from the 60s snapshot (``snap_price = market_value / qty``);
-    day-P&L, gross exposure and weights are re-derived off the live NAV. Options / names with no
-    live tick keep their snapshot value. Mutates and returns ``state``; a no-op with no prices.
+    day-P&L, gross exposure and weights are re-derived off the live NAV. ``prev_close`` (prior-day
+    close per symbol) yields a live per-position ``day_pct``. Options / names with no live tick keep
+    their snapshot value. Mutates and returns ``state``; a no-op with no prices.
     """
     nav = state.get("nav")
     positions = state.get("positions") or []
+    prev_close = prev_close or {}
     if nav is None or not prices:
         return state
     delta = 0.0
@@ -134,6 +136,9 @@ def apply_live_prices(state: dict, prices: dict) -> dict:
             delta += qty * (float(live) - mv / qty)          # mark-to-market move vs the snapshot
             row["last_price"] = round(float(live), 4)
             row["market_value"] = round(qty * float(live), 2)
+        pc = prev_close.get(sym)
+        if live and pc:
+            row["day_pct"] = float(live) / float(pc) - 1.0
     state["prices_live"] = True
     if not delta:
         return state

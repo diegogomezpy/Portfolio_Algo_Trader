@@ -65,8 +65,8 @@ def _load_meta(env: str, settings) -> dict:
         "max_single_name_pct": getattr(pf, "max_single_name_pct", 0.05) if pf else 0.05,
         "max_sector_pct": getattr(pf, "max_sector_pct", 0.30) if pf else 0.30,
         "target_delta": getattr(cc, "target_delta", 0.30) if cc else 0.30,
-        "live_benchmarks": list(getattr(dash, "live_benchmarks", ["SPY", "XYLD", "JEPI"]))
-        if dash else ["SPY", "XYLD", "JEPI"],
+        "live_benchmarks": list(getattr(dash, "live_benchmarks", ["SPY", "BXMD", "BXRD"]))
+        if dash else ["SPY", "BXMD", "BXRD"],
     }
 
 
@@ -108,6 +108,8 @@ async def _monitor_loop(client, db_engine, interval: int, price_feed=None) -> No
             await asyncio.to_thread(monitor.monitor_once, client, db_engine, target_weights=tw)
             if price_feed is not None:
                 price_feed.set_symbols(await asyncio.to_thread(_held_equities, db_engine))
+                pos = await asyncio.to_thread(client.all_positions)
+                price_feed.set_prev_close({p.get("symbol"): p.get("lastday_px") for p in pos})
         except Exception as exc:  # noqa: BLE001
             log.warning("dashboard monitor pass failed: %s", exc)
         await asyncio.sleep(interval)
@@ -327,8 +329,8 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
     @app.get("/api/state")
     def state() -> dict:
         s = data.api_state(db_engine)
-        if price_feed is not None:                         # sub-second overlay of live trade prices
-            s = data.apply_live_prices(s, price_feed.snapshot())
+        if price_feed is not None:                         # sub-second overlay of live trade prices + day %
+            s = data.apply_live_prices(s, price_feed.snapshot(), price_feed.prev_close())
         return s
 
     @app.get("/api/nav_history")

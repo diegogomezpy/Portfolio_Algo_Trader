@@ -30,6 +30,7 @@ class LivePriceFeed:
         self._stream_factory = stream_factory
         self._backoff = reconnect_backoff_s
         self._prices: dict[str, float] = {}
+        self._prev_close: dict[str, float] = {}     # prior-day close per symbol → live day %
         self._symbols: set[str] = {s for s in symbols if s}
         self._lock = threading.Lock()
         self._thread: Optional[threading.Thread] = None
@@ -96,6 +97,12 @@ class LivePriceFeed:
             except Exception as exc:  # noqa: BLE001
                 log.warning("price feed resubscribe stop failed", extra={"error": str(exc)})
 
+    def set_prev_close(self, prev_close) -> None:
+        """Cache prior-day closes ``{symbol: price}`` (from Alpaca positions' ``lastday_px``), so the
+        dashboard can compute a live day % = (live − prior close) / prior close."""
+        with self._lock:
+            self._prev_close = {k: float(v) for k, v in (prev_close or {}).items() if v}
+
     def get(self, symbol: str) -> Optional[float]:
         with self._lock:
             return self._prices.get(symbol)
@@ -104,3 +111,8 @@ class LivePriceFeed:
         """A copy of the live price cache (for the NAV overlay)."""
         with self._lock:
             return dict(self._prices)
+
+    def prev_close(self) -> dict[str, float]:
+        """A copy of the prior-close cache (for live day %)."""
+        with self._lock:
+            return dict(self._prev_close)
