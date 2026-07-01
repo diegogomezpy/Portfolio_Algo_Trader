@@ -485,16 +485,14 @@ def work_pending_adjustments(client, broker, db_engine, *, settings, as_of, aler
     _mark_applied(db_engine, resolve)
     if not orders:
         return 0
-    touch_fn = (lambda s, side: _touch_price(client, s, side)) if hasattr(client, "latest_nbbo") else None
-    mkt_close = None
-    try:
-        nc = client.market_clock().get("next_close")
-        mkt_close = datetime.fromisoformat(nc) if nc else None
-    except Exception:  # noqa: BLE001
-        pass
+    # Cross-day top-up runs the same tiered executor as the rebalance. ADV isn't recomputed here,
+    # so names fall to the "thin" tactic (patient ladder + phantom guard) — the safe default for
+    # completing a residual.
+    quote_fn = (lambda s: _equity_quote(client, s)) if hasattr(client, "latest_nbbo") else None
     rep = submit_and_track(orders, broker=broker, db_engine=db_engine,
                            cycle_key=f"{as_of.isoformat()}-topup", pending=[],
-                           touch=touch_fn, market_close=mkt_close, alert=alert)
+                           quote=quote_fn, adv={}, ex=ex, market_close=_market_close(client),
+                           order_state=_order_state(), alert=alert)
     log.info("cross-day top-up", extra={"date": as_of.isoformat(), "names": len(orders), "filled": rep.filled})
     if alert and rep.filled:
         alert(f"cross-day top-up {as_of.isoformat()}: filled {rep.filled}/{rep.submitted} "

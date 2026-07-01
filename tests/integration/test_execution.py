@@ -160,7 +160,7 @@ def test_run_cycle_no_overlay_skips_call_legs():
 def test_cross_day_topup_fills_deferred_name():
     """A name deferred on the establishing day is re-worked (and filled) on the next trading day,
     re-derived from target-vs-held, with its pending row marked applied."""
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
     from sqlalchemy import insert
     eng = _engine()
     with eng.begin() as c:                                    # last rebalance targeted INBX at 5%
@@ -175,7 +175,8 @@ def test_cross_day_topup_fills_deferred_name():
         def account(self): return {"equity": 100_000.0}
         def latest_trade(self, sym): return 90.0
         def latest_nbbo(self, sym): return (89.9, 90.1)
-        def market_clock(self): return {"next_close": "2026-06-30T16:00:00-04:00"}
+        # A close a couple hours out (top-ups run mid-session) so the tiered ladder window is open.
+        def market_clock(self): return {"next_close": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()}
 
     n = run_eod.work_pending_adjustments(_Client(), _FakeBroker(), eng,
                                          settings=load_settings(), as_of=date(2026, 6, 30))

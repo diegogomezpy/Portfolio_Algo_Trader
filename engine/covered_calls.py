@@ -69,6 +69,11 @@ class OptionChase:
     sleep: Callable[[float], None] = time.sleep
     # Fill state source — the live order feed (instant) when set, else broker.get_order (REST).
     order_state: Optional[Callable[[str], dict]] = None
+    # Write guard: skip a covered-call *write* when the current bid is below this fraction of the
+    # planned chain mid — don't dump a call into a lowball/junk bid (option analog of the equity
+    # phantom-spread guard). Option spreads are naturally wide, so this keys off the bid-vs-mid
+    # give-up, not a raw spread %. Writes only; closes still cross to get the risk off.
+    min_bid_frac: float = 0.7
 
 
 @dataclass
@@ -308,7 +313,11 @@ def _execute_option_leg(broker, db_engine, orders: Sequence[CoveredCallOrder], *
     paid = {o.option_symbol: 0.0 for o in orders}        # Σ fill_px × contracts × 100 (cash)
     active = {o.option_symbol for o in orders}
 
-    def _price(sym: str, o: CoveredCallOrder, *, force_market: bool) -> tuple[str, Optional[float]]:
+    is_write = side == "sell"
+
+    def _price(sym: str, o: CoveredCallOrder, *, force_market: bool) -> tuple[Optional[str], Optional[float]]:
+        # ``(None, None)`` means "skip this name this round" — only writes skip (an income miss,
+        # not a breach); closes never skip (we want the risk off), falling back to market.
         if force_market:
             return "market", None
         if not do_chase:                                 # single passive pass at the planned mid
@@ -316,9 +325,15 @@ def _execute_option_leg(broker, db_engine, orders: Sequence[CoveredCallOrder], *
         try:
             px = chase.touch(sym, side)                  # bid (sell) / ask (buy) — cross to the touch
         except AlpacaAPIError as exc:
-            log.warning("option touch failed; taking it market", extra={"symbol": sym, "error": str(exc)})
-            return "market", None
-        return ("limit", round(float(px), 2)) if px else ("market", None)
+            log.warning("option touch failed", extra={"symbol": sym, "error": str(exc)})
+            return (None, None) if is_write else ("market", None)
+        if not px:
+            return (None, None) if is_write else ("market", None)
+        if is_write and o.limit_price and float(px) < o.limit_price * chase.min_bid_frac:
+            log.info("covered-call write skipped: bid below floor",
+                     extra={"underlying": o.underlying, "bid": float(px), "planned_mid": o.limit_price})
+            return None, None                            # junk bid — don't give away the premium
+        return "limit", round(float(px), 2)
 
     def _round(tag: str, *, force_market: bool) -> None:
         live: list[tuple[str, str]] = []
@@ -328,6 +343,8 @@ def _execute_option_leg(broker, db_engine, orders: Sequence[CoveredCallOrder], *
             if residual <= 0:
                 active.discard(sym); continue
             otype, lp = _price(sym, o, force_market=force_market)
+            if otype is None:                            # write guard tripped — leave uncovered, retry next round
+                continue
             coid = f"cc:{stamp}:{o.underlying}:{event}:{tag}"
             try:
                 resp = broker.submit_option_order(sym, residual, side, position_intent=position_intent,

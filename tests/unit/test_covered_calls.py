@@ -428,6 +428,22 @@ def test_close_chase_sweeps_residual_at_market():
     assert rows[0]["event_type"] == "close" and rows[0]["contracts"] == 2
 
 
+def test_write_guard_skips_junk_bid():
+    # Planned chain mid is 2.0; the live bid is a lowball 1.0 (< 0.7×2.0 = 1.4) → skip the write
+    # entirely rather than dump the call into a junk bid. Nothing submitted, no lifecycle, alert.
+    eng = _engine()
+    panel, as_of, chains = _write_setup()
+    broker = _FakeBroker()
+    alerts = []
+    chase = _fast_chase(touch=lambda sym, side: 1.0, max_rounds=3)       # bid always a lowball
+    submitted, _ = cc.write_calls(_FakeClient(chains=chains), broker, eng, {"AAA": 250},
+                                  settings=_settings(), as_of=as_of, price_panel=panel,
+                                  chase=chase, alert=alerts.append)
+    assert broker.option_orders == [] and submitted == []               # never sold into the junk bid
+    assert _lifecycle(eng) == []
+    assert any("unfilled" in a and "AAA" in a for a in alerts)
+
+
 # ====================================================================== #
 # Assignment re-entry (4.6)
 # ====================================================================== #
