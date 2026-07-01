@@ -230,6 +230,10 @@
   @media (max-width: 1100px) { .ov-live { grid-template-columns: 1fr; } }
   .ovflash { display: inline-block; border-radius: 6px; }
   #ov-treemap svg { display: block; width: 100%; height: 100%; }
+  .evtf { background: transparent; color: var(--muted); border: 1px solid transparent; border-radius: 6px;
+          padding: 3px 9px; font: 600 10.5px 'Space Grotesk'; letter-spacing: .02em; cursor: pointer; transition: all .15s var(--ease); }
+  .evtf:hover { color: var(--fg); background: var(--panel-2); }
+  .evtf.on { color: var(--fg); background: var(--panel-2); border-color: var(--line); }
 
   /* upcoming events list */
   .evtlist { display: flex; flex-direction: column; }
@@ -1406,16 +1410,24 @@ function renderGauge(s,calls){
 }
 
 let _eventsData=[];
+const EVT_FILTERS=[["all","All"],["earnings","Earnings"],["expiry","Expiries"],["rebalance","Rebalance"]];
+let _evtFilter="all";
+function setEvtFilter(f){ _evtFilter=f; renderEventsPanel(); }
 function evtSecsLeft(dateStr){ return (Date.parse(dateStr+"T00:00:00-04:00")-etNow())/1000; }
 function renderEventsPanel(){
   const host=$("ov-events"); if(!host) return;
-  const ev=_eventsData.slice(0,6);
-  if(!ev.length){ host.innerHTML=ovPanel("Events","countdown · live","<div style='font:400 12px var(--mono);color:var(--muted)'>no upcoming events</div>"); return; }
+  const all=_eventsData||[];
   const COL={earnings:"#9b87d4",expiry:"#d8a84b",rebalance:"#46b8ad"};
-  const rows=ev.map(e=>{ const secs=evtSecsLeft(e.date),col=COL[e.type]||"#65758c",live=secs<7*86400;
+  const pills=EVT_FILTERS.map(([k,l])=>{ const on=_evtFilter===k, n=k==="all"?all.length:all.filter(e=>e.type===k).length;
+    return `<button onclick="setEvtFilter('${k}')" class="evtf${on?' on':''}">${l}${k!=="all"?` <span style="opacity:.55">${n}</span>`:''}</button>`; }).join("");
+  const filterRow=`<div style="display:flex;gap:5px;flex-wrap:wrap;padding:10px 14px 6px;border-bottom:1px solid var(--line-soft)">${pills}</div>`;
+  const ev=(_evtFilter==="all"?all:all.filter(e=>e.type===_evtFilter)).slice(0,7);
+  let list;
+  if(!ev.length){ list=`<div style="padding:16px;font:400 11.5px var(--mono);color:var(--muted)">no ${_evtFilter==="all"?"":(EVT[_evtFilter]||{}).label?.toLowerCase()+" "||""}events upcoming</div>`; }
+  else { list=ev.map(e=>{ const secs=evtSecsLeft(e.date),col=COL[e.type]||"#65758c",live=secs<7*86400;
     const label=(e.symbol?e.symbol+" ":"")+((EVT[e.type]||{}).label||e.type)+(e.detail&&e.type==='expiry'?" · "+e.detail:"");
-    return `<div style="display:flex;align-items:center;gap:11px;padding:9px 16px;border-bottom:1px solid var(--line-soft)"><span style="width:7px;height:7px;border-radius:50%;background:${col};flex:none"></span><div style="flex:1;min-width:0"><div style="font:500 12px 'Space Grotesk';color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${label}</div><div style="font:400 10px var(--mono);color:var(--muted)">${mdy(e.date)}</div></div><span style="font:500 12px var(--mono);color:${live?'#46b8ad':'#aab4c3'}">${hms(secs)}</span></div>`; }).join("");
-  host.innerHTML=ovPanel("Events","countdown · live",`<div style="margin:-14px -16px">${rows}</div>`);
+    return `<div style="display:flex;align-items:center;gap:11px;padding:9px 16px;border-bottom:1px solid var(--line-soft)"><span style="width:7px;height:7px;border-radius:50%;background:${col};flex:none"></span><div style="flex:1;min-width:0"><div style="font:500 12px 'Space Grotesk';color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${label}</div><div style="font:400 10px var(--mono);color:var(--muted)">${mdy(e.date)}</div></div><span style="font:500 12px var(--mono);color:${live?'#46b8ad':'#aab4c3'}">${hms(secs)}</span></div>`; }).join(""); }
+  host.innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Events</span><span class="ovhs">countdown · live</span></div>${filterRow}<div style="max-height:280px;overflow-y:auto" class="sf-scroll">${list}</div></div>`;
 }
 
 function renderWaterfall(s){
