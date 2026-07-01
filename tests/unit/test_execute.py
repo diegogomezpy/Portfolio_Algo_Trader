@@ -425,3 +425,25 @@ def test_chase_partial_then_completes_across_rounds():
     assert rep.filled == 1                                # fully filled across two rounds
     assert sum(f["qty"] for f in _rows(eng, db.fills)) == 10
     assert _rows(eng, db.pending_adjustments) == []
+
+
+def test_order_state_feed_replaces_get_order():
+    """When a live-feed order_state reader is supplied, fills are read from it and
+    broker.get_order is never called (the feed replaces REST polling)."""
+    eng = _engine()
+    broker = _FakeBroker()
+
+    def _boom(_oid):
+        raise AssertionError("broker.get_order must not be called when the feed is supplied")
+    broker.get_order = _boom
+
+    def feed_state(oid):                                  # feed reports the order filled at once
+        return {"id": oid, "symbol": "AAPL", "side": "buy", "qty": 50.0, "order_type": "market",
+                "status": "filled", "limit_price": None, "filled_qty": 50.0,
+                "filled_avg_price": 100.0, "submitted_at": "2026-07-01T16:30:00",
+                "filled_at": "2026-07-01T16:31:00"}
+
+    rep = execute.submit_and_track([_po("AAPL", "buy", 50)], broker=broker, db_engine=eng,
+                                   cycle_key="c", sleep=lambda _s: None, order_state=feed_state)
+    assert rep.filled == 1 and rep.submitted == 1
+    assert sum(f["qty"] for f in _rows(eng, db.fills)) == 50.0

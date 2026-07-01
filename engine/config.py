@@ -102,3 +102,16 @@ def get_alpaca_client(feed: str = "iex"):
         secret_key=require_env("ALPACA_SECRET_KEY"),
         feed=feed,
     )
+
+
+def get_trading_stream():
+    """Build an Alpaca ``TradingStream`` (paper) from env credentials — the live order feed's
+    websocket source (see :class:`engine.order_feed.LiveOrderFeed`). Imported lazily so pure
+    pipeline code never pulls the streaming SDK.
+
+    Raises:
+        RuntimeError: If ALPACA_API_KEY / ALPACA_SECRET_KEY are not set.
+    """
+    from alpaca.trading.stream import TradingStream
+
+    return TradingStream(require_env("ALPACA_API_KEY"), require_env("ALPACA_SECRET_KEY"), paper=True)

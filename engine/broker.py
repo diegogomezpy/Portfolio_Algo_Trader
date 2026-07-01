@@ -44,6 +44,18 @@ _POSITION_INTENTS = {
     "sell_to_close": PositionIntent.SELL_TO_CLOSE,
 }
 
+# Time-in-force: DAY (default) and CLS = the 4pm closing auction (limit-on-close / market-on-close),
+# used for the execution redesign's residual fallback (docs/EXECUTION.md §8).
+_TIF = {"day": TimeInForce.DAY, "cls": TimeInForce.CLS, "opg": TimeInForce.OPG,
+        "gtc": TimeInForce.GTC, "ioc": TimeInForce.IOC, "fok": TimeInForce.FOK}
+
+
+def _tif(name: str) -> TimeInForce:
+    try:
+        return _TIF[str(name).lower()]
+    except KeyError:
+        raise ValueError(f"unknown time_in_force {name!r} (want one of {sorted(_TIF)})") from None
+
 
 class Broker:
     """Write client for the Alpaca **paper** trading API (orders only)."""
@@ -85,30 +97,30 @@ class Broker:
         order_type: str = "market",
         limit_price: float | None = None,
         client_order_id: str | None = None,
+        time_in_force: str = "day",
     ) -> dict:
         """Submit one equity order; return the normalized order dict.
 
-        ``side`` is ``"buy"`` / ``"sell"``; ``order_type`` is ``"market"`` or
-        ``"limit"`` (limit requires ``limit_price``). ``client_order_id`` is the
-        idempotency key the execution layer sets per rebalance cycle. Time-in-force
-        is DAY, so anything unfilled lapses at session close (and is also cancelled
-        explicitly by the fill poll).
+        ``side`` is ``"buy"`` / ``"sell"``; ``order_type`` is ``"market"`` or ``"limit"`` (limit
+        requires ``limit_price``). ``client_order_id`` is the idempotency key the execution layer
+        sets per rebalance cycle. ``time_in_force`` defaults to ``"day"`` (lapses at the close);
+        pass ``"cls"`` to route the residual into the **closing auction** (limit-on-close when a
+        ``limit_price`` is given, else market-on-close) — docs/EXECUTION.md §8.
 
         Raises:
-            ValueError: bad ``side`` / ``order_type``, or limit without a price.
+            ValueError: bad ``side`` / ``order_type`` / ``time_in_force``, or limit without a price.
             AlpacaAPIError: if Alpaca rejects the request.
         """
         side_enum = self._side(side)
+        tif = _tif(time_in_force)
         if order_type == "market":
             req = MarketOrderRequest(symbol=symbol, qty=qty, side=side_enum,
-                                     time_in_force=TimeInForce.DAY,
-                                     client_order_id=client_order_id)
+                                     time_in_force=tif, client_order_id=client_order_id)
         elif order_type == "limit":
             if limit_price is None:
                 raise ValueError("limit order requires limit_price")
             req = LimitOrderRequest(symbol=symbol, qty=qty, side=side_enum,
-                                    time_in_force=TimeInForce.DAY,
-                                    limit_price=float(limit_price),
+                                    time_in_force=tif, limit_price=float(limit_price),
                                     client_order_id=client_order_id)
         else:
             raise ValueError(f"unknown order_type {order_type!r} (want 'market' or 'limit')")

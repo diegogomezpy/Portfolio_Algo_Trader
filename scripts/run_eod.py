@@ -146,6 +146,16 @@ def _market_close(client):
         return None
 
 
+# The always-on live order feed (engine.order_feed.LiveOrderFeed), started in serve(); stays None
+# outside the scheduler process (tests, --once) so the executor falls back to broker.get_order.
+_FEED = None
+
+
+def _order_state():
+    """The live-feed fill reader when the feed is running, else ``None`` (executor → REST fallback)."""
+    return _FEED.state if _FEED is not None else None
+
+
 def _option_chase(client, market_close):
     """An :class:`OptionChase` that crosses option orders to the touch until they fill (or the
     session nears ``market_close``). ``None`` when the client can't quote options — the overlay
@@ -153,7 +163,7 @@ def _option_chase(client, market_close):
     if not hasattr(client, "latest_option_quote"):
         return None
     return covered_calls.OptionChase(touch=(lambda sym, side: _option_touch(client, sym, side)),
-                                     market_close=market_close)
+                                     market_close=market_close, order_state=_order_state())
 
 
 def _format_breakdown(report, written, skipped) -> str:
@@ -254,7 +264,8 @@ def run_cycle(
     touch_fn = (lambda s, side: _touch_price(client, s, side)) if hasattr(client, "latest_nbbo") else None
     report = submit_and_track(orders, broker=broker, db_engine=db_engine,
                               cycle_key=as_of.isoformat(), pending=pending,
-                              touch=touch_fn, market_close=mkt_close, alert=alert)
+                              touch=touch_fn, market_close=mkt_close,
+                              order_state=_order_state(), alert=alert)
 
     # Overlay (D31): write fresh calls AFTER equity settles, on the shares actually held. The
     # writes chase to the bid so they actually fill, and the lifecycle row lands only on a fill.
@@ -584,6 +595,11 @@ def graceful_shutdown(scheduler, broker) -> None:
         log.info("cancelled open orders on shutdown", extra={"count": n})
     except Exception as exc:  # noqa: BLE001
         log.error("cancel-all on shutdown failed", extra={"error": str(exc)})
+    if _FEED is not None:
+        try:
+            _FEED.stop()
+        except Exception as exc:  # noqa: BLE001
+            log.error("order feed stop failed", extra={"error": str(exc)})
 
 
 def serve(*, env: str, settings, client, broker, db_engine, alert=None,
@@ -607,6 +623,19 @@ def serve(*, env: str, settings, client, broker, db_engine, alert=None,
     ex = settings.execution
     hour = int(getattr(ex, "rebalance_hour_et", 13)) if hour is None else hour
     minute = int(getattr(ex, "rebalance_minute_et", 0)) if minute is None else minute
+
+    # Start the always-on live order feed (instant fills, no REST polling). If the websocket can't
+    # connect it self-reconnects and the executor transparently falls back to broker.get_order.
+    global _FEED
+    try:
+        from engine import config as _config
+        from engine.order_feed import LiveOrderFeed
+        _FEED = LiveOrderFeed(stream_factory=_config.get_trading_stream, get_order=broker.get_order)
+        _FEED.start()
+        log.info("live order feed started")
+    except Exception as exc:  # noqa: BLE001 — the feed is an optimization; never block startup
+        log.error("live order feed failed to start; using REST fallback", extra={"error": str(exc)})
+        _FEED = None
 
     sched = BlockingScheduler(timezone=pytz.timezone("America/New_York"))
     sched.add_job(

@@ -268,6 +268,7 @@ def submit_and_track(
     market_close: datetime | None = None,
     close_buffer_s: float = 300.0,
     max_rounds: int = 40,
+    order_state: Callable[[str], dict] | None = None,
     alert: Callable[[str], None] | None = None,
 ) -> ExecReport:
     """Submit ``orders``, poll fills, persist to DB, and return a per-symbol :class:`ExecReport`.
@@ -286,19 +287,25 @@ def submit_and_track(
 
     ``pending`` carries the planner's sub-min-trade deltas, persisted alongside. ``sleep`` is
     injectable so tests run instantly. ``ExecReport.lines`` lists each name's outcome.
+
+    ``order_state(order_id) -> dict`` is where fill state is read from — the live order feed
+    (:class:`engine.order_feed.LiveOrderFeed`) when available (instant, no REST/rate-limit), else
+    it defaults to ``broker.get_order`` (the pre-feed behaviour). Submits/cancels always go
+    through ``broker``.
     """
     pending = list(pending or [])
+    read = order_state or broker.get_order
     out = {o.symbol: {"symbol": o.symbol, "side": o.side, "qty": int(o.qty),
                       "filled": 0, "status": "deferred", "reason": ""} for o in orders}
     if touch is None:
         return _single_pass(orders, broker=broker, db_engine=db_engine, cycle_key=cycle_key,
                             pending=pending, out=out, poll_attempts=poll_attempts,
-                            poll_interval_s=poll_interval_s, sleep=sleep, alert=alert)
+                            poll_interval_s=poll_interval_s, sleep=sleep, read=read, alert=alert)
     return _chase(orders, broker=broker, db_engine=db_engine, cycle_key=cycle_key,
                   pending=pending, out=out, poll_attempts=poll_attempts,
                   poll_interval_s=poll_interval_s, sleep=sleep, touch=touch,
                   now=now or (lambda: datetime.now(timezone.utc)), market_close=market_close,
-                  close_buffer_s=close_buffer_s, max_rounds=max_rounds, alert=alert)
+                  close_buffer_s=close_buffer_s, max_rounds=max_rounds, read=read, alert=alert)
 
 
 def _finalize(out, orders, *, submitted, rejected, pending, db_engine, cycle_key) -> ExecReport:
@@ -325,7 +332,7 @@ def _finalize(out, orders, *, submitted, rejected, pending, db_engine, cycle_key
 
 
 def _single_pass(orders, *, broker, db_engine, cycle_key, pending, out,
-                 poll_attempts, poll_interval_s, sleep, alert) -> ExecReport:
+                 poll_attempts, poll_interval_s, sleep, read, alert) -> ExecReport:
     already = _existing_client_ids(db_engine, cycle_key)
     live: list[tuple[str, PlannedOrder]] = []   # (order_id, planned)
     rejected = 0
@@ -361,10 +368,12 @@ def _single_pass(orders, *, broker, db_engine, cycle_key, pending, out,
             if oid not in open_ids:
                 continue
             try:
-                st = broker.get_order(oid)
+                st = read(oid)
             except AlpacaAPIError as exc:   # transient read hiccup — keep the order open, re-poll next pass
-                log.warning("poll get_order failed; will retry next pass",
+                log.warning("poll read failed; will retry next pass",
                             extra={"id": oid, "error": str(exc)})
+                continue
+            if st is None:                  # feed hasn't seen it yet / fallback unresolved — retry next pass
                 continue
             _upsert_order(db_engine, cycle_key, st)
             if st["status"] in _TERMINAL:
@@ -380,10 +389,12 @@ def _single_pass(orders, *, broker, db_engine, cycle_key, pending, out,
         except AlpacaAPIError as exc:
             log.warning("cancel failed at session end", extra={"id": oid, "error": str(exc)})
         try:
-            st = broker.get_order(oid)
+            st = read(oid)
         except AlpacaAPIError as exc:   # can't read final state — leave it; reconcile corrects from Alpaca
-            log.warning("session-end get_order failed; leaving to reconcile",
+            log.warning("session-end read failed; leaving to reconcile",
                         extra={"id": oid, "error": str(exc)})
+            continue
+        if st is None:
             continue
         _upsert_order(db_engine, cycle_key, st)
         filled_qty = int(st.get("filled_qty") or 0)
@@ -396,9 +407,11 @@ def _single_pass(orders, *, broker, db_engine, cycle_key, pending, out,
 
     for oid, o in live:
         try:
-            st = broker.get_order(oid)
+            st = read(oid)
         except AlpacaAPIError as exc:   # tally only — a read hiccup must not crash a completed cycle
-            log.warning("tally get_order failed; counting unknown", extra={"id": oid, "error": str(exc)})
+            log.warning("tally read failed; counting unknown", extra={"id": oid, "error": str(exc)})
+            continue
+        if st is None:
             continue
         out[o.symbol]["filled"] = int(st.get("filled_qty") or 0)
     return _finalize(out, orders, submitted=len(live), rejected=rejected, pending=pending,
@@ -407,7 +420,7 @@ def _single_pass(orders, *, broker, db_engine, cycle_key, pending, out,
 
 def _chase(orders, *, broker, db_engine, cycle_key, pending, out, poll_attempts,
            poll_interval_s, sleep, touch, now, market_close, close_buffer_s, max_rounds,
-           alert) -> ExecReport:
+           read, alert) -> ExecReport:
     by_sym = {o.symbol: o for o in orders}
     active = {o.symbol for o in orders}
     submitted_n = 0
@@ -455,9 +468,11 @@ def _chase(orders, *, broker, db_engine, cycle_key, pending, out, poll_attempts,
                 if oid not in open_ids:
                     continue
                 try:
-                    st = broker.get_order(oid)
+                    st = read(oid)
                 except AlpacaAPIError as exc:
-                    log.warning("poll get_order failed; will retry next pass", extra={"id": oid, "error": str(exc)})
+                    log.warning("poll read failed; will retry next pass", extra={"id": oid, "error": str(exc)})
+                    continue
+                if st is None:
                     continue
                 _upsert_order(db_engine, cycle_key, st)
                 if st["status"] in _TERMINAL:
@@ -470,9 +485,11 @@ def _chase(orders, *, broker, db_engine, cycle_key, pending, out, poll_attempts,
                 except AlpacaAPIError as exc:
                     log.warning("cancel failed", extra={"id": oid, "error": str(exc)})
             try:
-                st = broker.get_order(oid)
+                st = read(oid)
             except AlpacaAPIError as exc:
-                log.warning("round-end get_order failed; leaving to reconcile", extra={"id": oid, "error": str(exc)})
+                log.warning("round-end read failed; leaving to reconcile", extra={"id": oid, "error": str(exc)})
+                continue
+            if st is None:
                 continue
             _upsert_order(db_engine, cycle_key, st)
             fq = int(st.get("filled_qty") or 0)

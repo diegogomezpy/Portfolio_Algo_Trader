@@ -67,6 +67,8 @@ class OptionChase:
     poll_attempts: int = 30
     poll_interval_s: float = 2.0
     sleep: Callable[[float], None] = time.sleep
+    # Fill state source — the live order feed (instant) when set, else broker.get_order (REST).
+    order_state: Optional[Callable[[str], dict]] = None
 
 
 @dataclass
@@ -299,6 +301,7 @@ def _execute_option_leg(broker, db_engine, orders: Sequence[CoveredCallOrder], *
         return []
     chase = chase or OptionChase()                       # single-pass default (real time.sleep)
     do_chase = chase.touch is not None
+    read = chase.order_state or broker.get_order         # live feed (instant) else REST
     stamp = as_of.isoformat() if as_of else "now"        # coid namespace (daily safety pass omits as_of)
     by_sym = {o.option_symbol: o for o in orders}
     filled = {o.option_symbol: 0 for o in orders}
@@ -346,9 +349,11 @@ def _execute_option_leg(broker, db_engine, orders: Sequence[CoveredCallOrder], *
                 if oid not in open_ids:
                     continue
                 try:
-                    st = broker.get_order(oid)
+                    st = read(oid)
                 except AlpacaAPIError as exc:
                     log.warning("option poll failed; will retry", extra={"id": oid, "error": str(exc)})
+                    continue
+                if st is None:
                     continue
                 if st["status"] in _TERMINAL:
                     open_ids.discard(oid)
@@ -360,9 +365,11 @@ def _execute_option_leg(broker, db_engine, orders: Sequence[CoveredCallOrder], *
                 except AlpacaAPIError as exc:
                     log.warning("option cancel failed", extra={"id": oid, "error": str(exc)})
             try:
-                st = broker.get_order(oid)
+                st = read(oid)
             except AlpacaAPIError as exc:   # leave to the position-sourced book; just don't log a phantom
                 log.warning("option round-end read failed", extra={"id": oid, "error": str(exc)})
+                continue
+            if st is None:
                 continue
             fq = int(st.get("filled_qty") or 0)
             if fq > 0:
