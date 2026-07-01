@@ -103,6 +103,16 @@ class LivePriceFeed:
         with self._lock:
             self._prev_close = {k: float(v) for k, v in (prev_close or {}).items() if v}
 
+    def prime(self, prices) -> None:
+        """Seed the last-price cache from a fallback source (e.g. Alpaca position marks) so prices —
+        and the day % derived from them — are populated even when the trade stream is quiet (market
+        closed, or a sparse IEX name that hasn't printed). Live stream trades overwrite these on the
+        next tick, so during market hours the stream still wins."""
+        with self._lock:
+            for k, v in (prices or {}).items():
+                if v and v > 0:
+                    self._prices[str(k)] = float(v)
+
     def get(self, symbol: str) -> Optional[float]:
         with self._lock:
             return self._prices.get(symbol)

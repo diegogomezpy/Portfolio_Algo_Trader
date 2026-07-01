@@ -148,6 +148,11 @@ async def _monitor_loop(client, db_engine, interval: int, price_feed=None) -> No
                 price_feed.set_symbols(await asyncio.to_thread(_held_equities, db_engine))
                 pos = await asyncio.to_thread(client.all_positions)
                 price_feed.set_prev_close({p.get("symbol"): p.get("lastday_px") for p in pos})
+                # Prime last prices from Alpaca position marks so prices + day% show even when the
+                # trade stream is quiet (after hours / sparse IEX). Live trades overwrite these.
+                price_feed.prime({p["symbol"]: (p["market_value"] / p["qty"])
+                                  for p in pos if p.get("qty") and p.get("market_value") is not None
+                                  and str(p.get("asset_class") or "us_equity").endswith("equity")})
         except Exception as exc:  # noqa: BLE001
             log.warning("dashboard monitor pass failed: %s", exc)
         await asyncio.sleep(interval)

@@ -99,8 +99,14 @@ def compute_targets(settings, as_of: date, *, db_engine=None,
     ff5 = covariance.load_ff5_daily(max_stale_days=7)
     sector_map = sectors.load_sector_map()["sector"]
 
-    sc = factors.score_date(as_of, settings=settings, price_panel=panel,
-                            all_fundamentals=allf, eligible_symbols=eligible).set_index("symbol")
+    scores = factors.score_date(as_of, settings=settings, price_panel=panel,
+                                all_fundamentals=allf, eligible_symbols=eligible)
+    if db_engine is not None:                       # persist for the dashboard's factor panel
+        try:
+            factors.write_factor_scores(scores, db_engine)
+        except Exception as exc:  # noqa: BLE001 — telemetry only; never block the rebalance
+            log.warning("factor-score persist failed (non-fatal)", extra={"error": str(exc)})
+    sc = scores.set_index("symbol")
     composite = sc["composite_score"].dropna()
     if composite.empty:
         return TargetPlan(pd.Series(dtype=float), {}, universe=set(), sector_map=sector_map, panel=panel)
