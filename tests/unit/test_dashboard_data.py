@@ -455,3 +455,13 @@ def test_apply_live_prices_computes_day_pct_from_prev_close():
     out = data.apply_live_prices(state, {"AAPL": 210.0}, {"AAPL": 200.0})   # prior close 200 → +5%
     row = out["positions"][0]
     assert abs(row["day_pct"] - 0.05) < 1e-9
+
+
+def test_apply_live_prices_ignores_bad_tick():
+    # A stray tick >35% off the snapshot price (20000/100 = $200) must be ignored, not 10× the row.
+    state = {"nav": 100_000.0, "day_pnl": 0.0,
+             "positions": [{"symbol": "AAPL", "qty": 100, "market_value": 20_000.0}]}
+    out = data.apply_live_prices(state, {"AAPL": 2000.0}, {"AAPL": 200.0})   # bad 10× print
+    row = out["positions"][0]
+    assert row["market_value"] == 20_000.0 and "last_price" not in row and "day_pct" not in row
+    assert out["nav"] == 100_000.0                                          # NAV unmoved by the bad tick

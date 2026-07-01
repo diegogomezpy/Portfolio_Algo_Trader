@@ -115,6 +115,9 @@ def api_state(db_engine) -> dict:
             "n_positions": sum(1 for s, q in positions.items() if q and not _is_option(s))}
 
 
+_LIVE_PX_BAND = 0.35   # reject a live tick > 35% off the 60s snapshot price as a bad/stale print
+
+
 def apply_live_prices(state: dict, prices: dict, prev_close: dict | None = None) -> dict:
     """Overlay live streamed trade ``prices`` onto an :func:`api_state` dict for sub-second
     headline metrics (Phase 2 latency). Each equity position is marked to its live price and NAV
@@ -132,6 +135,11 @@ def apply_live_prices(state: dict, prices: dict, prev_close: dict | None = None)
     for row in positions:
         sym, qty, mv = row.get("symbol"), row.get("qty"), row.get("market_value")
         live = prices.get(sym)
+        snap_px = (mv / qty) if (qty and mv is not None) else None
+        # Bad-tick guard: ignore a live print that deviates > _LIVE_PX_BAND from the 60s snapshot
+        # price (Alpaca truth) — a stray IEX print shouldn't 10× a position or spike NAV for a tick.
+        if live and snap_px and abs(float(live) / snap_px - 1.0) > _LIVE_PX_BAND:
+            live = None
         if live and qty and mv is not None:
             delta += qty * (float(live) - mv / qty)          # mark-to-market move vs the snapshot
             row["last_price"] = round(float(live), 4)
