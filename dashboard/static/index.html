@@ -219,6 +219,20 @@
   .attr-val { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12.5px; font-weight: 600; }
   .attr-val .attr-sub { color: var(--muted); font-weight: 400; margin-left: 6px; }
 
+  /* upcoming events list */
+  .evtlist { display: flex; flex-direction: column; }
+  .evt { display: grid; grid-template-columns: 128px 1fr; gap: 14px; align-items: center;
+         padding: 10px 4px; border-top: 1px solid var(--line); }
+  .evt:first-child { border-top: 0; }
+  .evt-date { font-family: var(--mono); font-weight: 600; color: var(--fg); font-size: 13px; }
+  .evt-in { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-top: 1px; }
+  .evt-body { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+  .evt-type { font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700;
+              padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .evt-type.warn { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 42%, transparent); }
+  .evt-type.acc { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 42%, transparent); }
+  .evt-detail { color: var(--fg-dim); font-size: 12px; }
+
   /* NAV chart panel */
   #navspark svg { display: block; width: 100%; }
   .spark-meta { display: flex; gap: 22px; padding: 11px 14px 4px; }
@@ -267,6 +281,7 @@
     <button class="tab active" data-view="overview">Overview</button>
     <button class="tab" data-view="portfolio">Portfolio</button>
     <button class="tab" data-view="performance">Performance</button>
+    <button class="tab" data-view="events">Events</button>
     <button class="tab" data-view="backtest">Backtest</button>
   </nav>
   <div class="right">
@@ -446,6 +461,15 @@
   </div>
 </div>
 
+<div id="events-view" style="display:none">
+  <div class="wrap">
+    <div class="se-panel" style="margin-top:16px">
+      <h2>Upcoming events <span class="panel-sub" id="eventssub"></span></h2>
+      <div class="body" id="events"></div>
+    </div>
+  </div>
+</div>
+
 <div id="backtest-view"><iframe id="bt" title="backtest dashboard"></iframe></div>
 
 <script>
@@ -504,7 +528,7 @@ document.addEventListener("mouseover", e=>{ const t=e.target.closest("[data-tip]
 document.addEventListener("mousemove", e=>{ if(tipEl) posTip(e); });
 
 // ---- two-level nav: top tabs + sub-tabs -----------------------------------
-const VIEWS = ["overview","portfolio","performance","backtest"];
+const VIEWS = ["overview","portfolio","performance","events","backtest"];
 const SUBS  = {portfolio:["holdings","activity"], performance:["returns","risk","attribution","execution"]};
 let activeView = "overview";
 const activeSub = {portfolio:"holdings", performance:"returns"};
@@ -532,6 +556,7 @@ function loadActive(){
   if (activeView === "overview") loadOverview();
   else if (activeView === "portfolio") loadPortfolio();
   else if (activeView === "performance") loadPerformance();
+  else if (activeView === "events") loadEvents();
 }
 
 async function get(p){ try { const r = await fetch(p); return r.ok ? await r.json() : null; } catch { return null; } }
@@ -620,6 +645,30 @@ function renderAttribution(st){
   $("attrsectors").innerHTML = secs.map(s=>attrBar(
     `<span style="display:inline-flex;align-items:center;gap:7px"><i style="width:9px;height:9px;border-radius:2px;background:${secColor(s.sector)}"></i>${s.sector}</span>`,
     s.pnl, smax)).join("");
+}
+
+// ---- Events tab: upcoming earnings / option expiries / next rebalance ------
+async function loadEvents(){ renderEvents(await get("/api/events")); }
+const EVT = { earnings:{label:"Earnings", cls:"warn"}, expiry:{label:"Option expiry", cls:"acc"},
+              rebalance:{label:"Rebalance", cls:"mut"} };
+function evtWhen(d){ return d==null?"" : d<0?"past" : d===0?"today" : d===1?"tomorrow" : `in ${d} days`; }
+function renderEvents(e){
+  const rows = (e && e.events) || [];
+  const loading = !!(e && e.earnings_loading);
+  if(!rows.length){
+    $("events").innerHTML = `<div class="se-empty">No upcoming events in the next 120 days${loading?" — loading earnings…":""}.</div>`;
+    $("eventssub").textContent = loading ? "loading earnings…" : "";
+    return;
+  }
+  $("eventssub").textContent = `${rows.length} in the next 120 days${loading?" · loading earnings…":""}`;
+  $("events").innerHTML = '<div class="evtlist">' + rows.map(r => {
+    const t = EVT[r.type] || {label:r.type, cls:"mut"};
+    const sym = r.symbol ? tkrChip(r.symbol, (REF[r.symbol.toUpperCase()]||{}).sector) : "";
+    return `<div class="evt"><div class="evt-when"><div class="evt-date">${mdy(r.date)}</div>`
+      + `<div class="evt-in">${evtWhen(r.days_until)}</div></div>`
+      + `<div class="evt-body"><span class="evt-type ${t.cls}">${t.label}</span> ${sym}`
+      + `<span class="evt-detail">${r.detail||""}</span></div></div>`;
+  }).join("") + '</div>';
 }
 
 function renderReturns(tr, slip, fees){

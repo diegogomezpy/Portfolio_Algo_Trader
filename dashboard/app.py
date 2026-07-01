@@ -21,6 +21,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import threading
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -91,6 +93,42 @@ def _held_equities(db_engine) -> list[str]:
                 if r.get("qty") and not data._is_option(r["symbol"])]
     except Exception:  # noqa: BLE001
         return []
+
+
+# Earnings dates for the Events tab come from yfinance (the engine's fetch_earnings_dates) — the one
+# external call the dashboard makes. It's slow per-symbol, so it's refreshed in a background thread
+# and cached; the route never blocks on it and serves whatever's cached (possibly empty on the very
+# first paint, filling in within ~30s). Best-effort: a Yahoo hiccup just leaves earnings empty.
+_EARN_CACHE: dict = {"ts": 0.0, "data": {}, "loading": False, "key": ""}
+_EARN_TTL = 6 * 3600
+
+
+def _events_symbols(db_engine) -> list[str]:
+    """Held equities + call underlyings — the names an earnings calendar should cover."""
+    unders = [c.get("underlying") for c in data.api_calls(db_engine) if c.get("underlying")]
+    return sorted({*_held_equities(db_engine), *unders})
+
+
+def _earnings_map(symbols: list[str]) -> tuple[dict, bool]:
+    """Cached ``{symbol: [ISO dates]}`` earnings, refreshed off-thread. Returns (data, loading)."""
+    key = ",".join(symbols)
+    fresh = _EARN_CACHE["key"] == key and (time.time() - _EARN_CACHE["ts"]) < _EARN_TTL
+    if symbols and not fresh and not _EARN_CACHE["loading"]:
+        _EARN_CACHE["loading"] = True
+
+        def _load():
+            try:
+                from engine.covered_calls import fetch_earnings_dates
+                m = fetch_earnings_dates(symbols)
+                _EARN_CACHE.update(data={k: [str(d) for d in v] for k, v in m.items()},
+                                   ts=time.time(), key=key)
+            except Exception as exc:  # noqa: BLE001 — earnings are best-effort; never break the tab
+                log.warning("events: earnings fetch failed: %s", exc)
+            finally:
+                _EARN_CACHE["loading"] = False
+
+        threading.Thread(target=_load, name="events-earnings", daemon=True).start()
+    return _EARN_CACHE["data"], _EARN_CACHE["loading"]
 
 
 async def _monitor_loop(client, db_engine, interval: int, price_feed=None) -> None:
@@ -420,6 +458,42 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
         except Exception as exc:  # noqa: BLE001 — sparklines are cosmetic; never break the page
             log.warning("price history read failed: %s", exc)
             return {"available": False, "history": {}}
+
+    @app.get("/api/events")
+    def events() -> dict:
+        """Upcoming calendar for the book: option expiries, the next rebalance, and (best-effort,
+        cached) earnings dates for held names. Sorted soonest-first, windowed to ~120 days."""
+        today = date.today()
+
+        def _iso(v):
+            try:
+                return date.fromisoformat(str(v)[:10])
+            except (ValueError, TypeError):
+                return None
+
+        out: list[dict] = []
+        for c in data.api_calls(db_engine):                       # option expiries
+            d = _iso(c.get("expiration"))
+            if d:
+                n = int(c.get("contracts") or 0)
+                out.append({"date": str(d), "days_until": (d - today).days, "type": "expiry",
+                            "symbol": c.get("underlying"),
+                            "detail": f"{n} call{'' if n == 1 else 's'} @ {c.get('strike')}"})
+        nr = (data.api_health(db_engine) or {}).get("next_rebalance") or {}   # next rebalance
+        d = _iso(nr.get("date"))
+        if d:
+            out.append({"date": str(d), "days_until": (d - today).days, "type": "rebalance",
+                        "symbol": None, "detail": f"monthly rebalance ({nr.get('source', 'estimated')})"})
+        earn, loading = _earnings_map(_events_symbols(db_engine))             # earnings (nearest upcoming per name)
+        for sym, dates in earn.items():
+            ups = sorted(x for x in (_iso(ds) for ds in dates) if x and x >= today)
+            if ups:
+                d0 = ups[0]
+                out.append({"date": str(d0), "days_until": (d0 - today).days, "type": "earnings",
+                            "symbol": sym, "detail": "earnings report"})
+        out = [e for e in out if e["days_until"] is not None and -1 <= e["days_until"] <= 120]
+        out.sort(key=lambda e: (e["date"], e["type"]))
+        return {"events": out, "earnings_loading": loading, "as_of": str(today)}
 
     @app.get("/api/risk")
     def risk(start: str | None = None) -> dict:

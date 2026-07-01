@@ -114,6 +114,35 @@ def test_price_history_route_empty_without_client():
     assert out["available"] is False and out["history"] == {}
 
 
+def test_events_route_merges_expiries_rebalance_and_cached_earnings():
+    import time as _t
+    from datetime import date as _date, timedelta as _td
+    from dashboard import app as app_module
+
+    eng = create_engine("sqlite://")
+    db.create_all(eng)
+    today = _date.today()
+    exp = today + _td(days=20)
+    with eng.begin() as c:
+        c.execute(insert(db.snapshots).values(
+            ts=datetime(2026, 7, 1, 16), nav=100_000.0, cash=0.0, last_equity=100_000.0,
+            weights={"AAPL": 0.5, "AAPL260717C00210000": 0.0},
+            positions={"AAPL": 100, "AAPL260717C00210000": -1}, drift=0.0))
+        c.execute(insert(db.options_lifecycle).values(
+            ts=datetime(2026, 7, 1), event_type="write", underlying="AAPL",
+            option_symbol="AAPL260717C00210000", strike=210.0, expiration=exp,
+            contracts=1, premium=100.0))
+    # pre-seed the earnings cache as fresh so the route uses it (no yfinance / network in tests)
+    app_module._EARN_CACHE.update(ts=_t.time(), key="AAPL", loading=False,
+                                  data={"AAPL": [str(today + _td(days=30))]})
+    out = _route(create_app(eng, live=False), "/api/events")()
+    by_type = {e["type"]: e for e in out["events"]}
+    assert "expiry" in by_type and by_type["expiry"]["symbol"] == "AAPL"
+    assert "earnings" in by_type and by_type["earnings"]["days_until"] == 30
+    assert "rebalance" in by_type                                   # estimated next monthly
+    assert out["events"] == sorted(out["events"], key=lambda e: (e["date"], e["type"]))
+
+
 def test_health_route_postgres_only_omits_market():
     eng = create_engine("sqlite://")
     db.create_all(eng)
