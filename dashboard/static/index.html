@@ -25,6 +25,20 @@
                background: rgba(10,17,32,.92); backdrop-filter: blur(12px); border-bottom: 1px solid var(--line);
                overflow-x: auto; }
   .sbchips { display: flex; align-items: center; gap: 6px 16px; flex-wrap: wrap; }
+
+  /* ticker tape — continuously-scrolling live prices, pinned under the status bar */
+  .tape { overflow: hidden; white-space: nowrap; background: rgba(8,14,26,.94); backdrop-filter: blur(12px);
+          border-bottom: 1px solid var(--line); }
+  .tape:hover .tape-track { animation-play-state: paused; }
+  .tape-track { display: inline-flex; align-items: center; will-change: transform;
+                animation: tape-scroll 90s linear infinite; }
+  @keyframes tape-scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+  .tape-item { display: inline-flex; align-items: center; gap: 7px; padding: 4px 15px;
+               border-right: 1px solid var(--line); }
+  .tape-tkr { font-family: var(--mono); font-weight: 600; font-size: 11.5px; color: var(--fg); letter-spacing: .03em; }
+  .tape-px { font-family: var(--mono); font-size: 11px; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+  .tape-chg { font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+  .tape-spark { display: inline-flex; opacity: .9; }
   .sbchip { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; white-space: nowrap;
             text-transform: uppercase; letter-spacing: .04em; }
   .sbchip .sbk { color: var(--muted); }
@@ -257,6 +271,7 @@
 <div class="statusbar" id="statusbar" style="display:none">
   <div class="sbchips" id="sbchips"></div>
 </div>
+<div class="tape" id="tape" style="display:none" title="live prices — hover to pause"><div class="tape-track" id="tapetrack"></div></div>
 </div>
 
 <div id="overview-view">
@@ -533,6 +548,7 @@ async function loadPerformance(){
   const [tr, slip, risk, st, fees, rcx] = await Promise.all(
     [`/api/track_record${ws}`,"/api/slippage",`/api/risk${ws}`,"/api/state","/api/fees","/api/risk_contrib"].map(get));
   lastFetch = Date.now(); tickFreshness();
+  if(st){ pushPx(st); renderTape(st); }   // keep the pinned ticker tape fresh on the Performance tab
   renderReturns(tr, slip, fees);   // Returns sub-view
   renderRisk(risk, st);            // Risk sub-view
   renderRiskContrib(rcx);          // Risk sub-view — per-name risk decomposition
@@ -1064,6 +1080,38 @@ function miniSpark(arr){
     + `<path d="${d}" fill="none" stroke="var(--accent)" stroke-width="1.4" stroke-linejoin="round"/></svg>`;
 }
 
+// ---- ticker tape (pinned, continuously-scrolling live prices) --------------
+// The DOM is rebuilt only when the held set changes (rare — monthly); every 1s tick just updates
+// the numbers/sparkline in place, so the marquee animation never restarts.
+let _tapeSyms = "";
+function tapeItem(sym){
+  return `<span class="tape-item" data-sym="${sym}"><span class="tape-tkr">${sym}</span>`
+    + `<span class="tape-px"></span><span class="tape-chg"></span><span class="tape-spark"></span></span>`;
+}
+function renderTape(s){
+  const rows = (s.positions||[]).filter(r => r.symbol && !_isOpt(r.symbol) && r.qty);
+  if(!rows.length){ $("tape").style.display="none"; return; }
+  $("tape").style.display="block";
+  const key = rows.map(r=>r.symbol).join(",");
+  if(key !== _tapeSyms){                                  // holdings changed → rebuild the marquee
+    _tapeSyms = key;
+    const items = rows.map(r=>tapeItem(r.symbol)).join("");
+    const track = $("tapetrack");
+    track.innerHTML = items + items;                      // two copies → seamless −50% loop
+    track.style.animationDuration = Math.max(28, rows.length * 3.4) + "s";
+  }
+  rows.forEach(r => {
+    const p = livePx(r), spark = miniSpark(_px[r.symbol]);
+    document.querySelectorAll('.tape-item[data-sym="'+r.symbol+'"]').forEach(el => {
+      el.querySelector('.tape-px').textContent = p==null?"–":usd2(p);
+      const chg = el.querySelector('.tape-chg');
+      chg.textContent = r.day_pct==null ? "" : spct(r.day_pct);
+      chg.className = "tape-chg " + sgn(r.day_pct);
+      el.querySelector('.tape-spark').innerHTML = spark;
+    });
+  });
+}
+
 // Redraw the Overview NAV chart with a live tail so its tip tracks the live NAV every second.
 function drawNav(liveNav){
   const tail = liveNav != null ? [{ ts: new Date().toISOString(), nav: liveNav }] : [];
@@ -1090,7 +1138,7 @@ async function loadOverview(){
       '<div class="errbox"><div class="big">Backend unreachable</div>Postgres or the dashboard API is not responding.</div>';
     return; }
   _navBase = hist || [];
-  pushPx(s);
+  pushPx(s); renderTape(s);
   renderGate(s); kpis(s); perfStrip(tr); drawNav(s.nav); renderFootstrip(s);
 }
 
@@ -1103,7 +1151,7 @@ async function loadPortfolio(){
   if(!s){ ["positions","calls","factors","orders","alerts"].forEach(id=>$(id).innerHTML =
       '<div class="errbox"><div class="big">Backend unreachable</div>Postgres or the dashboard API is not responding.</div>');
     return; }
-  _calls = calls || []; pushPx(s);
+  _calls = calls || []; pushPx(s); renderTape(s);
   renderSectorExposure(s.positions); renderPositions(s); renderFactorTilt(s.positions, factors);
   renderCalls(s, _calls); renderFactors(factors); renderOrders(orders); renderAlerts(alerts);
 }
@@ -1450,7 +1498,7 @@ setInterval(async () => {
   if (activeView !== "overview" && activeView !== "portfolio") return;
   const s = await get("/api/state");
   if (!s) return;
-  noteFresh(s); pushPx(s);
+  noteFresh(s); pushPx(s); renderTape(s);                 // ticker tape ticks on every tab
   if (activeView === "overview") { kpis(s); renderGate(s); drawNav(s.nav); }
   else { renderPositions(s); renderCalls(s, _calls); }   // live prices, sparklines, underlying px
 }, 1000);
