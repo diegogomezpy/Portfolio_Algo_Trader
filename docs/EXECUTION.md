@@ -201,11 +201,17 @@ ADV tier; it should stay consistent with the live tiers above.
 
 ## 13. Implementation status
 
-- **Live today:** sizing, min-trade defer, sells-then-buys sequencing, cross-to-touch chase with
-  a close buffer, cross-day catch-up, the covered-call chase (§9), reconciliation (§10), and the
-  arrival-price slippage benchmark (§10.1).
-- **Landing in the execution redesign (this change):** liquidity-tiered tactics (§5), the
-  spread-guarded reference for limit pricing + the `max_spread_bps` pathological guard (§6), the
-  patient mid→touch ladder (§7), thin-name slicing (`child_adv_pct`, §7), the closing-auction
-  residual fallback (§8), and **retiring the naked intraday market order**. Deployed only in a
-  no-open-orders window (§10).
+**The full redesign is live** (deployed 2026-07-01). All of the below is in effect:
+
+- Sizing, min-trade defer, sells-then-buys sequencing, cross-day catch-up, reconciliation (§10),
+  and the arrival-price slippage benchmark (§10.1).
+- **Live order feed** (§7/§10): fills read from the always-on trade-updates stream, REST fallback.
+- **Liquidity-tiered tactics** (§5); the spread-guarded reference + `max_spread_bps` pathological
+  guard (§6); the patient mid→touch ladder on `equity_repeg_s` (§7); thin-name slicing
+  (`child_adv_pct`, §7); the closing-auction residual fallback (§8) — the naked intraday market
+  order is **retired**. The cross-day top-up runs the same tiered executor.
+- Covered-call writes/closes chase to the touch with log-on-fill (§9), plus a **write junk-bid
+  guard** (`min_bid_frac`) so a write is skipped rather than dumped into a lowball bid.
+
+Deploys touch the live trading path + start the feed thread — restart only in a no-open-orders
+window (§10), verifying `get_orders(status="open") == 0` first.
