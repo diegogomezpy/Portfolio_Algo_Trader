@@ -59,7 +59,7 @@ def test_index_route_serves_html():
     app = create_app(eng, live=False)
     # call the index route handler directly (no server): it returns the self-contained page
     html = _route(app, "/")()
-    assert "sharpe-engine" in html and "/api/state" in html
+    assert "SFI" in html and "/api/state" in html          # SFI brand lockup
     assert "/static/theme.css" in html        # links the shared dark design system
 
 

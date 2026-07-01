@@ -300,13 +300,13 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
             if price_feed is not None:
                 price_feed.stop()
 
-    app = FastAPI(title="sharpe-engine dashboard", lifespan=lifespan)
+    app = FastAPI(title="SFI · Systematic Factor Income", lifespan=lifespan)
     if _STATIC.exists():
         app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
-        return _INDEX.read_text() if _INDEX.exists() else "<h1>sharpe-engine dashboard</h1>"
+        return _INDEX.read_text() if _INDEX.exists() else "<h1>SFI · Systematic Factor Income</h1>"
 
     @app.get("/favicon.svg")
     def favicon() -> Response:
@@ -355,7 +355,7 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
         return data.api_factors(db_engine)
 
     @app.get("/api/alerts")
-    def alerts(limit: int = 50) -> list:
+    def alerts(limit: int = 300) -> list:                  # a browsable record, not just the last few
         return data.api_alerts(db_engine, limit)
 
     @app.get("/api/track_record")

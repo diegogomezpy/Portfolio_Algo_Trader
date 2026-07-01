@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>sharpe-engine</title>
+<title>SFI · Systematic Factor Income</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -95,9 +95,11 @@
   .ftval { text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; }
   .brand { display: flex; align-items: center; gap: 10px; flex: none; }
   .brand svg { width: 26px; height: 26px; display: block; flex: none; }
-  .brand .name { font-size: 15px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
-  .brand .tag  { font-size: 11px; color: var(--muted); margin-left: 2px; white-space: nowrap; }
-  @media (max-width: 1120px) { .brand .tag { display: none; } }
+  .brand .mark { font-family: var(--mono); font-size: 15px; font-weight: 600; letter-spacing: .14em;
+                 color: var(--fg); white-space: nowrap; }
+  .brand .brand-div { width: 1px; height: 15px; background: var(--line); flex: none; }
+  .brand .tag  { font-size: 11px; color: var(--muted); white-space: nowrap; letter-spacing: .02em; }
+  @media (max-width: 1120px) { .brand .tag, .brand .brand-div { display: none; } }
   nav.tabs { display: flex; gap: 4px; margin-left: 6px; }
   .tab { background: transparent; color: var(--muted); border: 1px solid transparent;
          border-radius: 8px; padding: 6px 15px; font: inherit; font-size: 13px; font-weight: 600;
@@ -118,6 +120,12 @@
              cursor: pointer; transition: all .15s var(--ease); }
   .winpill:hover { color: var(--fg); background: var(--panel-2); }
   .winpill.active { color: var(--accent); background: var(--accent-dim); border-color: var(--line); }
+  .alertbar { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+  .apill { background: transparent; color: var(--muted); border: 1px solid transparent;
+           border-radius: 6px; padding: 3px 11px; font: inherit; font-size: 11.5px; font-weight: 600;
+           text-transform: capitalize; cursor: pointer; transition: all .15s var(--ease); }
+  .apill:hover { color: var(--fg); background: var(--panel-2); }
+  .apill.on { color: var(--fg); background: var(--panel-2); border-color: var(--line); }
   .windate { background: var(--panel-2); border: 1px solid var(--line); color: var(--fg-dim);
              border-radius: 6px; padding: 2px 7px; font-family: var(--mono); font-size: 11px; }
   .topbar .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
@@ -206,8 +214,9 @@
       <circle cx="4" cy="4" r="3.4" fill="var(--faint)"/><circle cx="18" cy="4" r="3.4" fill="var(--accent)"/><circle cx="32" cy="4" r="3.4" fill="var(--faint)"/>
       <circle cx="4" cy="18" r="3.4" fill="var(--faint)"/><circle cx="18" cy="18" r="3.4" fill="var(--accent)"/><circle cx="32" cy="18" r="3.4" fill="var(--faint)"/>
       <circle cx="4" cy="32" r="3.4" fill="var(--faint)"/><circle cx="18" cy="32" r="3.4" fill="var(--accent)"/><circle cx="32" cy="32" r="3.4" fill="var(--faint)"/></svg>
-    <span class="name">sharpe-engine</span>
-    <span class="tag">factor equity + covered-call overlay</span>
+    <span class="mark">SFI</span>
+    <span class="brand-div"></span>
+    <span class="tag">Systematic Factor Income</span>
   </div>
   <nav class="tabs">
     <button class="tab active" data-view="overview">Overview</button>
@@ -1031,17 +1040,40 @@ function renderOrders(orders){
   ]);
 }
 
+// Full alerts log: the complete record, filterable by severity. _alerts holds the last fetch;
+// _alertFilter is the active severity pill.
+let _alerts = [];
+let _alertFilter = "all";
+const _alertCls = sv => sv==="error" ? "bad" : sv==="warn" ? "warn" : "info";
+
 function renderAlerts(alerts){
-  // Colour by the backend's message-derived severity (single source of truth), not the type name.
-  const cls = sv => sv==="error" ? "bad" : sv==="warn" ? "warn" : "info";
-  $("alertssub").textContent = alerts && alerts.length ? `${alerts.length} recent` : "";
-  $("alerts").innerHTML = table(alerts, [
-    {h:"Time", cls:()=>"mut", f:r=>(r.ts||"").replace("T"," ").slice(0,19)},
-    {h:"Severity", f:r=>`<span class="se-pill ${cls(r.severity)}" style="font-size:10px">${r.severity||"info"}</span>`},
-    {h:"Type", cls:()=>"mut", f:r=>r.type},
-    {h:"Message", cls:()=>"mut", f:r=>r.message},
+  _alerts = alerts || [];
+  const c = {error:0, warn:0, info:0};
+  _alerts.forEach(a => { c[a.severity||"info"] = (c[a.severity||"info"]||0) + 1; });
+  $("alertssub").innerHTML = _alerts.length
+    ? `${_alerts.length} total · <span class="bad">${c.error} err</span> · `
+      + `<span class="warn">${c.warn} warn</span> · <span class="mut">${c.info} info</span>`
+    : "no alerts yet";
+  drawAlerts();
+}
+
+function drawAlerts(){
+  const f = _alertFilter;
+  const rows = _alerts.filter(a => f==="all" || (a.severity||"info")===f);
+  const pill = k => `<button class="apill${_alertFilter===k?' on':''}" data-af="${k}">`
+    + `${k==="all"?"All":k[0].toUpperCase()+k.slice(1)}</button>`;
+  const bar = `<div class="alertbar">${["all","error","warn","info"].map(pill).join("")}</div>`;
+  const body = rows.length ? table(rows, [
+    {h:"Time (UTC)", cls:()=>"mut", f:r=>`${(r.ts||"").replace("T"," ").slice(0,19)}`
+       + `<span class="mut" style="margin-left:8px">${ageOf(r.ts)}</span>`},
+    {h:"Severity", f:r=>`<span class="se-pill ${_alertCls(r.severity)}" style="font-size:10px">${r.severity||"info"}</span>`},
+    {h:"Type", cls:()=>"mut", f:r=>r.type||"–"},
+    {h:"Message", f:r=>r.message||"–"},
     {h:"Emailed", cls:r=>r.delivered?"pos":"mut", f:r=>r.delivered?"✓ sent":"dry-run"},
-  ]);
+  ]) : `<div class="mut" style="padding:10px 2px">No ${f==="all"?"":f+" "}alerts.</div>`;
+  $("alerts").innerHTML = bar + body;
+  document.querySelectorAll("#alerts .apill").forEach(b =>
+    b.onclick = () => { _alertFilter = b.dataset.af; drawAlerts(); });
 }
 
 function renderFootstrip(s){
