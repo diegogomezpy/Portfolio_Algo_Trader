@@ -54,6 +54,92 @@ class PlannedOrder:
     notional: float = 0.0           # qty × price at planning time (for sequencing/audit)
 
 
+# ---------------------------------------------------------------------------- #
+# Execution tactics — pure decision helpers (docs/EXECUTION.md §5–§7).
+# Liquidity tier → tactic; a spread-guarded reference; two price ceilings; ADV slicing.
+# Kept side-effect-free so they unit-test on plain numbers.
+# ---------------------------------------------------------------------------- #
+# Reference/guard defaults, used when a settings knob is absent (so the helpers work standalone).
+_ARRIVAL_MAX_SPREAD = 0.02        # trust the mid only within 2% of it, else the trade print
+_DEFAULT_MAX_SPREAD_BPS = 150.0   # above this quoted spread we refuse to cross (pathological)
+
+
+def arrival_reference(bid, ask, trade, *, max_spread: float = _ARRIVAL_MAX_SPREAD):
+    """The 'arrival price' to judge/anchor a fill against — robust to stale / one-sided quotes.
+
+    The NBBO **mid** when the quote is two-sided and tight (spread ≤ ``max_spread`` of the mid);
+    otherwise the **last trade** price (a real executed value). A wide or one-sided quote — common
+    on thin names via the IEX feed, e.g. INBX's phantom $108.87 ask while it traded ~$95 — makes
+    the mid meaningless, so we trust the print instead. Returns ``None`` if nothing is usable.
+    Shared by the execution pricer and the dashboard slippage benchmark so both agree.
+    """
+    bid = float(bid) if bid and float(bid) > 0 else None
+    ask = float(ask) if ask and float(ask) > 0 else None
+    trade = float(trade) if trade and float(trade) > 0 else None
+    if bid and ask and ask >= bid:
+        mid = (bid + ask) / 2.0
+        if (ask - bid) / mid <= max_spread:
+            return mid
+        return trade if trade else mid          # wide quote → trust the executed print
+    return trade if trade else (bid or ask)     # one-sided / no quote → trade, else the lone side
+
+
+def spread_frac(bid, ask) -> Optional[float]:
+    """Fractional quoted spread ``(ask − bid) / mid``, or ``None`` if not a valid two-sided quote."""
+    bid = float(bid) if bid and float(bid) > 0 else None
+    ask = float(ask) if ask and float(ask) > 0 else None
+    if bid is None or ask is None or ask < bid:
+        return None
+    mid = (bid + ask) / 2.0
+    return (ask - bid) / mid if mid else None
+
+
+def liquidity_tier(adv, bid, ask, *, ex) -> str:
+    """``"deep"`` / ``"moderate"`` / ``"thin"`` from ADV + quoted spread (docs/EXECUTION.md §5)."""
+    a = float(adv or 0.0)
+    s = spread_frac(bid, ask)
+    if a >= ex.large_cap_adv_threshold and s is not None and s < ex.spread_threshold:
+        return "deep"
+    if a >= getattr(ex, "mid_cap_adv_threshold", 0.0):
+        return "moderate"
+    return "thin"
+
+
+def is_pathological_spread(bid, ask, *, ex) -> bool:
+    """True when the quoted spread is too wide to trust — we refuse to cross it (the INBX guard)."""
+    s = spread_frac(bid, ask)
+    cap = float(getattr(ex, "max_spread_bps", _DEFAULT_MAX_SPREAD_BPS) or _DEFAULT_MAX_SPREAD_BPS) / 1e4
+    return s is not None and s > cap
+
+
+def marketable_price(reference: float, side: str, *, ex) -> float:
+    """A marketable limit: the reference crossed toward the touch by ``marketable_limit_bps`` (the
+    cross cap) — buy above / sell below. Never crosses more than the cap beyond fair value."""
+    cap = float(getattr(ex, "marketable_limit_bps", 0.0) or 0.0) / 1e4
+    mult = (1.0 + cap) if side == "buy" else (1.0 - cap)
+    return round(float(reference) * mult, 2)
+
+
+def ladder_price(reference: float, mid: float, side: str, step: float, *, ex) -> float:
+    """Patient ladder price: interpolate from the ``mid`` (``step=0``) to the marketable cap
+    (``step=1``). Early rounds sit near the mid to capture the half-spread; later rounds cross to
+    guarantee the fill (docs/EXECUTION.md §7). ``step`` is clamped to ``[0, 1]``."""
+    target = marketable_price(reference, side, ex=ex)
+    step = min(max(float(step), 0.0), 1.0)
+    return round(float(mid) + (target - float(mid)) * step, 2)
+
+
+def child_qty(total: int, adv, price, *, ex) -> int:
+    """Slice cap for thin names: at most ``child_adv_pct`` of ADV per child order, so our own
+    order doesn't move the book. Returns ``total`` unchanged when no cap applies (docs §7)."""
+    pct = getattr(ex, "child_adv_pct", None)
+    total = int(total)
+    if not pct or not adv or not price:
+        return total
+    cap = int((float(pct) * float(adv)) / float(price))
+    return max(1, min(total, cap)) if cap > 0 else total
+
+
 def _order_type_for(
     symbol: str, price: float, side: str, *,
     adv: Mapping[str, float], spread: Mapping[str, float], ex

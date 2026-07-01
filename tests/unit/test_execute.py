@@ -20,7 +20,49 @@ def _settings():
     return SimpleNamespace(execution=SimpleNamespace(
         min_trade_usd=500, large_cap_adv_threshold=50_000_000,
         mid_cap_adv_threshold=5_000_000, spread_threshold=0.001,
-        marketable_limit_bps=50))
+        marketable_limit_bps=50, max_spread_bps=150, ladder_steps=3, child_adv_pct=0.10))
+
+
+# ---- execution-tactics pure helpers (docs/EXECUTION.md §5–§7) ---------------- #
+def test_arrival_reference_spread_guard():
+    assert execute.arrival_reference(99.95, 100.05, 100.10) == 100.0        # tight → mid
+    assert execute.arrival_reference(94.73, 108.87, 95.1) == 95.1           # INBX wide → trade
+    assert execute.arrival_reference(None, 108.87, 95.1) == 95.1            # one-sided → trade
+    assert execute.arrival_reference(None, None, None) is None
+
+
+def test_liquidity_tier_from_adv_and_spread():
+    ex = _settings().execution
+    assert execute.liquidity_tier(60_000_000, 99.99, 100.01, ex=ex) == "deep"     # big + tight
+    assert execute.liquidity_tier(60_000_000, 99.0, 101.0, ex=ex) == "moderate"   # big but wide spread
+    assert execute.liquidity_tier(10_000_000, 100.0, 100.1, ex=ex) == "moderate"  # mid-cap
+    assert execute.liquidity_tier(1_000_000, 100.0, 100.1, ex=ex) == "thin"       # < $5M ADV
+
+
+def test_pathological_spread_guard():
+    ex = _settings().execution
+    assert execute.is_pathological_spread(94.73, 108.87, ex=ex) is True     # ~14% > 150 bps → phantom
+    assert execute.is_pathological_spread(99.9, 100.1, ex=ex) is False      # 20 bps → fine
+
+
+def test_marketable_and_ladder_pricing():
+    ex = _settings().execution                                             # 50 bps cross cap
+    assert execute.marketable_price(100.0, "buy", ex=ex) == 100.5          # +0.5%
+    assert execute.marketable_price(100.0, "sell", ex=ex) == 99.5          # -0.5%
+    # ladder buy from mid (step 0) to the marketable cap (step 1)
+    assert execute.ladder_price(100.0, 100.0, "buy", 0.0, ex=ex) == 100.0  # start at mid
+    assert execute.ladder_price(100.0, 100.0, "buy", 1.0, ex=ex) == 100.5  # ends at the cap
+    assert execute.ladder_price(100.0, 100.0, "buy", 0.5, ex=ex) == 100.25 # halfway
+
+
+def test_child_qty_caps_thin_names_by_adv():
+    ex = _settings().execution                                             # child_adv_pct = 10%
+    # ADV $1M, price $100 → 10% = $100k = 1000 sh cap; want 5000 → sliced to 1000
+    assert execute.child_qty(5000, 1_000_000, 100.0, ex=ex) == 1000
+    # small order under the cap passes through whole
+    assert execute.child_qty(200, 1_000_000, 100.0, ex=ex) == 200
+    # no ADV / no pct → no slicing
+    assert execute.child_qty(5000, None, 100.0, ex=ex) == 5000
 
 
 def _plan(weights, positions, prices, *, nav=100_000, **kw):

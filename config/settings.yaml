@@ -108,6 +108,13 @@ execution:
   # cancel — it left the establishing rebalance with a thin partial book). It is a CEILING: liquid
   # names still fill at the touch; only an abnormally wide spread (> this) rests for protection.
   marketable_limit_bps: 50
+  # Execution redesign (docs/EXECUTION.md §5–§8): liquidity-tiered, patient-then-guaranteed.
+  max_spread_bps: 150            # pathological-spread guard: above this quoted spread we do NOT
+                                 # cross — post passive at a guarded reference and defer if needed
+                                 # (the INBX lesson: its ~1400 bps ask was a phantom). bps of mid.
+  ladder_steps: 3                # patient ladder: number of mid→touch steps for moderate/thin
+                                 # names before reaching the marketable cap (deep+tight skip it).
+  child_adv_pct: 0.10            # thin-name slicing: max child order = 10% of the name's ADV.
   # When the daily EOD/rebalance job fires (America/New_York). Mid-session: tight spreads and a long
   # runway before the 16:00 close for DAY orders to fill.
   rebalance_hour_et: 13

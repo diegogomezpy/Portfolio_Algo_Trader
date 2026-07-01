@@ -16,6 +16,7 @@ from sqlalchemy import desc, func, select
 
 from engine import db
 from engine.alerts import severity as alert_severity
+from engine.execute import arrival_reference        # shared with the execution pricer (one truth)
 
 _TRADING_DAYS = 252.0
 
@@ -537,25 +538,6 @@ def api_risk(db_engine, *, window: int = 10, start: str | None = None) -> dict:
         "var95_1d_usd": (var_param * nav_now) if var_param is not None else None,
         "hist_var95_1d_pct": var_hist, "cvar95_1d_pct": cvar,
     }
-
-
-def arrival_reference(bid, ask, trade, *, max_spread: float = 0.02):
-    """The 'arrival price' to judge a fill against — robust to stale / one-sided quotes.
-
-    The NBBO **mid** when the quote is two-sided and tight (spread ≤ ``max_spread`` of the mid);
-    otherwise the **last trade** price (a real executed value). A wide or one-sided quote — common
-    on thin names via the IEX feed, e.g. INBX's phantom $108.87 ask while it traded ~$95 — makes
-    the mid meaningless, so we trust the print instead. Returns ``None`` if nothing is usable.
-    """
-    bid = float(bid) if bid and float(bid) > 0 else None
-    ask = float(ask) if ask and float(ask) > 0 else None
-    trade = float(trade) if trade and float(trade) > 0 else None
-    if bid and ask and ask >= bid:
-        mid = (bid + ask) / 2.0
-        if (ask - bid) / mid <= max_spread:
-            return mid
-        return trade if trade else mid          # wide quote → trust the executed print
-    return trade if trade else (bid or ask)     # one-sided / no quote → trade, else the lone side
 
 
 def _slippage_core(records, arrival_mid) -> dict:
