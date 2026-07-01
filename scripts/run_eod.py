@@ -45,6 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from engine import (  # noqa: E402
     alerts, covariance, covered_calls, factors, ingest, monitor, optimize, reconcile, risk, sectors,
 )
+from engine.alpaca_client import AlpacaAPIError  # noqa: E402
 from engine.config import load_settings  # noqa: E402
 from engine.execute import ExecReport, PlannedOrder, plan_orders, submit_and_track  # noqa: E402
 from engine.logger import get_logger  # noqa: E402
@@ -126,6 +127,20 @@ def _touch_price(client, sym: str, side: str) -> float:
     """The touch for a chase order: lift the ask on a buy, hit the bid on a sell."""
     bid, ask = client.latest_nbbo(sym)
     return ask if side == "buy" else bid
+
+
+def _equity_quote(client, sym: str):
+    """``(bid, ask, trade)`` for the tiered executor's pricing — tolerant of a missing side or a
+    read hiccup (returns ``None`` for whatever it can't fetch; the pricer degrades gracefully)."""
+    try:
+        bid, ask = client.latest_nbbo(sym)
+    except AlpacaAPIError:
+        bid = ask = None
+    try:
+        trade = client.latest_trade(sym)
+    except AlpacaAPIError:
+        trade = None
+    return bid, ask, trade
 
 
 def _option_touch(client, option_symbol: str, side: str):
@@ -259,13 +274,14 @@ def run_cycle(
     orders, pending = plan_orders(weights, rec.live_positions, plan.prices, nav=nav,
                                   settings=settings, adv=plan.adv, spread=plan.spread)
 
-    # Chase fills: re-peg each unfilled name to the touch (ask on a buy / bid on a sell) every
-    # round until it fills or the session nears the close, then a market order guarantees it.
-    touch_fn = (lambda s, side: _touch_price(client, s, side)) if hasattr(client, "latest_nbbo") else None
+    # Tiered execution (docs/EXECUTION.md §5–§8): each name priced by liquidity tier — deep = fill
+    # now, moderate/thin = patient mid→touch ladder, pathological spread = post-and-defer, thin =
+    # sliced; residual at the close → closing auction or cross-day. Fills read from the live feed.
+    quote_fn = (lambda s: _equity_quote(client, s)) if hasattr(client, "latest_nbbo") else None
     report = submit_and_track(orders, broker=broker, db_engine=db_engine,
                               cycle_key=as_of.isoformat(), pending=pending,
-                              touch=touch_fn, market_close=mkt_close,
-                              order_state=_order_state(), alert=alert)
+                              quote=quote_fn, adv=plan.adv, ex=settings.execution,
+                              market_close=mkt_close, order_state=_order_state(), alert=alert)
 
     # Overlay (D31): write fresh calls AFTER equity settles, on the shares actually held. The
     # writes chase to the bid so they actually fill, and the lifecycle row lands only on a fill.

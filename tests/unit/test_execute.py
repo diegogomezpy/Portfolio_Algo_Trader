@@ -7,6 +7,7 @@ sells-before-buys sequencing, the market-vs-limit order-type rule, and NAV scali
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pandas as pd
@@ -178,7 +179,7 @@ class _FakeBroker:
         self._n = 0
 
     def submit_order(self, symbol, qty, side, *, order_type="market",
-                     limit_price=None, client_order_id=None):
+                     limit_price=None, client_order_id=None, time_in_force="day"):
         if symbol in self.reject:
             raise AlpacaAPIError(symbol, "submit_order", "422 rejected")
         self._n += 1
@@ -187,7 +188,7 @@ class _FakeBroker:
               "side": side, "qty": float(qty), "order_type": order_type,
               "status": "accepted", "limit_price": limit_price, "filled_qty": 0.0,
               "filled_avg_price": None, "submitted_at": "2026-07-01T16:30:00",
-              "filled_at": None}
+              "filled_at": None, "time_in_force": time_in_force}
         self._orders[oid] = od
         self.submitted.append(dict(od))
         self._seq[oid] = iter(self.fill_plan.get(symbol, [("filled", float(qty))]))
@@ -447,3 +448,91 @@ def test_order_state_feed_replaces_get_order():
                                    cycle_key="c", sleep=lambda _s: None, order_state=feed_state)
     assert rep.filled == 1 and rep.submitted == 1
     assert sum(f["qty"] for f in _rows(eng, db.fills)) == 50.0
+
+
+# ====================================================================== #
+# _tiered — liquidity-tiered, patient-then-guaranteed execution (docs/EXECUTION.md §5–§8)
+# ====================================================================== #
+_T0 = datetime(2026, 7, 1, 17, 0, tzinfo=timezone.utc)   # 13:00 ET
+
+
+class _Clock:
+    """A now() that advances a fixed step per call, so the ladder progresses and the loop ends."""
+    def __init__(self, start=_T0, step_s=1):
+        self.t = start
+        self.step = timedelta(seconds=step_s)
+
+    def __call__(self):
+        v = self.t
+        self.t += self.step
+        return v
+
+
+def _ex(**kw):
+    base = dict(min_trade_usd=500, large_cap_adv_threshold=50_000_000, mid_cap_adv_threshold=5_000_000,
+                spread_threshold=0.001, marketable_limit_bps=50, max_spread_bps=150, ladder_steps=3,
+                child_adv_pct=0.10, equity_repeg_s=30, close_buffer_s=0, poll_interval_s=2)
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
+def _quote_of(d):
+    return lambda s: d.get(s, (None, None, None))
+
+
+def _tier(orders, broker, eng, quotes, adv, *, ex=None, clock_step=1, market_close=None, **kw):
+    return execute.submit_and_track(
+        orders, broker=broker, db_engine=eng, cycle_key="c", quote=_quote_of(quotes), adv=adv,
+        ex=ex or _ex(), now=_Clock(step_s=clock_step),
+        market_close=market_close or (_T0 + timedelta(hours=3)), sleep=lambda _s: None, **kw)
+
+
+def test_tiered_deep_fills_marketable_now():
+    eng = _engine(); broker = _FakeBroker()
+    rep = _tier([_po("AAPL", "buy", 50)], broker, eng,
+                {"AAPL": (99.99, 100.01, 100.0)}, {"AAPL": 60_000_000})    # tight + big → deep
+    assert rep.filled == 1
+    o = broker.submitted[0]
+    assert o["order_type"] == "limit" and o["limit_price"] == 100.5        # ref 100 × (1+0.5%)
+
+
+def test_tiered_moderate_starts_at_the_mid():
+    # A moderate name (10M ADV, 0.4% spread) posts its first limit at the MID (ladder level 0),
+    # not crossed — patience captures the half-spread when there's a natural counterparty.
+    eng = _engine(); broker = _FakeBroker()
+    rep = _tier([_po("MOD", "buy", 100)], broker, eng,
+                {"MOD": (49.90, 50.10, 50.0)}, {"MOD": 10_000_000})
+    assert broker.submitted[0]["limit_price"] == 50.0 and rep.filled == 1
+
+
+def test_tiered_thin_slices_child_by_adv():
+    # Thin name ($500k ADV): first child ≤ 10% of ADV = ⌊0.10×500k/50⌋ = 1,000 sh, not the full 3,000.
+    eng = _engine(); broker = _FakeBroker()
+    rep = _tier([_po("THN", "buy", 3000)], broker, eng,
+                {"THN": (49.90, 50.10, 50.0)}, {"THN": 500_000})
+    assert broker.submitted[0]["qty"] == 1000.0 and rep.filled == 1        # fills across sliced rounds
+
+
+def test_tiered_pathological_posts_passive_and_defers():
+    # INBX-like phantom ask (bid 94.73 / ask 108.87 ≈ 14%): every post sits at the guarded ref
+    # (~the 95.1 print), NEVER crossing to 108.87; unfilled → cross-day, not the auction.
+    eng = _engine(); broker = _FakeBroker(fill_plan={"INBX": [("accepted", 0)]})
+    rep = _tier([_po("INBX", "buy", 106)], broker, eng,
+                {"INBX": (94.73, 108.87, 95.1)}, {"INBX": 300_000},
+                clock_step=30, market_close=_T0 + timedelta(seconds=120))
+    assert broker.submitted and all(o["limit_price"] == 95.1 for o in broker.submitted)
+    assert rep.filled == 0 and rep.auctioned == 0
+    assert any(p["symbol"] == "INBX" for p in _rows(eng, db.pending_adjustments))   # cross-day
+
+
+def test_tiered_auction_fallback_for_unfilled_liquid():
+    # A moderate name that never fills intraday is routed to the closing auction as a CLS limit
+    # (limit-on-close), not a naked market order and not cross-day.
+    eng = _engine(); broker = _FakeBroker(fill_plan={"MOD": [("accepted", 0)]})
+    rep = _tier([_po("MOD", "buy", 100)], broker, eng,
+                {"MOD": (49.90, 50.10, 50.0)}, {"MOD": 10_000_000},
+                clock_step=60, market_close=_T0 + timedelta(seconds=180))
+    assert rep.auctioned == 1 and rep.filled == 0
+    cls = [o for o in broker.submitted if o["time_in_force"] == "cls"]
+    assert len(cls) == 1 and cls[0]["limit_price"] == 50.25                # LOC at the cap
+    assert not any(p["symbol"] == "MOD" for p in _rows(eng, db.pending_adjustments))  # not cross-day

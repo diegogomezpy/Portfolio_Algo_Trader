@@ -248,8 +248,9 @@ class ExecReport:
     partial: int
     rejected: int
     deferred: int          # pending_adjustments rolled to the next cycle
+    auctioned: int = 0     # residual routed to the closing auction (LOC); fills at the 4pm print
     # Per-symbol outcome for the post-rebalance breakdown:
-    # {symbol, side, qty, filled, status ∈ filled/partial/deferred/rejected, reason}.
+    # {symbol, side, qty, filled, status ∈ filled/partial/deferred/rejected/auction, reason}.
     lines: list = field(default_factory=list)
 
 
@@ -264,6 +265,9 @@ def submit_and_track(
     poll_interval_s: float = 2.0,
     sleep: Callable[[float], None] = time.sleep,
     touch: Callable[[str, str], float] | None = None,
+    quote: Callable[[str], tuple] | None = None,
+    adv: Mapping[str, float] | None = None,
+    ex=None,
     now: Callable[[], datetime] | None = None,
     market_close: datetime | None = None,
     close_buffer_s: float = 300.0,
@@ -297,6 +301,11 @@ def submit_and_track(
     read = order_state or broker.get_order
     out = {o.symbol: {"symbol": o.symbol, "side": o.side, "qty": int(o.qty),
                       "filled": 0, "status": "deferred", "reason": ""} for o in orders}
+    if quote is not None:                              # tiered redesign (docs/EXECUTION.md §5–§8)
+        return _tiered(orders, broker=broker, db_engine=db_engine, cycle_key=cycle_key,
+                       pending=pending, out=out, quote=quote, adv=adv or {}, ex=ex, read=read,
+                       now=now or (lambda: datetime.now(timezone.utc)), market_close=market_close,
+                       sleep=sleep, alert=alert)
     if touch is None:
         return _single_pass(orders, broker=broker, db_engine=db_engine, cycle_key=cycle_key,
                             pending=pending, out=out, poll_attempts=poll_attempts,
@@ -315,7 +324,7 @@ def _finalize(out, orders, *, submitted, rejected, pending, db_engine, cycle_key
     by_qty = {o.symbol: int(o.qty) for o in orders}
     filled = partial = 0
     for sym, d in out.items():
-        if d["status"] == "rejected":
+        if d["status"] in ("rejected", "auction"):    # terminal states set by the caller; keep them
             continue
         q, f = by_qty.get(sym, 0), d["filled"]
         if f >= q and f > 0:
@@ -324,11 +333,179 @@ def _finalize(out, orders, *, submitted, rejected, pending, db_engine, cycle_key
             d["status"] = "partial"; d["reason"] = d["reason"] or "partial fill; residual deferred"; partial += 1
         else:
             d["status"] = "deferred"; d["reason"] = d["reason"] or "unfilled"
+    auctioned = sum(1 for d in out.values() if d["status"] == "auction")
     report = ExecReport(submitted=submitted, filled=filled, partial=partial,
-                        rejected=rejected, deferred=len(pending), lines=list(out.values()))
+                        rejected=rejected, deferred=len(pending), auctioned=auctioned,
+                        lines=list(out.values()))
     log.info("execution complete",
              extra={k: v for k, v in vars(report).items() if k != "lines"} | {"cycle": cycle_key})
     return report
+
+
+def _tiered(orders, *, broker, db_engine, cycle_key, pending, out, quote, adv, ex, read,
+            now, market_close, sleep, alert, max_rounds: int = 500) -> ExecReport:
+    """Liquidity-tiered, patient-then-guaranteed equity execution (docs/EXECUTION.md §5–§8).
+
+    Per round, each still-unfilled name is priced by its **tier**: *deep+tight* → a marketable
+    limit (cross cap) that fills at once; *moderate/thin* → a **ladder** whose limit walks from the
+    mid to the cap as the session elapses (re-anchored each round, cadence ``equity_repeg_s``);
+    a **pathological** spread → a passive limit at the guarded reference that never crosses. Thin
+    names post one child at a time (``child_adv_pct`` of ADV). Fills are read from ``read`` (the
+    live feed). At ``close_buffer_s`` before ``market_close`` the residual is routed to the
+    **closing auction** (limit-on-close) for liquid, non-pathological names, else rolled to the
+    cross-day queue — there is no naked market order.
+    """
+    adv = adv or {}
+
+    def _num(name, default):                               # keep a legit 0 (don't let `or` eat it)
+        v = getattr(ex, name, None)
+        return default if v is None else v
+    repeg_s = float(_num("equity_repeg_s", 30.0))
+    close_buffer_s = float(_num("close_buffer_s", 300.0))
+    tick_s = float(_num("poll_interval_s", 2.0)) or 2.0    # divisor below → must be > 0
+    ladder_steps = max(int(_num("ladder_steps", 3)), 1)
+    by_sym = {o.symbol: o for o in orders}
+    active = {o.symbol for o in orders}
+    submitted_n = 0
+    rejected = 0
+    start = now()
+    window_end = (market_close - timedelta(seconds=close_buffer_s)) if market_close else None
+    window_s = (window_end - start).total_seconds() if window_end else None
+    tier_of: dict[str, str] = {}
+    patho_of: dict[str, bool] = {}
+
+    def _price(sym: str) -> tuple[Optional[float], Optional[str]]:
+        """(limit_price, tier) for this round, or (None, tier) when it can't be priced now."""
+        o = by_sym[sym]
+        try:
+            bid, ask, trade = quote(sym)
+        except AlpacaAPIError as exc:
+            log.warning("quote failed; skipping this round", extra={"symbol": sym, "error": str(exc)})
+            return None, tier_of.get(sym)
+        ref = arrival_reference(bid, ask, trade)
+        if ref is None:
+            return None, tier_of.get(sym)
+        tier = liquidity_tier(adv.get(sym), bid, ask, ex=ex)
+        tier_of[sym] = tier
+        patho_of[sym] = is_pathological_spread(bid, ask, ex=ex)
+        if patho_of[sym]:
+            return round(float(ref), 2), tier                    # passive at the guarded ref; never cross
+        if tier == "deep":
+            return marketable_price(ref, o.side, ex=ex), tier
+        mid = (bid + ask) / 2.0 if (bid and ask and ask >= bid) else float(ref)
+        f = min(max((now() - start).total_seconds() / window_s, 0.0), 1.0) if window_s and window_s > 0 else 1.0
+        level = round(f * ladder_steps) / ladder_steps           # discretize mid→cap into ladder_steps
+        return ladder_price(ref, mid, o.side, level, ex=ex), tier
+
+    def _round(tag: str) -> None:
+        nonlocal submitted_n, rejected
+        live: list[tuple[str, str]] = []
+        for sym in list(active):
+            o = by_sym[sym]
+            residual = o.qty - out[sym]["filled"]
+            if residual <= 0:
+                active.discard(sym); continue
+            price, tier = _price(sym)
+            if price is None:
+                continue                                          # can't price now — retry next round
+            qty_to_post = child_qty(residual, adv.get(sym), price, ex=ex) if tier == "thin" else residual
+            coid = f"{cycle_key}:{sym}:{o.side}:{tag}"
+            try:
+                resp = broker.submit_order(sym, qty_to_post, o.side, order_type="limit",
+                                           limit_price=price, client_order_id=coid)
+            except AlpacaAPIError as exc:
+                rejected += 1
+                out[sym].update(status="rejected", reason=f"rejected: {exc}")
+                pending.append({"symbol": sym, "side": o.side, "delta_usd": None,
+                                "qty": residual, "reason": f"rejected: {exc}"})
+                log.error("order rejected; deferring", extra={"symbol": sym, "error": str(exc)})
+                if alert:
+                    alert(f"order rejected {sym} {o.side} {residual}: {exc}")
+                active.discard(sym); continue
+            submitted_n += 1
+            _upsert_order(db_engine, cycle_key, resp)
+            live.append((resp["id"], sym))
+
+        open_ids = {oid for oid, _ in live}
+        for _ in range(max(int(repeg_s / tick_s), 1)):
+            if not open_ids:
+                break
+            sleep(tick_s)
+            for oid, sym in live:
+                if oid not in open_ids:
+                    continue
+                try:
+                    st = read(oid)
+                except AlpacaAPIError:
+                    continue
+                if st is None:
+                    continue
+                _upsert_order(db_engine, cycle_key, st)
+                if st["status"] in _TERMINAL:
+                    open_ids.discard(oid)
+
+        for oid, sym in live:                                    # round end: cancel leftover, book fills
+            if oid in open_ids:
+                try:
+                    broker.cancel_order(oid)
+                except AlpacaAPIError as exc:
+                    log.warning("cancel failed", extra={"id": oid, "error": str(exc)})
+            try:
+                st = read(oid)
+            except AlpacaAPIError:
+                continue
+            if st is None:
+                continue
+            _upsert_order(db_engine, cycle_key, st)
+            fq = int(st.get("filled_qty") or 0)
+            if fq > 0:
+                _record_fill(db_engine, st)
+                out[sym]["filled"] += fq
+            if out[sym]["filled"] >= by_sym[sym].qty:
+                active.discard(sym)
+
+    rnd = 0
+    while active and rnd < max_rounds:
+        if window_end is not None and now() >= window_end:
+            break
+        rnd += 1
+        _round(f"r{rnd}")
+
+    _auction_or_defer(active, by_sym, out, pending, quote=quote, ex=ex, broker=broker,
+                      db_engine=db_engine, cycle_key=cycle_key, tier_of=tier_of, patho_of=patho_of)
+    submitted_n += sum(1 for d in out.values() if d["status"] == "auction")
+    return _finalize(out, orders, submitted=submitted_n, rejected=rejected, pending=pending,
+                     db_engine=db_engine, cycle_key=cycle_key)
+
+
+def _auction_or_defer(active, by_sym, out, pending, *, quote, ex, broker, db_engine, cycle_key,
+                      tier_of, patho_of) -> None:
+    """Residual at the close: closing-auction LOC for liquid, non-pathological names; else cross-day."""
+    for sym in list(active):
+        o = by_sym[sym]
+        residual = o.qty - out[sym]["filled"]
+        if residual <= 0:
+            continue
+        eligible = tier_of.get(sym) in ("deep", "moderate") and not patho_of.get(sym, False)
+        if eligible:
+            try:
+                bid, ask, trade = quote(sym)
+            except AlpacaAPIError:
+                bid = ask = trade = None
+            ref = arrival_reference(bid, ask, trade)
+            if ref is not None:
+                loc = marketable_price(ref, o.side, ex=ex)       # generous LOC limit at the cap
+                try:
+                    resp = broker.submit_order(sym, residual, o.side, order_type="limit",
+                                               limit_price=loc, client_order_id=f"{cycle_key}:{sym}:{o.side}:close",
+                                               time_in_force="cls")
+                    _upsert_order(db_engine, cycle_key, resp)
+                    out[sym].update(status="auction", reason="limit-on-close (fills at 4pm auction)")
+                    continue
+                except AlpacaAPIError as exc:
+                    log.warning("LOC submit failed; deferring", extra={"symbol": sym, "error": str(exc)})
+        pending.append({"symbol": sym, "side": o.side, "delta_usd": None,
+                        "qty": residual, "reason": "unfilled at close; deferred to cross-day"})
 
 
 def _single_pass(orders, *, broker, db_engine, cycle_key, pending, out,
