@@ -814,6 +814,42 @@ function sparkline(hist){
   $("navrange").textContent = `${hist.length} snapshots · ${t0} → ${t1}`;
 }
 
+// ---- live price buffers (client-side, fed by the 1s /api/state tick) ------
+// _px: rolling per-symbol live price path for the row sparklines; _navBase: the fetched NAV
+// history for the Overview chart, with a live tail point appended each tick so the tip tracks
+// live NAV (fixes the "numbers move but the chart is frozen" confusion). _calls: cached book.
+const _px = {};
+let _navBase = [];
+let _calls = [];
+const PX_KEEP = 60;
+
+function livePx(r){ return r.last_price != null ? r.last_price : (r.qty ? r.market_value / r.qty : null); }
+
+function pushPx(s){
+  (s.positions || []).forEach(r => {
+    const p = livePx(r); if (p == null) return;
+    const buf = (_px[r.symbol] = _px[r.symbol] || []);
+    if (buf[buf.length - 1] !== p) buf.push(p);
+    if (buf.length > PX_KEEP) buf.shift();
+  });
+}
+
+// A tiny inline sparkline (teal series — green/red are reserved for signed P&L per the design language).
+function miniSpark(arr){
+  if (!arr || arr.length < 2) return '<span class="mut">–</span>';
+  const w = 66, h = 18, lo = Math.min(...arr), hi = Math.max(...arr), rng = (hi - lo) || 1;
+  const X = i => (i / (arr.length - 1)) * (w - 2) + 1, Y = v => h - 1 - ((v - lo) / rng) * (h - 2);
+  const d = arr.map((v, i) => (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(v).toFixed(1)).join(" ");
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block" aria-hidden="true">`
+    + `<path d="${d}" fill="none" stroke="var(--accent)" stroke-width="1.4" stroke-linejoin="round"/></svg>`;
+}
+
+// Redraw the Overview NAV chart with a live tail so its tip tracks the live NAV every second.
+function drawNav(liveNav){
+  const tail = liveNav != null ? [{ ts: new Date().toISOString(), nav: liveNav }] : [];
+  sparkline(_navBase.concat(tail));
+}
+
 // ---- covered-call helpers -------------------------------------------------
 function dte(exp){ if(!exp) return null; const d=Math.round((new Date(exp+"T00:00:00")-Date.now())/864e5); return d; }
 
@@ -833,7 +869,9 @@ async function loadOverview(){
   if(!s){ $("kpis").innerHTML =
       '<div class="errbox"><div class="big">Backend unreachable</div>Postgres or the dashboard API is not responding.</div>';
     return; }
-  renderGate(s); kpis(s); sparkline(hist); renderFootstrip(s);
+  _navBase = hist || [];
+  pushPx(s);
+  renderGate(s); kpis(s); drawNav(s.nav); renderFootstrip(s);
 }
 
 // Portfolio — Holdings (positions/calls/factors) + Activity (orders/alerts)
@@ -845,8 +883,9 @@ async function loadPortfolio(){
   if(!s){ ["positions","calls","factors","orders","alerts"].forEach(id=>$(id).innerHTML =
       '<div class="errbox"><div class="big">Backend unreachable</div>Postgres or the dashboard API is not responding.</div>');
     return; }
+  _calls = calls || []; pushPx(s);
   renderSectorExposure(s.positions); renderPositions(s); renderFactorTilt(s.positions, factors);
-  renderCalls(s, calls); renderFactors(factors); renderOrders(orders); renderAlerts(alerts);
+  renderCalls(s, _calls); renderFactors(factors); renderOrders(orders); renderAlerts(alerts);
 }
 
 // Solid sector colour for ribbons/swatches (brighter than the chip background).
@@ -989,7 +1028,9 @@ function renderPositions(s){
   $("positions").innerHTML = table(rows, [
     {h:"Symbol", cls:()=>"sym", f:r=>symCell(r.symbol, "stock")},
     {h:"Qty", tip:"Shares held.", f:r=>fmt(r.qty)},
-    {h:"Mkt value", tip:"Position market value = weight × NAV.", f:r=>usd(r.market_value)},
+    {h:"Last", tip:"Live last trade price (updates every second).", f:r=>r.last_price!=null?usd2(r.last_price):"–"},
+    {h:"Trend", tip:"Intraday live price path since the dashboard connected.", f:r=>miniSpark(_px[r.symbol])},
+    {h:"Mkt value", tip:"Position market value = qty × live price.", f:r=>usd(r.market_value)},
     {h:"Allocation", tip:"Current weight (bar) vs target (tick). Weight = market value ÷ NAV.",
       f:r=>allocBar(r.weight, r.target_weight, maxW)},
     {h:"Δ vs tgt", tip:"Current weight minus target. Green = overweight, red = underweight.",
@@ -1004,8 +1045,13 @@ function renderCalls(s, calls){
   $("callssub").innerHTML = (calls&&calls.length)
     ? `${calls.length} open · ${fmt(coveredShares)} sh covered${totShares?` (${pct(coveredShares/totShares)})`:""}`
     : (coverable?`0 open · ${coverable} names coverable`:"");
+  const px = {};
+  (s.positions||[]).forEach(r => { px[r.symbol] = r.last_price!=null ? r.last_price : (r.qty ? r.market_value/r.qty : null); });
   $("calls").innerHTML = table(calls, [
     {h:"Under.", cls:()=>"sym", f:r=>symCell(r.underlying, "call")},
+    {h:"Under. px", tip:"Live price of the underlying (updates every second). Watch it vs the strike.",
+      f:r=>usd2(px[r.underlying])},
+    {h:"Trend", tip:"Intraday live price path of the underlying.", f:r=>miniSpark(_px[r.underlying])},
     {h:"Contr.", tip:"Contracts written. Each contract = 100 shares of coverage.", f:r=>fmt(r.contracts)},
     {h:"Strike", tip:"Strike price — shares can be called away above this.", f:r=>usd2(r.strike)},
     {h:"Expiry", tip:"Option expiration date.", f:r=>r.expiration||"–"},
@@ -1142,9 +1188,12 @@ syncWin();
 // quote — well under the rate limit), so the headline numbers move every second. The heavier
 // panels (history, factors, health) stay on the 30s poll, which is all they change on anyway.
 setInterval(async () => {
-  if (activeView !== "overview") return;
+  if (activeView !== "overview" && activeView !== "portfolio") return;
   const s = await get("/api/state");
-  if (s) { noteFresh(s); kpis(s); renderGate(s); }
+  if (!s) return;
+  noteFresh(s); pushPx(s);
+  if (activeView === "overview") { kpis(s); renderGate(s); drawNav(s.nav); }
+  else { renderPositions(s); renderCalls(s, _calls); }   // live prices, sparklines, underlying px
 }, 1000);
 setInterval(loadActive, 30000);   // full re-read of the active view every 30s
 setInterval(tickFreshness, 1000); // tick the "checked / data age" header every second
