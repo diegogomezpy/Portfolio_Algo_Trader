@@ -116,28 +116,38 @@ _ARRIVAL_MID_CACHE: dict = {}
 
 
 def _arrival_mid(client, symbol, submitted_at):
-    """The NBBO mid prevailing at order submission — the 'arrival price' a market fill is judged
-    against. Returns the first quote at/after ``submitted_at`` (within 30s), or ``None`` if no
-    quote resolves. Cached so repeated slippage-panel refreshes don't re-query the data API."""
+    """The arrival price prevailing at order submission — what a fill's shortfall is judged against.
+
+    A **spread-guarded** reference (see :func:`data.arrival_reference`): the NBBO mid when the
+    quote at/after ``submitted_at`` is two-sided and tight, else the last trade near then. Guarding
+    on the trade matters for thin names whose quote has a stale/phantom side (INBX's $108.87 ask
+    while it traded ~$95) — the raw mid would still be badly off. ``None`` if nothing resolves.
+    Cached so repeated slippage-panel refreshes don't re-query the data API."""
     if not symbol or not submitted_at:
         return None
     key = (symbol, str(submitted_at))
     if key in _ARRIVAL_MID_CACHE:
         return _ARRIVAL_MID_CACHE[key]
-    mid = None
+    ref = None
     try:
         start = datetime.fromisoformat(str(submitted_at))
         end = start + timedelta(seconds=30)
         quotes = client.historical_quotes(symbol, start=start.isoformat(),
                                            end=end.isoformat(), limit=1)
-        if quotes:
-            bid, ask = quotes[0].get("bid_px"), quotes[0].get("ask_px")
-            if bid and ask:
-                mid = (bid + ask) / 2
+        bid = quotes[0].get("bid_px") if quotes else None
+        ask = quotes[0].get("ask_px") if quotes else None
+        trade = None
+        try:
+            trades = client.historical_trades(symbol, start=start.isoformat(),
+                                              end=end.isoformat(), limit=1)
+            trade = trades[0].get("price") if trades else None
+        except Exception as exc:  # noqa: BLE001 — trades are the fallback; a miss just leaves the mid
+            log.warning("arrival-trade lookup failed for %s @ %s: %s", symbol, submitted_at, exc)
+        ref = data.arrival_reference(bid, ask, trade)
     except Exception as exc:  # noqa: BLE001 — a quote miss just drops that order from slippage
         log.warning("arrival-mid lookup failed for %s @ %s: %s", symbol, submitted_at, exc)
-    _ARRIVAL_MID_CACHE[key] = mid
-    return mid
+    _ARRIVAL_MID_CACHE[key] = ref
+    return ref
 
 
 def _live_slippage(client, limit: int = 200) -> dict:

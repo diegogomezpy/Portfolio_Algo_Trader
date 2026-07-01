@@ -539,15 +539,35 @@ def api_risk(db_engine, *, window: int = 10, start: str | None = None) -> dict:
     }
 
 
-def _slippage_core(records, arrival_mid) -> dict:
-    """Execution quality from filled orders: realized fill vs the *intended* (reference) price.
+def arrival_reference(bid, ask, trade, *, max_spread: float = 0.02):
+    """The 'arrival price' to judge a fill against — robust to stale / one-sided quotes.
 
-    The reference is the order's ``limit_price`` for a limit order, or — for a **market order** —
-    the arrival NBBO mid at submit time, supplied by ``arrival_mid(symbol, submitted_at) -> float |
-    None``. A market order whose arrival mid can't be resolved is skipped (no reference to measure
-    against). ``slippage = (fill − intended)`` is signed so **positive = adverse** (paid more on a
-    buy / received less on a sell), in bps of the intended price and in dollars. Aggregates are
-    notional-weighted; the dollar total is the realized execution cost vs the reference.
+    The NBBO **mid** when the quote is two-sided and tight (spread ≤ ``max_spread`` of the mid);
+    otherwise the **last trade** price (a real executed value). A wide or one-sided quote — common
+    on thin names via the IEX feed, e.g. INBX's phantom $108.87 ask while it traded ~$95 — makes
+    the mid meaningless, so we trust the print instead. Returns ``None`` if nothing is usable.
+    """
+    bid = float(bid) if bid and float(bid) > 0 else None
+    ask = float(ask) if ask and float(ask) > 0 else None
+    trade = float(trade) if trade and float(trade) > 0 else None
+    if bid and ask and ask >= bid:
+        mid = (bid + ask) / 2.0
+        if (ask - bid) / mid <= max_spread:
+            return mid
+        return trade if trade else mid          # wide quote → trust the executed print
+    return trade if trade else (bid or ask)     # one-sided / no quote → trade, else the lone side
+
+
+def _slippage_core(records, arrival_mid) -> dict:
+    """Execution quality (implementation shortfall): realized fill vs the **arrival** reference.
+
+    The reference is the arrival price at submit — ``arrival_mid(symbol, submitted_at) -> float |
+    None`` (a spread-guarded NBBO mid / last trade, see :func:`arrival_reference`) — for **every**
+    order, falling back to the order's ``limit_price`` only when no arrival price resolves (and
+    skipping when neither exists). Benchmarking against the order's own marketable limit is wrong:
+    it's padded to the touch, so a fill inside it looks like a big fake "gain". ``slippage =
+    (fill − intended)`` is signed so **positive = adverse** (paid more on a buy / received less on
+    a sell), in bps of the intended price and in dollars; aggregates are notional-weighted.
     """
     fills: list[dict] = []
     tot_usd = tot_notional = wbps = 0.0
@@ -555,14 +575,18 @@ def _slippage_core(records, arrival_mid) -> dict:
         filled, fq = r.get("filled_avg_price"), (r.get("filled_qty") or 0)
         if not filled or not fq:
             continue
+        # Benchmark against the ARRIVAL price (implementation shortfall) for every order — not the
+        # order's own marketable limit, which is padded to the touch and produces fake gains (INBX
+        # filled ~$95 vs a $108.87 crossed-to-the-ask limit → a bogus −$1,470 "gain"). Fall back to
+        # the limit only when no arrival reference resolves.
+        ref = arrival_mid(r.get("symbol"), r.get("submitted_at"))
         limit = r.get("limit_price")
-        if limit:
-            intended, basis = float(limit), "limit"
-        else:                                    # market order → reference is the arrival mid
-            ref = arrival_mid(r.get("symbol"), r.get("submitted_at"))
-            if not ref:
-                continue
+        if ref:
             intended, basis = float(ref), "arrival"
+        elif limit:
+            intended, basis = float(limit), "limit"
+        else:                                    # nothing to measure against → skip
+            continue
         side = str(r.get("side")).lower()
         adverse = (filled - intended) if side == "buy" else (intended - filled)
         bps = adverse / intended * 1e4

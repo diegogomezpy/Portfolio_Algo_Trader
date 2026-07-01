@@ -328,6 +328,29 @@ def test_slippage_from_orders_market_uses_arrival_mid():
     assert by["AAPL"]["basis"] == "limit" and by["AAPL"]["slippage_bps"] == -10.0
 
 
+def test_arrival_reference_spread_guard():
+    # Tight two-sided quote → mid.
+    assert data.arrival_reference(99.95, 100.05, 100.10) == 100.0
+    # Wide/stale quote (INBX-like: bid 94.73 / ask 108.87, ~14% spread) → trust the trade print.
+    assert data.arrival_reference(94.73, 108.87, 95.1) == 95.1
+    # One-sided quote → trade.
+    assert data.arrival_reference(None, 108.87, 95.1) == 95.1
+    # No quote at all → trade; nothing usable → None.
+    assert data.arrival_reference(0, 0, 95.1) == 95.1
+    assert data.arrival_reference(None, None, None) is None
+
+
+def test_slippage_prefers_arrival_over_padded_limit():
+    # The INBX regression: a marketable-limit BUY whose limit (108.87) was crossed to a stale ask,
+    # filled at 95. Measured vs its own limit it's a bogus −$1,470 "gain"; vs the ~95 arrival it's ~0.
+    arrival = lambda sym, ts: 95.0 if sym == "INBX" else None
+    orders = [{"symbol": "INBX", "side": "buy", "type": "limit", "filled_qty": 106,
+               "limit_price": 108.87, "filled_avg_price": 95.0, "submitted_at": "t"}]
+    row = data.slippage_from_orders(orders, arrival)["fills"][0]
+    assert row["basis"] == "arrival" and row["intended"] == 95.0
+    assert abs(row["slippage_usd"]) < 1.0 and abs(row["slippage_bps"]) < 5   # ~0, not −1470 / −1274bps
+
+
 def test_held_symbols_union_excludes_options():
     eng = _engine()
     _seed(eng)
