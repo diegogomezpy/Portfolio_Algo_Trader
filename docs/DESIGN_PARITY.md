@@ -131,8 +131,11 @@ the newer spec introduces.
   chaser (`engine/covered_calls.py:OptionChase`). Stops the "passive limit at the mid never
   fills" problem the equities already had fixed.
 - [x] **Performance start-date / window picker** — done (see Overview/Performance above).
-- [x] **~1-second live refetch** — the Overview NAV + KPIs now refresh every **1 s** from `/api/state`
-  (one Alpaca quote per tick, well under the ~200/min limit). The heavier Postgres-backed panels
-  (health, history, factors) stay on the 30 s poll, since their snapshot only changes every 60 s.
-  Full 1 s polling of *every* endpoint is avoided deliberately — it would burn the Alpaca rate limit
-  re-reading unchanged data. Revisit if a streaming (websocket) feed replaces polling.
+- [x] **Sub-second headline metrics (live market-data feed)** — the Overview NAV/KPIs refresh every
+  **1 s** from `/api/state`, which is now overlaid with **live streamed trade prices**
+  (`engine.price_feed.LivePriceFeed` → an always-on `StockDataStream` in the dashboard process →
+  `data.apply_live_prices` marks NAV/positions to the live cache). Previously the 1 s poll only saw
+  the 60 s monitor snapshot, so headline data was up to a minute stale. The in-memory cache means no
+  per-request Alpaca call. Coverage is the held book minus names that haven't printed on the free
+  **IEX** feed (they keep the snapshot value); full coverage would need the paid SIP feed. Heavier
+  Postgres panels (history, factors, health) stay on the 30 s poll.
