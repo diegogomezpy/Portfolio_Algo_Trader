@@ -68,6 +68,7 @@ class TargetPlan:
     universe: set = field(default_factory=set)
     sector_map: pd.Series = field(default_factory=lambda: pd.Series(dtype=object))
     panel: Optional[pd.DataFrame] = None        # close panel, for the overlay's spot/IV
+    sigma: Optional[pd.DataFrame] = None        # covariance Σ, for the risk-contribution decomposition
 
 
 @dataclass
@@ -117,7 +118,7 @@ def compute_targets(settings, as_of: date, *, db_engine=None,
     adv = snap["adv_20d"].to_dict() if "adv_20d" in snap else {}
     spread = snap["spread"].to_dict() if "spread" in snap else {}
     universe = set(eligible) if eligible is not None else set(composite.index)
-    return TargetPlan(res.weights, prices, adv, spread, universe, sector_map, panel=panel)
+    return TargetPlan(res.weights, prices, adv, spread, universe, sector_map, panel=panel, sigma=sigma)
 
 
 # ====================================================================== #
@@ -249,7 +250,14 @@ def run_cycle(
     rc = risk.check_pretrade(weights, settings=settings, sector_map=plan.sector_map,
                              universe=plan.universe, equity_positions=rec.live_positions,
                              as_of=as_of, leverage=leverage)
-    _write_rebalance_log(db_engine, as_of, weights, rc, trigger)
+    # Euler risk decomposition for the dashboard (engine persists it — dashboard stays Postgres-
+    # only). Fully defensive: any failure logs and stores NULL, never blocking the rebalance.
+    rc_contrib = None
+    try:
+        rc_contrib = optimize.risk_contributions(weights, plan.sigma)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("risk-contribution computation failed (non-fatal)", extra={"error": str(exc)})
+    _write_rebalance_log(db_engine, as_of, weights, rc, trigger, risk_contributions=rc_contrib)
     if not rc.approved:
         log.error("risk gate blocked the cycle; no orders submitted", extra={"reason": rc.reason})
         if alert:
@@ -321,7 +329,7 @@ def _equity_shares(client) -> dict[str, float]:
 
 
 def _write_rebalance_log(db_engine, as_of: date, weights: pd.Series, rc: RiskCheckResult,
-                         trigger: str) -> None:
+                         trigger: str, risk_contributions: dict | None = None) -> None:
     if db_engine is None:
         return
     from sqlalchemy import insert
@@ -330,7 +338,8 @@ def _write_rebalance_log(db_engine, as_of: date, weights: pd.Series, rc: RiskChe
         conn.execute(insert(rebalance_log).values(
             ts=datetime.now(timezone.utc), trigger_reason=trigger,
             target_weights={k: float(v) for k, v in weights.items()},
-            risk_gate_passed=rc.approved, risk_gate_reason=rc.reason))
+            risk_gate_passed=rc.approved, risk_gate_reason=rc.reason,
+            risk_contributions=risk_contributions))
 
 
 # ====================================================================== #

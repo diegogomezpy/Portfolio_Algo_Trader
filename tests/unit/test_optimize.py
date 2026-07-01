@@ -232,3 +232,33 @@ def test_optimize_portfolio_proceeds_when_sigma_empty_and_lambda_zero():
     assert res.status in ("optimal", "relaxed")
     assert res.weights.sum() == pytest.approx(0.95, abs=1e-3)
     assert res.weights.index[0] == "S0"              # top scorer funded despite no Σ
+
+
+def test_risk_contributions_euler_decomposition():
+    # 60/40 weights, uncorrelated names with vols 0.20 and 0.30. The higher-vol name pulls its
+    # risk share up so both end at 50% despite the 60/40 sizing — the point of the decomposition.
+    w = pd.Series({"A": 0.6, "B": 0.4})
+    sigma = pd.DataFrame([[0.04, 0.0], [0.0, 0.09]], index=["A", "B"], columns=["A", "B"])
+    out = optimize.risk_contributions(w, sigma)
+    assert out["contrib"]["A"] == pytest.approx(0.5, abs=1e-9)
+    assert out["contrib"]["B"] == pytest.approx(0.5, abs=1e-9)
+    assert sum(out["contrib"].values()) == pytest.approx(1.0, abs=1e-9)   # shares sum to 1
+    assert out["portfolio_vol"] == pytest.approx((0.0288) ** 0.5, abs=1e-9)
+    assert out["weight"] == {"A": 0.6, "B": 0.4}
+
+
+def test_risk_contributions_drops_names_missing_from_sigma():
+    w = pd.Series({"A": 0.5, "B": 0.3, "C": 0.2})       # C has no Σ row → unattributable
+    sigma = _diag_sigma(["A", "B"], var=0.04)
+    out = optimize.risk_contributions(w, sigma)
+    assert set(out["contrib"]) == {"A", "B"}
+    assert sum(out["contrib"].values()) == pytest.approx(1.0, abs=1e-9)
+
+
+def test_risk_contributions_defensive_on_empty_or_degenerate():
+    empty = {"portfolio_vol": None, "contrib": {}, "weight": {}}
+    assert optimize.risk_contributions(pd.Series(dtype=float), _diag_sigma(["A"])) == empty
+    assert optimize.risk_contributions(pd.Series({"A": 1.0}), pd.DataFrame()) == empty
+    # zero covariance → zero variance → nothing to attribute (must not divide by zero)
+    zero = pd.DataFrame([[0.0]], index=["A"], columns=["A"])
+    assert optimize.risk_contributions(pd.Series({"A": 1.0}), zero) == empty

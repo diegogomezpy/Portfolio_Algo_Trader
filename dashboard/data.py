@@ -618,6 +618,32 @@ def api_risk(db_engine, *, window: int = 10, start: str | None = None) -> dict:
     }
 
 
+def api_risk_contributions(db_engine) -> dict:
+    """Per-name risk decomposition from the latest rebalance (engine-computed, Postgres-only).
+
+    The engine persists an Euler risk decomposition into ``rebalance_log.risk_contributions`` at
+    each rebalance (it has the covariance Σ there); the dashboard just reads the most recent one.
+    Returns names sorted by risk share (descending) each carrying their ``rc_pct`` (fraction of
+    total portfolio variance) and portfolio weight — so the chart can show which names carry more
+    risk than their weight. ``available`` is False until a rebalance has written a decomposition.
+    """
+    with db_engine.connect() as conn:
+        row = conn.execute(
+            select(db.rebalance_log.c.ts, db.rebalance_log.c.risk_contributions)
+            .where(db.rebalance_log.c.risk_contributions.isnot(None))
+            .order_by(desc(db.rebalance_log.c.ts)).limit(1)).mappings().first()
+    rcx = (row or {}).get("risk_contributions") if row else None
+    contrib = (rcx or {}).get("contrib") or {}
+    if not contrib:
+        return {"available": False, "names": []}
+    weight = (rcx or {}).get("weight") or {}
+    names = sorted(({"symbol": s, "rc_pct": float(p), "weight": float(weight.get(s, 0.0))}
+                    for s, p in contrib.items()),
+                   key=lambda d: d["rc_pct"], reverse=True)
+    return {"available": True, "ts": str(row["ts"]),
+            "portfolio_vol": (rcx or {}).get("portfolio_vol"), "names": names}
+
+
 def _slippage_core(records, arrival_mid) -> dict:
     """Execution quality (implementation shortfall): realized fill vs the **arrival** reference.
 

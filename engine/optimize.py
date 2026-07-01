@@ -252,3 +252,36 @@ def optimize_portfolio(
                 extra={"candidates": len(active)})
     held = prev_weights if prev_weights is not None else pd.Series(dtype=float)
     return OptimizeResult(weights=held, status="held", cash=float(1.0 - held.sum()))
+
+
+def risk_contributions(weights: pd.Series, sigma: pd.DataFrame) -> dict:
+    """Per-name percent contribution to portfolio risk, from weights + covariance Σ.
+
+    Standard Euler risk decomposition: with portfolio variance ``σ²ₚ = wᵀΣw``, each name's
+    component risk contribution is ``RCᵢ = wᵢ·(Σw)ᵢ`` and the shares ``RCᵢ / σ²ₚ`` sum to 1.
+    A concentrated name shows a risk share well above its weight; a diversifier shows below.
+
+    Σ from :mod:`engine.covariance` is annualized, so ``portfolio_vol = √(wᵀΣw)`` reads as the
+    book's annualized volatility. Names absent from Σ (too little history to risk-model) are
+    dropped — their risk can't be attributed. Returns ``{"portfolio_vol", "contrib", "weight"}``
+    with empty maps when there's nothing to decompose (no overlap or degenerate variance), so a
+    caller can persist the result unconditionally. Pure and defensive by design — never raises
+    on empty/degenerate input.
+    """
+    empty = {"portfolio_vol": None, "contrib": {}, "weight": {}}
+    if weights is None or sigma is None or weights.empty or sigma.empty:
+        return empty
+    names = [s for s in weights.index if s in sigma.index]
+    if not names:
+        return empty
+    w = weights.loc[names].to_numpy(dtype=float)
+    cov = sigma.loc[names, names].to_numpy(dtype=float)
+    cov = (cov + cov.T) / 2.0                       # symmetrize (Σ estimate may be slightly off)
+    var = float(w @ cov @ w)
+    if not (var > 0):                               # flat/degenerate → nothing to attribute
+        return empty
+    comp = w * (cov @ w)                            # component risk contributions (sum to var)
+    pct = comp / var                                # shares that sum to 1.0
+    return {"portfolio_vol": float(var ** 0.5),
+            "contrib": {s: float(p) for s, p in zip(names, pct)},
+            "weight": {s: float(x) for s, x in zip(names, w)}}

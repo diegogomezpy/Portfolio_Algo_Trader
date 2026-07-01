@@ -376,6 +376,10 @@
           <h2>Daily return distribution <span class="panel-sub" id="distsub"></span></h2>
           <div id="distchart"></div>
         </div>
+        <div class="se-panel span2" style="margin-top:16px">
+          <h2>Risk contribution <span class="panel-sub" id="rcsub">share of portfolio risk per holding</span></h2>
+          <div class="body" id="riskcontrib"></div>
+        </div>
       </div>
     </div>
     <div class="subview" id="sub-execution" style="display:none">
@@ -517,11 +521,12 @@ function winStart(w){
 }
 async function loadPerformance(){
   const start = winStart(perfWin), ws = start ? `?start=${start}` : "";
-  const [tr, slip, risk, st, fees] = await Promise.all(
-    [`/api/track_record${ws}`,"/api/slippage",`/api/risk${ws}`,"/api/state","/api/fees"].map(get));
+  const [tr, slip, risk, st, fees, rcx] = await Promise.all(
+    [`/api/track_record${ws}`,"/api/slippage",`/api/risk${ws}`,"/api/state","/api/fees","/api/risk_contrib"].map(get));
   lastFetch = Date.now(); tickFreshness();
   renderReturns(tr, slip, fees);   // Returns sub-view
   renderRisk(risk, st);            // Risk sub-view
+  renderRiskContrib(rcx);          // Risk sub-view — per-name risk decomposition
   renderExecution(slip, fees);     // Execution sub-view
 }
 
@@ -723,6 +728,31 @@ function distChart(returns, varLevel){
     s+=`<line x1="${xv}" y1="${pt}" x2="${xv}" y2="${(pt+ph).toFixed(1)}" stroke="${red}" stroke-width="1.5"/>`
       +`<text x="${xv}" y="${(pt+9).toFixed(1)}" text-anchor="middle" font-size="10" fill="${red}">VaR</text>`; }
   return s+"</svg>";
+}
+
+// Risk-contribution table: each holding's share of portfolio variance (Euler decomposition,
+// engine-computed at rebalance) with its weight as a tick — bar past the tick = concentration.
+function renderRiskContrib(rcx){
+  const el=$("riskcontrib");
+  if(!rcx || !rcx.available || !(rcx.names||[]).length){
+    el.innerHTML='<div class="se-empty">Risk contribution appears after the next rebalance — the engine records each holding’s share of portfolio risk (from the covariance matrix) each time it rebalances.</div>';
+    $("rcsub").textContent="share of portfolio risk per holding";
+    return;
+  }
+  $("rcsub").textContent = rcx.portfolio_vol!=null
+    ? `annualized portfolio vol ${pct(rcx.portfolio_vol)} · bar = risk share, tick = weight · as of ${String(rcx.ts).slice(0,10)}`
+    : "risk share vs weight";
+  const mx=Math.max(0.01, ...rcx.names.map(n=>Math.max(n.rc_pct, n.weight)));
+  el.innerHTML = table(rcx.names, [
+    {h:"Symbol", cls:()=>"sym", f:n=>symCell(n.symbol)},
+    {h:"Risk share", tip:"Share of total portfolio variance this name contributes (Euler risk decomposition). Bar = risk share; tick = portfolio weight. Bar beyond the tick means the name adds more risk than its size.",
+      f:n=>allocBar(n.rc_pct, n.weight, mx)},
+    {h:"Risk %", tip:"Percent of portfolio risk contributed.", f:n=>pct(n.rc_pct)},
+    {h:"Weight", tip:"Portfolio weight (fraction of NAV) at the last rebalance.", f:n=>pct(n.weight)},
+    {h:"Risk/Wt", tip:"Risk share ÷ weight. Above 1× the name carries more risk than its size (a concentration); below 1× it diversifies.",
+      f:n=>{const r=n.weight?n.rc_pct/n.weight:null;
+        return r==null?"—":`<span style="font-family:var(--mono)${r>1.25?';color:var(--amber)':(r<0.8?';color:var(--muted)':'')}">${r.toFixed(2)}×</span>`;}},
+  ]);
 }
 
 // Underwater (drawdown) area chart: 0% at the top (high-water mark), losses shaded below.

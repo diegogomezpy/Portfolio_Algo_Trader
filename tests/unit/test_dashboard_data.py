@@ -244,6 +244,37 @@ def test_api_risk_exposes_daily_returns_for_distribution():
     assert abs(r["returns"][0] - 0.10) < 1e-9                      # 100 → 110
 
 
+def test_api_risk_contributions_reads_latest_rebalance():
+    eng = _engine()
+    with eng.begin() as c:
+        # older row (should be ignored) then the newest with a fuller decomposition
+        c.execute(insert(db.rebalance_log).values(
+            ts=datetime(2026, 6, 1, 16), trigger_reason="monthly", target_weights={},
+            risk_gate_passed=True, risk_gate_reason="ok",
+            risk_contributions={"portfolio_vol": 0.11, "contrib": {"AAPL": 0.5},
+                                "weight": {"AAPL": 0.5}}))
+        c.execute(insert(db.rebalance_log).values(
+            ts=datetime(2026, 7, 1, 16), trigger_reason="monthly", target_weights={},
+            risk_gate_passed=True, risk_gate_reason="ok",
+            risk_contributions={"portfolio_vol": 0.18,
+                                "contrib": {"AAPL": 0.3, "MSFT": 0.7},
+                                "weight": {"AAPL": 0.5, "MSFT": 0.5}}))
+    rc = data.api_risk_contributions(eng)
+    assert rc["available"] and rc["portfolio_vol"] == 0.18
+    assert [n["symbol"] for n in rc["names"]] == ["MSFT", "AAPL"]     # sorted by risk share desc
+    assert rc["names"][0]["rc_pct"] == 0.7 and rc["names"][0]["weight"] == 0.5
+
+
+def test_api_risk_contributions_empty_when_no_rebalance_has_it():
+    eng = _engine()
+    with eng.begin() as c:                                            # a rebalance row without the field
+        c.execute(insert(db.rebalance_log).values(
+            ts=datetime(2026, 7, 1, 16), trigger_reason="monthly", target_weights={},
+            risk_gate_passed=True, risk_gate_reason="ok"))
+    rc = data.api_risk_contributions(eng)
+    assert rc["available"] is False and rc["names"] == []
+
+
 def _seed_curve(eng, navs):
     with eng.begin() as c:
         for i, nv in enumerate(navs):

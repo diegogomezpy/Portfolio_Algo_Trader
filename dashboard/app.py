@@ -403,6 +403,11 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
         """
         return data.api_risk(db_engine, start=start)
 
+    @app.get("/api/risk_contrib")
+    def risk_contrib() -> dict:
+        """Per-name risk decomposition from the latest rebalance (engine-persisted, Postgres-only)."""
+        return data.api_risk_contributions(db_engine)
+
     @app.get("/api/reference")
     def reference() -> dict:
         """Static instrument labels {symbol: {name, sector, industry}} for the held names.

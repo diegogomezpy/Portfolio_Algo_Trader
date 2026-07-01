@@ -101,6 +101,10 @@ rebalance_log = Table(
     Column("target_weights", JSON),
     Column("risk_gate_passed", Boolean),
     Column("risk_gate_reason", String),
+    # {"portfolio_vol": float, "contrib": {sym: pct}, "weight": {sym: w}} — Euler risk
+    # decomposition at rebalance (engine.optimize.risk_contributions). Nullable: pre-migration
+    # rows and cycles where Σ was unavailable carry NULL, and the dashboard degrades gracefully.
+    Column("risk_contributions", JSON),
     Column("created_at", DateTime, server_default=func.now()),
 )
 
