@@ -84,8 +84,18 @@ def _build_client():
         return None
 
 
-async def _monitor_loop(client, db_engine, interval: int) -> None:
-    """Every ``interval`` seconds: read Alpaca → write a snapshot (the Alpaca→Postgres bridge).
+def _held_equities(db_engine) -> list[str]:
+    """Equity symbols currently held (from the latest snapshot) — the price feed's subscription."""
+    try:
+        return [r["symbol"] for r in data.api_state(db_engine).get("positions", [])
+                if r.get("qty") and not data._is_option(r["symbol"])]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+async def _monitor_loop(client, db_engine, interval: int, price_feed=None) -> None:
+    """Every ``interval`` seconds: read Alpaca → write a snapshot (the Alpaca→Postgres bridge),
+    and keep the live price feed subscribed to the current held book.
 
     Runs the synchronous monitor in a worker thread so the event loop stays responsive; a
     failed pass is logged and the loop continues (alerting/monitoring must never crash the UI).
@@ -96,6 +106,8 @@ async def _monitor_loop(client, db_engine, interval: int) -> None:
         try:
             tw = await asyncio.to_thread(monitor.last_target_weights, db_engine)
             await asyncio.to_thread(monitor.monitor_once, client, db_engine, target_weights=tw)
+            if price_feed is not None:
+                price_feed.set_symbols(await asyncio.to_thread(_held_equities, db_engine))
         except Exception as exc:  # noqa: BLE001
             log.warning("dashboard monitor pass failed: %s", exc)
         await asyncio.sleep(interval)
@@ -259,11 +271,25 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
     if not live:
         client = None
 
+    # Live market-data feed → sub-second headline metrics (NAV/prices), overlaid on /api/state.
+    # If the stream can't start it self-reconnects and /api/state simply serves the snapshot.
+    price_feed = None
+    if client is not None:
+        try:
+            from engine import config
+            from engine.price_feed import LivePriceFeed
+            price_feed = LivePriceFeed(stream_factory=config.get_stock_data_stream,
+                                       symbols=_held_equities(db_engine))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("live price feed unavailable; headline metrics fall back to the snapshot: %s", exc)
+
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
         task = None
+        if price_feed is not None:
+            price_feed.start()
         if client is not None:
-            task = asyncio.create_task(_monitor_loop(client, db_engine, monitor_interval))
+            task = asyncio.create_task(_monitor_loop(client, db_engine, monitor_interval, price_feed))
         try:
             yield
         finally:
@@ -271,6 +297,8 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
+            if price_feed is not None:
+                price_feed.stop()
 
     app = FastAPI(title="sharpe-engine dashboard", lifespan=lifespan)
     if _STATIC.exists():
@@ -298,7 +326,10 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
 
     @app.get("/api/state")
     def state() -> dict:
-        return data.api_state(db_engine)
+        s = data.api_state(db_engine)
+        if price_feed is not None:                         # sub-second overlay of live trade prices
+            s = data.apply_live_prices(s, price_feed.snapshot())
+        return s
 
     @app.get("/api/nav_history")
     def nav_history(limit: int = 120) -> list:

@@ -115,3 +115,18 @@ def get_trading_stream():
     from alpaca.trading.stream import TradingStream
 
     return TradingStream(require_env("ALPACA_API_KEY"), require_env("ALPACA_SECRET_KEY"), paper=True)
+
+
+def get_stock_data_stream(feed: str = "iex"):
+    """Build an Alpaca ``StockDataStream`` — the live market-data source behind the dashboard's
+    sub-second headline metrics (:class:`engine.price_feed.LivePriceFeed`). Defaults to the free
+    IEX feed. Imported lazily.
+
+    Raises:
+        RuntimeError: If ALPACA_API_KEY / ALPACA_SECRET_KEY are not set.
+    """
+    from alpaca.data.enums import DataFeed
+    from alpaca.data.live import StockDataStream
+
+    return StockDataStream(require_env("ALPACA_API_KEY"), require_env("ALPACA_SECRET_KEY"),
+                           feed=DataFeed(feed))

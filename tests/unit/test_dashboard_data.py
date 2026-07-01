@@ -424,3 +424,26 @@ def test_empty_db_is_safe():
     assert s["leverage"] is None and s["gross_exposure"] is None and s["n_positions"] == 0
     assert data.api_orders(eng) == [] and data.api_calls(eng) == [] and data.api_factors(eng) == []
     assert data.api_nav_history(eng) == []
+
+
+def test_apply_live_prices_marks_nav_and_positions():
+    # AAPL snap price = 20000/100 = $200; a live $210 tick adds 100×$10 = $1,000 to NAV.
+    state = {"nav": 200_000.0, "day_pnl": 2_000.0, "day_pnl_pct": 0.01, "leverage": 1.0,
+             "gross_exposure": 200_000.0,
+             "positions": [{"symbol": "AAPL", "qty": 100, "market_value": 20_000.0, "weight": 0.10},
+                           {"symbol": "MSFT", "qty": 50, "market_value": 10_000.0, "weight": 0.05}]}
+    out = data.apply_live_prices(state, {"AAPL": 210.0})          # MSFT has no live tick → unchanged
+    assert out["prices_live"] is True
+    aapl = next(r for r in out["positions"] if r["symbol"] == "AAPL")
+    assert aapl["last_price"] == 210.0 and aapl["market_value"] == 21_000.0
+    assert out["nav"] == 201_000.0                                # 200k + 100×(210−200)
+    assert out["day_pnl"] == 3_000.0                              # basis 198k → 201k − 198k
+    assert out["gross_exposure"] == 201_000.0
+    msft = next(r for r in out["positions"] if r["symbol"] == "MSFT")
+    assert msft.get("last_price") is None and msft["market_value"] == 10_000.0
+
+
+def test_apply_live_prices_noop_without_prices():
+    state = {"nav": 100.0, "day_pnl": 0.0, "positions": [{"symbol": "AAPL", "qty": 1, "market_value": 100.0}]}
+    out = data.apply_live_prices(state, {})
+    assert out["nav"] == 100.0 and "prices_live" not in out and "last_price" not in out["positions"][0]

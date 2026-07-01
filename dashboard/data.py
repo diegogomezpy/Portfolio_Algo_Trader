@@ -115,6 +115,43 @@ def api_state(db_engine) -> dict:
             "n_positions": sum(1 for s, q in positions.items() if q and not _is_option(s))}
 
 
+def apply_live_prices(state: dict, prices: dict) -> dict:
+    """Overlay live streamed trade ``prices`` onto an :func:`api_state` dict for sub-second
+    headline metrics (Phase 2 latency). Each equity position is marked to its live price and NAV
+    to the **mark-to-market delta** from the 60s snapshot (``snap_price = market_value / qty``);
+    day-P&L, gross exposure and weights are re-derived off the live NAV. Options / names with no
+    live tick keep their snapshot value. Mutates and returns ``state``; a no-op with no prices.
+    """
+    nav = state.get("nav")
+    positions = state.get("positions") or []
+    if nav is None or not prices:
+        return state
+    delta = 0.0
+    for row in positions:
+        sym, qty, mv = row.get("symbol"), row.get("qty"), row.get("market_value")
+        live = prices.get(sym)
+        if live and qty and mv is not None:
+            delta += qty * (float(live) - mv / qty)          # mark-to-market move vs the snapshot
+            row["last_price"] = round(float(live), 4)
+            row["market_value"] = round(qty * float(live), 2)
+    state["prices_live"] = True
+    if not delta:
+        return state
+    new_nav = round(nav + delta, 2)
+    if state.get("day_pnl") is not None:                     # basis = prior-close equity = nav − day_pnl
+        basis = nav - state["day_pnl"]
+        state["day_pnl"] = round(new_nav - basis, 2)
+        state["day_pnl_pct"] = ((new_nav - basis) / basis) if basis else None
+    if state.get("leverage") is not None:
+        state["gross_exposure"] = round(new_nav * state["leverage"], 2)
+    for row in positions:                                    # weights against the live NAV
+        mv = row.get("market_value")
+        if mv is not None and new_nav:
+            row["weight"] = mv / new_nav
+    state["nav"] = new_nav
+    return state
+
+
 def held_symbols(db_engine) -> list[str]:
     """Every equity symbol the dashboard might label: held positions, last target book,
     today's factor names, and covered-call underlyings. Option (OCC) symbols are excluded.
