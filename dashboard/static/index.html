@@ -129,6 +129,10 @@
   .windate { background: var(--panel-2); border: 1px solid var(--line); color: var(--fg-dim);
              border-radius: 6px; padding: 2px 7px; font-family: var(--mono); font-size: 11px; }
   .topbar .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .etclock { font-family: var(--mono); font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums;
+             white-space: nowrap; letter-spacing: .02em; }
+  .etclock b { color: var(--fg-dim); font-weight: 600; }
+  @media (max-width: 1120px) { .etclock { display: none; } }
   .refresh { background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
              border-radius: 8px; width: 30px; height: 30px; cursor: pointer; display: grid;
              place-items: center; transition: all .15s var(--ease); }
@@ -237,6 +241,7 @@
     <button class="tab" data-view="backtest">Backtest</button>
   </nav>
   <div class="right">
+    <span class="etclock" id="etclock" title="New York time (US market timezone)"></span>
     <span class="se-pill neutral" id="envbadge" title="trading environment">— </span>
     <span class="upd"><span class="live-dot down" id="dot"></span><span id="upd">connecting…</span></span>
     <button class="refresh" id="refreshbtn" title="refresh now" aria-label="refresh">
@@ -818,6 +823,51 @@ function mdy(iso){ if(!iso) return "–"; const d=new Date(String(iso).slice(0,1
 function clockHM(iso){ if(!iso) return ""; const d=new Date(iso); let h=d.getHours(),m=d.getMinutes(); const ap=h<12?"am":"pm"; h=h%12||12; return h+(m?":"+String(m).padStart(2,"0"):"")+ap; }
 function tsMs(s){ if(!s) return null; const t=new Date(String(s).replace(" ","T")+(/[zZ]|\+/.test(s)?"":"Z")).getTime(); return isNaN(t)?null:t; }
 function ageOf(s){ const t=tsMs(s); return t==null?"–":humanAge((Date.now()-t)/1000)+" ago"; }
+
+// ---- trading-session timer + live ET clock --------------------------------
+// The US market runs on New York time; we compute the session phase in ET (via Intl, so it's
+// correct regardless of the viewer's timezone) and tick a live countdown every second. MKT holds
+// the last Alpaca clock (is_open + RTH boundaries), anchored to server time to shrug off clock skew.
+let MKT = null;
+const _etDT = new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",weekday:"short",
+  hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false});
+const _etWhen = new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",weekday:"short",
+  hour:"numeric",minute:"2-digit",hour12:true});
+function etParts(ms){ const o={}; for(const p of _etDT.formatToParts(new Date(ms))) o[p.type]=p.value;
+  return {h:(+o.hour)%24, m:+o.minute, s:+o.second, wd:o.weekday}; }
+function etWhen(iso){ if(!iso) return ""; const o={}; for(const p of _etWhen.formatToParts(new Date(iso))) o[p.type]=p.value;
+  return `${o.weekday} ${o.hour}:${o.minute}${(o.dayPeriod||"").toLowerCase()} ET`; }
+function etNow(){ return Date.now() + (MKT ? (MKT.serverMs - MKT.fetchedAt) : 0); }
+function dhm(ms){ if(ms<0) ms=0; const s=Math.floor(ms/1000), d=Math.floor(s/86400),
+  h=Math.floor(s%86400/3600), m=Math.floor(s%3600/60), sec=s%60;
+  if(d>0) return `${d}d ${h}h`; if(h>0) return `${h}h ${String(m).padStart(2,"0")}m`;
+  return `${m}m ${String(sec).padStart(2,"0")}s`; }
+// Session phase from the ET wall clock + Alpaca's authoritative is_open (which already handles
+// holidays). Extended-hours bands are ET-standard: pre 4:00–9:30, regular 9:30–16:00, after 16:00–20:00.
+function sessionInfo(){
+  if(!MKT) return {dot:"mut", val:"—", detail:"live clock offline"};
+  const now = etNow(), et = etParts(now), t = et.h*60 + et.m;
+  const weekend = et.wd==="Sat" || et.wd==="Sun";
+  const nc = MKT.next_close ? Date.parse(MKT.next_close) : null;
+  const no = MKT.next_open ? Date.parse(MKT.next_open) : null;
+  if(MKT.is_open && nc) return {dot:"ok", val:`Open · closes in ${dhm(nc-now)}`,
+    detail:`Regular session · closes ${etWhen(MKT.next_close)}`};
+  const toOpen = no ? no-now : null;
+  if(!weekend && t>=240 && t<570 && toOpen!=null && toOpen>0 && toOpen<6*3600e3)
+    return {dot:"warn", val:`Pre-market · opens in ${dhm(toOpen)}`, detail:`Regular session opens ${etWhen(MKT.next_open)}`};
+  if(!weekend && t>=960 && t<1200)
+    return {dot:"warn", val:"After-hours", detail: no?`Next open ${etWhen(MKT.next_open)}`:"regular session closed"};
+  return {dot:"mut", val: toOpen!=null?`Closed · opens in ${dhm(toOpen)}`:"Closed",
+          detail: no?`Opens ${etWhen(MKT.next_open)}`:""};
+}
+function sessionChipInner(){ const s=sessionInfo();
+  return `<span class="hdot ${s.dot}"></span><span class="sbk">Market</span><span class="sbv">${s.val}</span>`; }
+function tickSession(){
+  const et = etParts(etNow());
+  const ec = $("etclock"); if(ec) ec.innerHTML = `<b>${String(et.h).padStart(2,"0")}:${String(et.m).padStart(2,"0")}:${String(et.s).padStart(2,"0")}</b> ET`;
+  const sm = $("sbmarket"); if(sm){ const s=sessionInfo(); sm.innerHTML = sessionChipInner();
+    sm.setAttribute("data-tip", `US market session (times in New York time).\n${s.detail||""}`); }
+}
 function htile(k, dot, val, sub){
   return `<div class="htile"><div class="hk">${k}</div><div class="hv">${dot?`<span class="hdot ${dot}"></span>`:""}${val}</div><div class="hs">${sub||""}</div></div>`;
 }
@@ -829,13 +879,15 @@ function renderHealth(h){
   $("statusbar").style.display = "flex";
   const e=h.engine||{}, m=h.market, lr=h.last_rebalance, nr=h.next_rebalance||{}, dr=h.drift||{}, a=h.alerts_24h||{};
   const gate = lr ? lr.gate_passed : null;
+  // Live session timer: cache the Alpaca clock (anchored to server time), then tick it every second.
+  MKT = m ? {is_open:!!m.is_open, next_open:m.next_open, next_close:m.next_close,
+             serverMs: m.timestamp?Date.parse(m.timestamp):Date.now(), fetchedAt: Date.now()} : null;
   // --- condensed global status bar (the "big important" signals, pinned on every tab) ---
   $("sbchips").innerHTML = [
     sbChip({live:"ok",stale:"warn",down:"bad"}[e.status]||"bad", "Engine",
            {live:"Live",stale:"Stale",down:"Down"}[e.status]||"Down",
            "Monitor heartbeat from the latest snapshot. Live = <3 min old, Stale = 3–10 min, Down = older / no data."),
-    sbChip(m?(m.is_open?"ok":"mut"):"mut", "Market", m?(m.is_open?"Open":"Closed"):"—",
-           "US equity market open/closed, from Alpaca's clock."),
+    `<span class="sbchip" id="sbmarket"></span>`,   // live session timer, filled by tickSession()
     sbChip("ok", "Next rebalance",
            `${mdy(nr.date)}${nr.days_until==null?"":nr.days_until<=0?" · today":" · "+nr.days_until+"d"}`,
            "Next monthly rebalance (first trading day of the month). 'confirmed' = matched to the live NYSE calendar."),
@@ -875,6 +927,7 @@ function renderHealth(h){
   if(fr.factors_date) bits.push(`factors ${mdy(fr.factors_date)}`);
   if(fr.last_order_ts) bits.push(`last order ${ageOf(fr.last_order_ts)}`);
   $("healthsub").textContent = bits.join(" · ");
+  tickSession();          // fill the live session chip immediately (then the 1s tick keeps it live)
 }
 
 // ---- KPI strip ------------------------------------------------------------
@@ -1356,6 +1409,8 @@ setInterval(async () => {
 }, 1000);
 setInterval(loadActive, 30000);   // full re-read of the active view every 30s
 setInterval(tickFreshness, 1000); // tick the "checked / data age" header every second
+setInterval(tickSession, 1000);   // tick the live ET clock + session countdown every second
+tickSession();                    // paint the ET clock immediately on boot
 </script>
 </body>
 </html>
