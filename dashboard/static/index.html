@@ -34,11 +34,13 @@
                 animation: tape-scroll 90s linear infinite; }
   @keyframes tape-scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
   .tape-item { display: inline-flex; align-items: center; gap: 7px; padding: 4px 15px;
-               border-right: 1px solid var(--line); }
-  .tape-tkr { font-family: var(--mono); font-weight: 600; font-size: 11.5px; color: var(--fg); letter-spacing: .03em; }
-  .tape-px { font-family: var(--mono); font-size: 11px; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
-  .tape-chg { font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; }
-  .tape-spark { display: inline-flex; opacity: .9; }
+               border-right: 1px solid #18223a; }
+  .tape-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); flex: none; }
+  .tape-tkr { font-family: var(--mono); font-weight: 600; font-size: 11.5px; color: var(--fg); }
+  .tape-px { font-family: var(--mono); font-size: 11.5px; color: #aab4c3; font-variant-numeric: tabular-nums; }
+  .tape-chg { font-family: var(--mono); font-weight: 500; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+  .tape-spk { display: inline-flex; }
+  .tape-call { font: 600 8px 'Space Grotesk'; letter-spacing: .05em; color: var(--amber); }
   .sbchip { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; white-space: nowrap;
             text-transform: uppercase; letter-spacing: .04em; }
   .sbchip .sbk { color: var(--muted); }
@@ -219,6 +221,16 @@
   .attr-val { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12.5px; font-weight: 600; }
   .attr-val .attr-sub { color: var(--muted); font-weight: 400; margin-left: 6px; }
 
+  /* Overview (design-doc layout) */
+  .ovpanel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .ovhead { display: flex; align-items: baseline; justify-content: space-between; padding: 9px 16px; border-bottom: 1px solid var(--line-soft); }
+  .ovhk { font: 600 10px 'Space Grotesk'; letter-spacing: .13em; text-transform: uppercase; color: #8295ab; }
+  .ovhs { font: 400 10px var(--mono); color: #5f6b80; }
+  .ov-live { display: grid; grid-template-columns: 1.62fr 1fr; gap: 14px; align-items: stretch; }
+  @media (max-width: 1100px) { .ov-live { grid-template-columns: 1fr; } }
+  .ovflash { display: inline-block; border-radius: 6px; }
+  #ov-treemap svg { display: block; width: 100%; height: 100%; }
+
   /* upcoming events list */
   .evtlist { display: flex; flex-direction: column; }
   .evt { display: grid; grid-template-columns: 128px 1fr; gap: 14px; align-items: center;
@@ -281,7 +293,6 @@
     <button class="tab active" data-view="overview">Overview</button>
     <button class="tab" data-view="portfolio">Portfolio</button>
     <button class="tab" data-view="performance">Performance</button>
-    <button class="tab" data-view="events">Events</button>
     <button class="tab" data-view="backtest">Backtest</button>
   </nav>
   <div class="right">
@@ -300,17 +311,23 @@
 </div>
 
 <div id="overview-view">
-  <div class="wrap">
-    <div class="gatebar" id="gatebar"></div>
-    <div class="kpis" id="kpis"></div>
-    <div class="kpis" id="perfkpis" style="margin-top:12px"></div>
-    <div class="se-panel" style="margin-top:16px">
-      <h2>Net asset value <span class="panel-sub" id="navrange"></span></h2>
-      <div class="spark-meta" id="sparkmeta"></div>
-      <div id="navspark"></div>
+  <div class="wrap" style="display:flex;flex-direction:column;gap:14px;padding-top:16px">
+    <div id="ov-session"></div>
+    <div id="ov-navhero"></div>
+    <div id="ov-kpi"></div>
+    <div class="ov-live">
+      <div class="ovpanel" style="display:flex;flex-direction:column;overflow:hidden">
+        <div class="ovhead"><span class="ovhk">Holdings heatmap</span><span class="ovhs">size = weight · color = day move</span></div>
+        <div style="flex:1;min-height:300px;padding:9px" id="ov-treemap"></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:14px" id="ov-side">
+        <div id="ov-gauge"></div>
+        <div id="ov-events"></div>
+      </div>
     </div>
-    <div class="se-panel" style="margin-top:16px">
-      <h2>System health <span class="panel-sub" id="healthsub"></span></h2>
+    <div id="ov-waterfall"></div>
+    <div class="ovpanel">
+      <div class="ovhead"><span class="ovhk">System health</span><span class="ovhs" id="healthsub"></span></div>
       <div class="health" id="healthtiles"></div>
     </div>
     <div class="footstrip" id="footstrip"></div>
@@ -461,15 +478,6 @@
   </div>
 </div>
 
-<div id="events-view" style="display:none">
-  <div class="wrap">
-    <div class="se-panel" style="margin-top:16px">
-      <h2>Upcoming events <span class="panel-sub" id="eventssub"></span></h2>
-      <div class="body" id="events"></div>
-    </div>
-  </div>
-</div>
-
 <div id="backtest-view"><iframe id="bt" title="backtest dashboard"></iframe></div>
 
 <script>
@@ -528,7 +536,7 @@ document.addEventListener("mouseover", e=>{ const t=e.target.closest("[data-tip]
 document.addEventListener("mousemove", e=>{ if(tipEl) posTip(e); });
 
 // ---- two-level nav: top tabs + sub-tabs -----------------------------------
-const VIEWS = ["overview","portfolio","performance","events","backtest"];
+const VIEWS = ["overview","portfolio","performance","backtest"];
 const SUBS  = {portfolio:["holdings","activity"], performance:["returns","risk","attribution","execution"]};
 let activeView = "overview";
 const activeSub = {portfolio:"holdings", performance:"returns"};
@@ -556,7 +564,6 @@ function loadActive(){
   if (activeView === "overview") loadOverview();
   else if (activeView === "portfolio") loadPortfolio();
   else if (activeView === "performance") loadPerformance();
-  else if (activeView === "events") loadEvents();
 }
 
 async function get(p){ try { const r = await fetch(p); return r.ok ? await r.json() : null; } catch { return null; } }
@@ -1201,8 +1208,8 @@ function miniSpark(arr){
 // the numbers/sparkline in place, so the marquee animation never restarts.
 let _tapeSyms = "";
 function tapeItem(sym){
-  return `<span class="tape-item" data-sym="${sym}"><span class="tape-tkr">${sym}</span>`
-    + `<span class="tape-px"></span><span class="tape-chg"></span><span class="tape-spark"></span></span>`;
+  return `<span class="tape-item" data-sym="${sym}"><span class="tape-dot"></span><span class="tape-tkr">${sym}</span>`
+    + `<span class="tape-px"></span><span class="tape-spk"></span><span class="tape-chg"></span><span class="tape-call"></span></span>`;
 }
 function renderTape(s){
   const rows = (s.positions||[]).filter(r => r.symbol && !_isOpt(r.symbol) && r.qty);
@@ -1214,16 +1221,20 @@ function renderTape(s){
     const items = rows.map(r=>tapeItem(r.symbol)).join("");
     const track = $("tapetrack");
     track.innerHTML = items + items;                      // two copies → seamless −50% loop
-    track.style.animationDuration = Math.max(28, rows.length * 3.4) + "s";
+    track.style.animationDuration = Math.max(34, rows.length * 3.4) + "s";
   }
+  const covered = new Set((_calls||[]).map(c=>c.underlying));
+  const green=cssv('--green','#5fb088'), red=cssv('--red','#cf6f66'), mut=cssv('--muted','#65758c');
   rows.forEach(r => {
-    const p = livePx(r), spark = miniSpark(_px[r.symbol]);
+    const p = livePx(r), chg = r.day_pct, c = chg==null?mut:chg>=0?green:red;
+    const spk = sparkP((_px[r.symbol]||[]).slice(-12), 34, 13, 1.5);
     document.querySelectorAll('.tape-item[data-sym="'+r.symbol+'"]').forEach(el => {
-      el.querySelector('.tape-px').textContent = p==null?"–":usd2(p);
-      const chg = el.querySelector('.tape-chg');
-      chg.textContent = r.day_pct==null ? "" : spct(r.day_pct);
-      chg.className = "tape-chg " + sgn(r.day_pct);
-      el.querySelector('.tape-spark').innerHTML = spark;
+      el.querySelector('.tape-dot').style.background = secColor((REF[r.symbol.toUpperCase()]||{}).sector);
+      el.querySelector('.tape-px').textContent = p==null?"–":p.toFixed(2);
+      el.querySelector('.tape-spk').innerHTML = spk
+        ? `<svg width="34" height="13" viewBox="0 0 34 13" preserveAspectRatio="none" style="display:block"><path d="${spk}" fill="none" stroke="${c}" stroke-width="1.3" stroke-linejoin="round"/></svg>` : "";
+      const chgEl = el.querySelector('.tape-chg'); chgEl.textContent = chg==null?"":spct(chg); chgEl.style.color = c;
+      el.querySelector('.tape-call').textContent = covered.has(r.symbol) ? "CALL" : "";
     });
   });
 }
@@ -1246,16 +1257,205 @@ function noteFresh(s){
   tickFreshness();
 }
 
-// Overview — System health + risk gate + KPIs + NAV (the daily glance)
+// ===================== Overview — design-doc layout =====================
+// Ported from design_lang/SFI Dashboard mock: Trading session · NAV hero (sign-flash) · 6-col KPI
+// ribbon · Holdings treemap · Covered-call gauge · Events · P&L waterfall · System health.
+function sparkP(arr,w,h,p){ p=p||1.5; const a=(arr||[]).filter(v=>v!=null); if(a.length<2) return "";
+  let lo=Math.min(...a),hi=Math.max(...a); if(hi-lo<1e-9) hi=lo+1;
+  return a.map((v,i)=>(i?"L":"M")+(p+i/(a.length-1)*(w-2*p)).toFixed(1)+" "+(p+(hi-v)/(hi-lo)*(h-2*p)).toFixed(1)).join(" "); }
+function hms(secs){ const s=Math.max(0,Math.floor(secs)),d=Math.floor(s/86400),h=Math.floor(s%86400/3600),
+  m=Math.floor(s%3600/60),ss=s%60,p=n=>String(n).padStart(2,"0"); return (d>0?d+"d ":"")+p(h)+":"+p(m)+":"+p(ss); }
+function ovPanel(title,sub,body,pad){ return `<div class="ovpanel"><div class="ovhead"><span class="ovhk">${title}</span>`
+  +`<span class="ovhs">${sub}</span></div><div style="padding:${pad||'14px 16px'}">${body}</div></div>`; }
+
+function renderSession(){
+  const host=$("ov-session"); if(!host) return;
+  if(!MKT){ host.innerHTML=ovPanel("Trading session","NYSE","<div style='font:400 12px var(--mono);color:var(--muted)'>market clock offline</div>"); return; }
+  const now=etNow(), et=etParts(now), secs=et.h*3600+et.m*60+et.s, open=9.5*3600, close=16*3600;
+  const f=Math.max(0,Math.min(1,(secs-open)/(close-open)));
+  const nc=MKT.next_close?Date.parse(MKT.next_close):null, no=MKT.next_open?Date.parse(MKT.next_open):null;
+  const clk=`<span style="font:500 22px var(--mono);color:var(--fg);font-variant-numeric:tabular-nums">${String(et.h).padStart(2,'0')}:${String(et.m).padStart(2,'0')}:${String(et.s).padStart(2,'0')}</span><span style="font:400 11px var(--mono);color:var(--muted)">ET</span>`;
+  let sub, pill, pillCol, barW;
+  if(MKT.is_open && nc){ sub=`· ${(f*100).toFixed(0)}% through session · ${hms((nc-now)/1000)} to close`; pill="Market open"; pillCol="#5fb088"; barW=f*100; }
+  else { const si=sessionInfo(); sub=`· ${si.val}`; const warn=si.dot==='warn'; pill=warn?"Extended hours":"Market closed"; pillCol=warn?"#d8a84b":"#65758c"; barW=secs>=close?100:secs<open?0:f*100; }
+  const head=`<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px"><div style="display:flex;align-items:baseline;gap:9px">${clk}<span style="font:400 11px var(--mono);color:var(--muted)">${sub}</span></div><span style="display:inline-flex;align-items:center;gap:6px;font:500 10px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:${pillCol}"><span style="width:7px;height:7px;border-radius:50%;background:${pillCol}"></span>${pill}</span></div>`;
+  const bar=`<div style="position:relative;height:9px;border-radius:5px;background:var(--panel-2);overflow:hidden;margin-top:11px"><div style="position:absolute;left:0;top:0;height:100%;width:${barW.toFixed(1)}%;background:linear-gradient(90deg,#2a6f63,#46b8ad)"></div><div style="position:absolute;top:-3px;width:2px;height:15px;background:var(--fg);left:${barW.toFixed(1)}%"></div></div>`;
+  const marks=`<div style="display:flex;justify-content:space-between;margin-top:6px;font:400 9.5px var(--mono);color:var(--muted)"><span>09:30 open</span><span>12:45</span><span>16:00 close</span></div>`;
+  host.innerHTML=ovPanel("Trading session","NYSE · regular hours", head+bar+marks);
+}
+
+function navAreaSVG(hist){
+  const navs=hist.map(p=>p.nav).filter(v=>v!=null);
+  if(navs.length<2) return '<div class="se-empty">not enough history yet — one point so far</div>';
+  const W=1200,H=230,pl=58,pr=14,pt=12,pb=24,pw=W-pl-pr,ph=H-pt-pb,n=hist.length;
+  let lo=Math.min(...navs),hi=Math.max(...navs); if(lo===hi){hi+=1;lo-=1;} const pad=(hi-lo)*0.10; lo-=pad; hi+=pad;
+  const X=i=>pl+(n<=1?0:i/(n-1)*pw), Y=v=>pt+(hi-v)/(hi-lo)*ph;
+  const grid=cssv('--grid','#16223a'),mut=cssv('--muted','#65758c'),col=cssv('--accent','#46b8ad'),ML="font-family:var(--mono)";
+  let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" style="display:block">`;
+  for(let k=0;k<=4;k++){ const v=lo+(hi-lo)*k/4,y=Y(v).toFixed(1);
+    s+=`<line x1="${pl}" y1="${y}" x2="${W-pr}" y2="${y}" stroke="${grid}"/><text x="${pl-8}" y="${(+y+3.5).toFixed(1)}" text-anchor="end" font-size="11" fill="${mut}" style="${ML}">$${Math.round(v/1000)}k</text>`; }
+  const step=Math.max(1,Math.round(n/7));
+  for(let i=0;i<n;i+=step) s+=`<text x="${X(i).toFixed(1)}" y="${H-7}" text-anchor="middle" font-size="11" fill="${mut}" style="${ML}">${(hist[i].ts||"").slice(5,10)}</text>`;
+  const d=hist.map((p,i)=>(i?"L":"M")+X(i).toFixed(1)+" "+Y(p.nav).toFixed(1)).join(" "),y0=(H-pb).toFixed(1);
+  s+=`<path d="${d} L${X(n-1).toFixed(1)} ${y0} L${X(0).toFixed(1)} ${y0} Z" fill="${col}" fill-opacity="0.05"/>`;
+  s+=`<path d="${d}" fill="none" stroke="${col}" stroke-width="1.6" stroke-linejoin="round"/>`;
+  s+=`<circle cx="${X(n-1).toFixed(1)}" cy="${Y(navs[navs.length-1]).toFixed(1)}" r="2.6" fill="${col}"/>`;
+  return s+"</svg>";
+}
+let _lastNav=null;
+function renderNavHero(s){
+  const host=$("ov-navhero"); if(!host||s.nav==null) return;
+  const nav=s.nav, dp=s.day_pnl, dpp=s.day_pnl_pct;
+  const dayColor=dp==null?"var(--muted)":dp>0?"var(--green)":dp<0?"var(--red)":"var(--muted)";
+  const daySub=(dp==null?"–":(dp>=0?"+$":"-$")+fmt(Math.abs(dp),0))+(dpp==null?"":" · "+spct(dpp)+" today");
+  const hist=_navBase.concat([{ts:new Date().toISOString(),nav}]);
+  const navs=hist.map(p=>p.nav).filter(v=>v!=null);
+  const winChg=navs.length?nav-navs[0]:null, winPct=(navs.length&&navs[0])?winChg/navs[0]:null;
+  const smallCol=navs.length&&nav>=navs[0]?"#5fb088":"#cf6f66";
+  host.innerHTML=`<div class="ovpanel">
+    <div style="display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:18px;padding:18px 22px 14px;border-bottom:1px solid var(--line-soft)">
+      <div>
+        <div style="font:600 10px 'Space Grotesk';letter-spacing:.16em;text-transform:uppercase;color:var(--muted)">Net asset value</div>
+        <div style="display:flex;align-items:baseline;gap:14px;margin-top:8px">
+          <div id="navbig" class="ovflash" style="font:500 46px/1 'Space Grotesk';letter-spacing:-.01em;color:var(--fg);font-variant-numeric:tabular-nums;padding:1px 6px;margin:-1px -6px">${usd(nav)}</div>
+          <div id="navpnl" class="ovflash" style="font:500 14px var(--mono);color:${dayColor};padding:1px 5px;margin:-1px -5px">${daySub}</div>
+        </div>
+        <div style="margin-top:11px;display:flex;align-items:center;gap:10px"><svg width="240" height="38" viewBox="0 0 240 38" preserveAspectRatio="none" style="display:block"><path d="${sparkP(navs.slice(-48),240,38,2)}" fill="none" stroke="${smallCol}" stroke-width="1.6" stroke-linejoin="round"/></svg><span style="font:400 10px var(--mono);color:var(--muted)">intraday · live</span></div>
+      </div>
+      <div style="display:flex;gap:34px;padding-bottom:4px">
+        <div><div style="font:500 10px 'Space Grotesk';letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Change (window)</div><div style="font:500 16px var(--mono);color:${winChg==null?'var(--fg)':winChg>=0?'var(--green)':'var(--red)'};margin-top:5px">${winChg==null?'–':(winChg>=0?'+':'−')+usd(Math.abs(winChg))+' ('+spct(winPct)+')'}</div></div>
+        <div><div style="font:500 10px 'Space Grotesk';letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Window high / low</div><div style="font:500 16px var(--mono);color:var(--fg);margin-top:5px">${navs.length?usd(Math.max(...navs)):'–'} <span style="color:var(--muted)">/ ${navs.length?usd(Math.min(...navs)):'–'}</span></div></div>
+      </div>
+    </div>
+    <div style="padding:8px 8px 4px">${navAreaSVG(hist)}</div>
+    <div style="padding:4px 22px 12px;font:400 10.5px var(--mono);color:var(--muted)">${_navBase.length} snapshots · ${(_navBase[0]?.ts||'').slice(0,10)} → ${(_navBase[_navBase.length-1]?.ts||'').slice(0,10)}</div>
+  </div>`;
+  if(_lastNav!=null && nav!==_lastNav){ const dir=nav>_lastNav?1:-1;
+    ["navbig","navpnl"].forEach(id=>{ const el=$(id); if(el&&el.animate)
+      el.animate([{backgroundColor:dir>0?'rgba(95,176,136,.30)':'rgba(207,111,102,.30)'},{backgroundColor:'rgba(0,0,0,0)'}],{duration:680,easing:'ease-out'}); }); }
+  _lastNav=nav;
+}
+
+function kpiCell(label,val,sub,opts){ opts=opts||{};
+  return `<div style="background:var(--panel);padding:13px 16px"><div style="font:600 9.5px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">${label}</div>`
+    +`<div style="font:500 22px var(--mono);margin-top:8px;color:${opts.valColor||'var(--fg)'}">${val}</div>${opts.extra||''}`
+    +`<div style="font:400 10.5px var(--mono);margin-top:5px;color:${opts.subColor||'var(--muted)'}">${sub||''}</div></div>`;
+}
+function renderKpiRibbon(s){
+  const host=$("ov-kpi"); if(!host) return;
+  const dp=s.day_pnl, dpp=s.day_pnl_pct, dayCol=dp==null?'var(--muted)':dp>0?'var(--green)':dp<0?'var(--red)':'var(--muted)';
+  const dpStr=(dp==null?'–':(dp>=0?'+$':'-$')+fmt(Math.abs(dp),0));
+  const daySub=dpStr+(dpp==null?'':' · '+spct(dpp)+' today');
+  const cap=META.leverage_cap||2.0, lev=s.leverage, levW=lev==null?0:Math.min(100,lev/cap*100);
+  const levBar=`<div style="height:4px;border-radius:2px;background:var(--panel-2);margin-top:8px;overflow:hidden"><div style="height:100%;background:var(--accent);width:${levW.toFixed(0)}%"></div></div>`;
+  host.innerHTML=`<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden">`
+    +kpiCell("Net asset value",usd(s.nav),daySub,{subColor:dayCol})
+    +kpiCell("Day P&L",dpStr,(dpp==null?'':spct(dpp)+' vs prior close'),{valColor:dayCol})
+    +kpiCell("Leverage",lev==null?'–':lev.toFixed(2)+'×',`cap ${cap.toFixed(1)}× · gross ${usd(s.gross_exposure)}`,{extra:levBar})
+    +kpiCell("Cash",usd(s.cash),(s.nav?`${(s.cash/s.nav*100).toFixed(1)}% of NAV`:''))
+    +kpiCell("Premium collected",usd(s.premium_collected),(s.nav&&s.premium_collected?`${(s.premium_collected/s.nav*100).toFixed(1)}% of NAV · lifetime`:'covered calls'))
+    +kpiCell("Positions",fmt(s.n_positions),`drift ${s.drift!=null?pct(s.drift):'–'} L1`)
+    +`</div>`;
+}
+
+function renderTreemap(s){
+  const host=$("ov-treemap"); if(!host) return;
+  const items=(s.positions||[]).filter(p=>p.symbol&&!_isOpt(p.symbol)&&p.weight)
+    .map(p=>({sym:p.symbol,value:p.weight,chg:p.day_pct==null?0:p.day_pct})).sort((a,b)=>b.value-a.value);
+  if(!items.length){ host.innerHTML='<div class="se-empty">no holdings yet</div>'; return; }
+  const W=1003,H=452;
+  const tm=(arr,x,y,w,h,horiz)=>{ if(arr.length===1){ arr[0].rect={x,y,w,h}; return; }
+    const tot=arr.reduce((a,b)=>a+b.value,0),half=tot/2; let c=0,best=0,bd=1e9;
+    for(let k=0;k<arr.length-1;k++){ c+=arr[k].value; if(Math.abs(c-half)<bd){bd=Math.abs(c-half);best=k;} }
+    const A=arr.slice(0,best+1),B=arr.slice(best+1),fa=A.reduce((a,b)=>a+b.value,0)/tot;
+    if(horiz){ tm(A,x,y,w*fa,h,!horiz); tm(B,x+w*fa,y,w*(1-fa),h,!horiz); } else { tm(A,x,y,w,h*fa,!horiz); tm(B,x,y+h*fa,w,h*(1-fa),!horiz); } };
+  tm(items,0,0,W,H,W>=H); let r="";
+  items.forEach(it=>{ const t=Math.max(-1,Math.min(1,it.chg/0.03)),col=t>=0?"95,176,136":"207,111,102",
+    al=(0.12+Math.abs(t)*0.5).toFixed(2),R=it.rect,big=R.w>70&&R.h>34;
+    r+=`<rect x="${R.x.toFixed(1)}" y="${R.y.toFixed(1)}" width="${(R.w-1.4).toFixed(1)}" height="${(R.h-1.4).toFixed(1)}" fill="rgba(${col},${al})" stroke="#0a1322" stroke-width="1.4"/>`;
+    r+=`<text x="${(R.x+8).toFixed(1)}" y="${(R.y+18).toFixed(1)}" font-size="14" font-family="IBM Plex Mono" font-weight="600" fill="#eaf2fb">${it.sym}</text>`;
+    if(big) r+=`<text x="${(R.x+8).toFixed(1)}" y="${(R.y+32).toFixed(1)}" font-size="10.5" font-family="IBM Plex Mono" fill="rgba(234,242,251,.72)">${it.chg>=0?"+":""}${(it.chg*100).toFixed(2)}%</text>`; });
+  host.innerHTML=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" width="100%" height="100%" style="display:block">${r}</svg>`;
+}
+
+function renderGauge(s,calls){
+  const host=$("ov-gauge"); if(!host) return;
+  const px={}; (s.positions||[]).forEach(p=>{ px[p.symbol]=p.last_price!=null?p.last_price:(p.qty?p.market_value/p.qty:null); });
+  const held={}; (s.positions||[]).forEach(p=>{ if(!_isOpt(p.symbol)) held[p.symbol]=p.qty||0; });
+  const coverable=Object.keys(held).filter(k=>held[k]>=100);
+  let elig=0; coverable.forEach(k=>elig+=held[k]*(px[k]||0));
+  let cov$=0; (calls||[]).forEach(c=>{ const sh=Math.min((c.contracts||0)*100,held[c.underlying]||(c.contracts||0)*100); cov$+=sh*(px[c.underlying]||0); });
+  const cov=elig?Math.min(1,cov$/elig):0;
+  let nd=0,sumW=0,wById={}; (s.positions||[]).forEach(p=>{ if(_isOpt(p.symbol))return; wById[p.symbol]=p.weight||0; nd+=(p.weight||0); sumW+=(p.weight||0); });
+  (calls||[]).forEach(c=>{ nd-=(wById[c.underlying]||0)*(c.delta==null?0.30:c.delta); });
+  const netDelta=sumW?nd/sumW:0;
+  let theta=0; (calls||[]).forEach(c=>{ const d=dte(c.expiration); if(c.premium&&d&&d>0) theta+=c.premium/d; });
+  const yld=(s.nav&&theta)?theta*365/s.nav*100:null;
+  const W=230,H=116,cx=115,cy=108,rr=88,a0=Math.PI,a1=0,ang=a0+(a1-a0)*cov;
+  const pt=an=>[cx+rr*Math.cos(an),cy-rr*Math.sin(an)];
+  const arc=(an0,an1,c,wd)=>{ const [x0,y0]=pt(an0),[x1,y1]=pt(an1),large=Math.abs(an1-an0)>Math.PI?1:0,sw=an1<an0?1:0;
+    return `<path d="M${x0.toFixed(1)} ${y0.toFixed(1)} A${rr} ${rr} 0 ${large} ${sw} ${x1.toFixed(1)} ${y1.toFixed(1)}" fill="none" stroke="${c}" stroke-width="${wd}" stroke-linecap="round"/>`; };
+  const g=`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="display:block">${arc(a0,a1,"#16223a",11)}${cov>0.001?arc(a0,ang,"#46b8ad",11):""}`
+    +`<text x="${cx}" y="${cy-28}" text-anchor="middle" font-size="29" fill="#eaf2fb" font-family="IBM Plex Mono" font-weight="500">${(cov*100).toFixed(0)}%</text>`
+    +`<text x="${cx}" y="${cy-11}" text-anchor="middle" font-size="9" fill="#65758c" font-family="Space Grotesk" letter-spacing="1.5">COVERED</text></svg>`;
+  const st=(l,v,c)=>`<div style="flex:1"><div style="font:600 8.5px 'Space Grotesk';letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">${l}</div><div style="font:500 16px var(--mono);color:${c||'var(--fg)'};margin-top:5px">${v}</div></div>`;
+  const body=`<div style="display:flex;align-items:center;gap:10px"><div style="flex:none">${g}</div><div style="flex:1;display:flex;flex-direction:column;gap:12px;padding-left:4px">`
+    +`<div style="display:flex;gap:10px">${st("Net delta",netDelta.toFixed(2))}${st("Theta / day",theta?"+"+usd(theta):"–","#5fb088")}</div>`
+    +`<div style="display:flex;gap:10px">${st("Prem. yield",yld==null?"–":yld.toFixed(1)+"%","#5fb088")}${st("Calls open",fmt((calls||[]).length))}</div></div></div>`;
+  host.innerHTML=ovPanel("Covered-call overlay","Δ · θ · coverage", body);
+}
+
+let _eventsData=[];
+function evtSecsLeft(dateStr){ return (Date.parse(dateStr+"T00:00:00-04:00")-etNow())/1000; }
+function renderEventsPanel(){
+  const host=$("ov-events"); if(!host) return;
+  const ev=_eventsData.slice(0,6);
+  if(!ev.length){ host.innerHTML=ovPanel("Events","countdown · live","<div style='font:400 12px var(--mono);color:var(--muted)'>no upcoming events</div>"); return; }
+  const COL={earnings:"#9b87d4",expiry:"#d8a84b",rebalance:"#46b8ad"};
+  const rows=ev.map(e=>{ const secs=evtSecsLeft(e.date),col=COL[e.type]||"#65758c",live=secs<7*86400;
+    const label=(e.symbol?e.symbol+" ":"")+((EVT[e.type]||{}).label||e.type)+(e.detail&&e.type==='expiry'?" · "+e.detail:"");
+    return `<div style="display:flex;align-items:center;gap:11px;padding:9px 16px;border-bottom:1px solid var(--line-soft)"><span style="width:7px;height:7px;border-radius:50%;background:${col};flex:none"></span><div style="flex:1;min-width:0"><div style="font:500 12px 'Space Grotesk';color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${label}</div><div style="font:400 10px var(--mono);color:var(--muted)">${mdy(e.date)}</div></div><span style="font:500 12px var(--mono);color:${live?'#46b8ad':'#aab4c3'}">${hms(secs)}</span></div>`; }).join("");
+  host.innerHTML=ovPanel("Events","countdown · live",`<div style="margin:-14px -16px">${rows}</div>`);
+}
+
+function renderWaterfall(s){
+  const host=$("ov-waterfall"); if(!host||s.nav==null) return;
+  const nav=s.nav, dayPnl=s.day_pnl||0, prior=nav-dayPnl, premium=0, costs=0, price=dayPnl-premium-costs;
+  const steps=[["Prior NAV",prior,"base"],["Price",price,"d"],["Premium",premium,"d"],["Costs",costs,"d"],["Live NAV",nav,"base"]];
+  const W=980,H=210,pl=10,pr=10,pb=34,pt=12,pw=W-pl-pr,ph=H-pt-pb;
+  const vals=[prior,nav]; let run=prior; [price,premium,costs].forEach(v=>{ run+=v; vals.push(run); });
+  let lo=Math.min(...vals),hi=Math.max(...vals); const pd=(hi-lo)*0.4||1; lo-=pd; const span=hi-lo||1;
+  const Y=v=>pt+(hi-v)/span*ph, gap=pw/steps.length, bw=gap*0.5;
+  let g=`<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;height:210px">`; let cum=prior;
+  steps.forEach((st,i)=>{ const x=pl+gap*i+(gap-bw)/2; let top,bot,col;
+    if(st[2]==="base"){ top=Y(st[1]); bot=Y(lo); col="#3a4a66"; cum=st[1]; }
+    else { const start=cum,end=cum+st[1]; top=Y(Math.max(start,end)); bot=Y(Math.min(start,end)); col=st[1]>=0?"#5fb088":"#cf6f66"; cum=end;
+      const px2=pl+gap*(i-1)+(gap-bw)/2+bw; g+=`<line x1="${px2}" y1="${Y(start).toFixed(1)}" x2="${x.toFixed(1)}" y2="${Y(start).toFixed(1)}" stroke="#2a3a58" stroke-dasharray="2 2"/>`; }
+    g+=`<rect x="${x.toFixed(1)}" y="${top.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(2,bot-top).toFixed(1)}" rx="2" fill="${col}"/>`;
+    const lv=st[2]==="base"?usd(st[1]):((st[1]>=0?"+":"-")+"$"+fmt(Math.abs(st[1]),0));
+    g+=`<text x="${(x+bw/2).toFixed(1)}" y="${(top-5).toFixed(1)}" text-anchor="middle" font-size="11" fill="#cdd9e8" font-family="IBM Plex Mono">${lv}</text>`;
+    g+=`<text x="${(x+bw/2).toFixed(1)}" y="${H-12}" text-anchor="middle" font-size="11" fill="#65758c" font-family="Space Grotesk">${st[0]}</text>`; });
+  host.innerHTML=ovPanel("P&L attribution — today","price vs premium vs costs", g+"</svg>", "10px 12px 6px");
+}
+
+// Repaint the whole Overview from the latest state (called on load + every 1s tick).
+function paintOverview(s){
+  pushPx(s); renderTape(s);
+  renderSession(); renderNavHero(s); renderKpiRibbon(s);
+  renderTreemap(s); renderGauge(s, _calls); renderEventsPanel(); renderWaterfall(s);
+  renderFootstrip(s);
+}
+
+// Overview — the daily glance (design-doc layout)
 async function loadOverview(){
-  const [s, hist, tr] = await Promise.all(["/api/state","/api/nav_history","/api/track_record"].map(get));
+  const [s, hist, calls, ev] = await Promise.all(
+    ["/api/state","/api/nav_history","/api/calls","/api/events"].map(get));
   noteFresh(s);
-  if(!s){ $("kpis").innerHTML =
+  if(!s){ $("ov-navhero").innerHTML =
       '<div class="errbox"><div class="big">Backend unreachable</div>Postgres or the dashboard API is not responding.</div>';
     return; }
-  _navBase = hist || [];
-  pushPx(s); renderTape(s);
-  renderGate(s); kpis(s); perfStrip(tr); drawNav(s.nav); renderFootstrip(s);
+  _navBase = hist || []; _calls = calls || []; _eventsData = (ev && ev.events) || [];
+  paintOverview(s);
 }
 
 // Portfolio — Holdings (positions/calls/factors) + Activity (orders/alerts)
@@ -1614,9 +1814,9 @@ setInterval(async () => {
   if (activeView !== "overview" && activeView !== "portfolio") return;
   const s = await get("/api/state");
   if (!s) return;
-  noteFresh(s); pushPx(s); renderTape(s);                 // ticker tape ticks on every tab
-  if (activeView === "overview") { kpis(s); renderGate(s); drawNav(s.nav); }
-  else { renderPositions(s); renderCalls(s, _calls); }   // live prices, sparklines, underlying px
+  noteFresh(s);
+  if (activeView === "overview") paintOverview(s);        // full live repaint (NAV flash, treemap, gauge, events, session)
+  else { pushPx(s); renderTape(s); renderPositions(s); renderCalls(s, _calls); }
 }, 1000);
 setInterval(loadActive, 30000);   // full re-read of the active view every 30s
 setInterval(tickFreshness, 1000); // tick the "checked / data age" header every second
