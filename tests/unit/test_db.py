@@ -21,6 +21,7 @@ EXPECTED_TABLES = {
     "alerts",
     "options_lifecycle",
     "factor_scores",
+    "order_events",
 }
 
 

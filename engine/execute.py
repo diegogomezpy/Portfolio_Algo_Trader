@@ -374,28 +374,30 @@ def _tiered(orders, *, broker, db_engine, cycle_key, pending, out, quote, adv, e
     tier_of: dict[str, str] = {}
     patho_of: dict[str, bool] = {}
 
-    def _price(sym: str) -> tuple[Optional[float], Optional[str]]:
-        """(limit_price, tier) for this round, or (None, tier) when it can't be priced now."""
+    def _price(sym: str) -> tuple[Optional[float], Optional[str], Optional[dict]]:
+        """(limit_price, tier, ctx) for this round, or (None, tier, None) when it can't be priced
+        now. ``ctx`` carries the round's ``bid``/``ask``/``mid`` for the chase visualizer."""
         o = by_sym[sym]
         try:
             bid, ask, trade = quote(sym)
         except AlpacaAPIError as exc:
             log.warning("quote failed; skipping this round", extra={"symbol": sym, "error": str(exc)})
-            return None, tier_of.get(sym)
+            return None, tier_of.get(sym), None
         ref = arrival_reference(bid, ask, trade)
         if ref is None:
-            return None, tier_of.get(sym)
+            return None, tier_of.get(sym), None
         tier = liquidity_tier(adv.get(sym), bid, ask, ex=ex)
         tier_of[sym] = tier
         patho_of[sym] = is_pathological_spread(bid, ask, ex=ex)
-        if patho_of[sym]:
-            return round(float(ref), 2), tier                    # passive at the guarded ref; never cross
-        if tier == "deep":
-            return marketable_price(ref, o.side, ex=ex), tier
         mid = (bid + ask) / 2.0 if (bid and ask and ask >= bid) else float(ref)
+        ctx = {"bid": bid, "ask": ask, "mid": mid}
+        if patho_of[sym]:
+            return round(float(ref), 2), tier, ctx               # passive at the guarded ref; never cross
+        if tier == "deep":
+            return marketable_price(ref, o.side, ex=ex), tier, ctx
         f = min(max((now() - start).total_seconds() / window_s, 0.0), 1.0) if window_s and window_s > 0 else 1.0
         level = round(f * ladder_steps) / ladder_steps           # discretize mid→cap into ladder_steps
-        return ladder_price(ref, mid, o.side, level, ex=ex), tier
+        return ladder_price(ref, mid, o.side, level, ex=ex), tier, ctx
 
     def _round(tag: str) -> None:
         nonlocal submitted_n, rejected
@@ -405,7 +407,7 @@ def _tiered(orders, *, broker, db_engine, cycle_key, pending, out, quote, adv, e
             residual = o.qty - out[sym]["filled"]
             if residual <= 0:
                 active.discard(sym); continue
-            price, tier = _price(sym)
+            price, tier, ctx = _price(sym)
             if price is None:
                 continue                                          # can't price now — retry next round
             qty_to_post = child_qty(residual, adv.get(sym), price, ex=ex) if tier == "thin" else residual
@@ -419,11 +421,17 @@ def _tiered(orders, *, broker, db_engine, cycle_key, pending, out, quote, adv, e
                 pending.append({"symbol": sym, "side": o.side, "delta_usd": None,
                                 "qty": residual, "reason": f"rejected: {exc}"})
                 log.error("order rejected; deferring", extra={"symbol": sym, "error": str(exc)})
+                _emit_chase_event(db_engine, cycle_key=cycle_key, rnd=tag, symbol=sym, side=o.side,
+                                  event="reject", tier=tier, ctx=ctx, limit_price=price,
+                                  qty=residual, filled_qty=out[sym]["filled"], target_qty=o.qty)
                 if alert:
                     alert(f"order rejected {sym} {o.side} {residual}: {exc}")
                 active.discard(sym); continue
             submitted_n += 1
             _upsert_order(db_engine, cycle_key, resp)
+            _emit_chase_event(db_engine, cycle_key=cycle_key, rnd=tag, symbol=sym, side=o.side,
+                              event="post", tier=tier, ctx=ctx, limit_price=price, qty=qty_to_post,
+                              filled_qty=out[sym]["filled"], target_qty=o.qty, order_id=resp["id"])
             live.append((resp["id"], sym))
 
         open_ids = {oid for oid, _ in live}
@@ -461,6 +469,10 @@ def _tiered(orders, *, broker, db_engine, cycle_key, pending, out, quote, adv, e
             if fq > 0:
                 _record_fill(db_engine, st)
                 out[sym]["filled"] += fq
+            _emit_chase_event(db_engine, cycle_key=cycle_key, rnd=tag, symbol=sym,
+                              side=by_sym[sym].side, event="settle", tier=tier_of.get(sym),
+                              limit_price=st.get("limit_price"), filled_qty=out[sym]["filled"],
+                              target_qty=by_sym[sym].qty, status=st.get("status"), order_id=oid)
             if out[sym]["filled"] >= by_sym[sym].qty:
                 active.discard(sym)
 
@@ -747,6 +759,35 @@ def _record_fill(db_engine, od: dict) -> None:
             qty=od.get("filled_qty"), price=od.get("filled_avg_price"),
             filled_at=_dt(od.get("filled_at")),
         ))
+
+
+def _emit_chase_event(db_engine, *, cycle_key: str, rnd: str, symbol: str, side: str, event: str,
+                      tier=None, ctx: Optional[dict] = None, limit_price=None, qty=None,
+                      filled_qty=None, target_qty=None, status=None, order_id=None) -> None:
+    """Append one chase-telemetry row for the execution visualizer (Phase 2).
+
+    Best-effort and **failure-isolated**: any error (missing table, DB hiccup) is logged and
+    swallowed so telemetry can never disrupt order placement or fills. ``ctx`` carries the
+    round's bid/ask/mid from :func:`_price`. Uses a real UTC timestamp (not the injected ``now``)
+    so it never perturbs the ladder's clock.
+    """
+    if db_engine is None:
+        return
+    try:
+        from sqlalchemy import insert
+        from engine.db import order_events as oe_t
+        c = ctx or {}
+        _int = lambda v: int(v) if v is not None else None       # noqa: E731 — tiny local coercion
+        with db_engine.begin() as conn:
+            conn.execute(insert(oe_t).values(
+                ts=datetime.now(timezone.utc), cycle_key=cycle_key, round=rnd, symbol=symbol,
+                side=side, event=event, tier=tier, bid=c.get("bid"), ask=c.get("ask"),
+                mid=c.get("mid"), limit_price=limit_price, qty=_int(qty),
+                filled_qty=_int(filled_qty), target_qty=_int(target_qty), status=status,
+                order_id=order_id))
+    except Exception as exc:  # noqa: BLE001 — telemetry must never break execution
+        log.warning("chase-event emit failed (telemetry only)",
+                    extra={"symbol": symbol, "event": event, "error": str(exc)})
 
 
 def _write_pending(db_engine, pending: list[dict]) -> None:

@@ -1684,6 +1684,40 @@ function renderWaterfall(s){
 }
 
 // Repaint the whole Overview from the latest state (called on load + every 1s tick).
+// ---- Chase board (Phase 2): each order's child limit walking the bid→ask spread, per round ----
+// One track per working name: bid at the left, ask at the right, a faint mid tick, and a marker at
+// the posted limit that walks toward the touch as the ladder climbs (buy = teal→ask, sell = red→bid).
+function chaseTrack(o){
+  const lo=o.bid, hi=o.ask, lp=o.limit_price, mid=o.mid, buy=o.side!=='sell';
+  const hasSpread = (lo!=null && hi!=null && hi>lo);
+  const fr = v => (hasSpread && v!=null) ? Math.max(0,Math.min(1,(v-lo)/(hi-lo))) : 0.5;
+  const mc = buy ? '#46b8ad' : '#cf6f66';
+  const filled = o.status==='filled' || (o.fill_pct>=0.999);
+  const rejected = o.status==='rejected';
+  const rtook = (o.n_rounds||0)>1 ? ` · ${o.n_rounds}r` : '';
+  const statusTxt = rejected?'rejected':filled?('filled'+rtook):(o.round||'working');
+  const statusCol = rejected?'var(--red)':filled?'var(--green)':'var(--amber)';
+  const fillW = Math.round((o.fill_pct||0)*100);
+  const track = hasSpread
+    ? `<div style="position:relative;height:18px;border-radius:4px;background:linear-gradient(90deg,#0c1626,#12203a);border:1px solid var(--line-soft)">`
+      +`<span style="position:absolute;left:${(fr(mid)*100).toFixed(1)}%;top:2px;bottom:2px;width:1px;background:#33415e"></span>`
+      +`<span style="position:absolute;left:${(fr(lp)*100).toFixed(1)}%;top:-1px;bottom:-1px;width:2px;background:${mc};box-shadow:0 0 6px ${mc};transform:translateX(-1px);transition:left .5s var(--ease)"></span>`
+      +`<span style="position:absolute;left:5px;top:4px;font:500 9px var(--mono);color:var(--muted)">${usd2(lo)}</span>`
+      +`<span style="position:absolute;right:5px;top:4px;font:500 9px var(--mono);color:var(--muted)">${usd2(hi)}</span></div>`
+    : `<div style="height:18px;border-radius:4px;background:#0c1626;display:flex;align-items:center;justify-content:center;font:400 9px var(--mono);color:var(--muted)">${lp!=null?'limit '+usd2(lp):'—'}</div>`;
+  return `<div style="display:grid;grid-template-columns:50px 1fr 92px;gap:10px;align-items:center;padding:5px 0">`
+    +`<span style="font:600 10px var(--mono);color:var(--fg-dim)">${o.symbol}</span>`
+    +`<div>${track}<div style="height:3px;margin-top:3px;border-radius:2px;background:#0c1626;overflow:hidden"><span style="display:block;height:100%;width:${fillW}%;background:${mc};opacity:.65;transition:width .4s var(--ease)"></span></div></div>`
+    +`<span style="text-align:right;font:500 9.5px 'Space Grotesk';letter-spacing:.02em;text-transform:uppercase;color:${statusCol}">${statusTxt}</span></div>`;
+}
+function chaseBoard(ex){
+  const orders=(ex.chase||[]).filter(o=>o.bid!=null||o.limit_price!=null).slice(0,10);
+  if(!orders.length) return "";
+  return `<div style="border-top:1px solid var(--line-soft);padding:10px 16px 12px">`
+    +`<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:5px"><span style="font:600 9px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Chase board</span><span style="font:400 9.5px var(--mono);color:var(--muted);opacity:.75">bid ← limit walks → ask</span></div>`
+    +orders.map(chaseTrack).join("")+`</div>`;
+}
+
 // ---- Live execution visualizer (Phase 1: run-progress + blotter; auto-surfaces during trading) ----
 function renderExec(ex){
   const host=$("ov-exec"); if(!host) return;
@@ -1715,6 +1749,7 @@ function renderExec(ex){
     +`<span style="font:500 12px var(--mono);color:var(--fg-dim);white-space:nowrap">${lev!=null?lev.toFixed(2):'–'}× <span style="color:var(--muted)">→ ${tlev?tlev.toFixed(2):'–'}×</span></span>`
     +`<span style="font:500 11px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:var(--amber);white-space:nowrap">${ex.n_working} working</span></div>`
     +(names?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(196px,1fr));gap:0 24px;padding:2px 16px 12px">${names}</div>`:"")
+    +chaseBoard(ex)
     +(fills?`<div style="border-top:1px solid var(--line-soft);padding:9px 16px;display:flex;align-items:center;gap:10px;overflow:hidden;font:400 11px var(--mono);color:var(--fg-dim)"><span style="font:600 9px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted);flex:none">Fills</span><div style="overflow:hidden">${fills}</div></div>`:"");
   const title=`<span style="display:inline-flex;align-items:center;gap:7px"><span style="width:8px;height:8px;border-radius:50%;background:#5fb088;box-shadow:0 0 0 3px rgba(95,176,136,.18)"></span>Live rebalance</span>`;
   host.innerHTML=ovPanel(title, phaseName, body, "0", "orders");

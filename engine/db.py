@@ -151,6 +151,33 @@ options_lifecycle = Table(
     Column("created_at", DateTime, server_default=func.now()),
 )
 
+# Per-order chase telemetry (execution visualizer Phase 2). One row each time the tiered executor
+# posts a child limit for a name in a round, and one at round-end with the settle outcome — so the
+# dashboard can replay each limit walking the bid→ask spread. Pure telemetry: writes are best-effort
+# and failure-isolated in engine.execute (they must never affect order placement or fills).
+order_events = Table(
+    "order_events",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("ts", DateTime, nullable=False, index=True),
+    Column("cycle_key", String, index=True),       # the rebalance cycle (== orders.rebalance_cycle)
+    Column("round", String),                       # "r1", "r2", … (or "auction")
+    Column("symbol", String, index=True),
+    Column("side", String),                        # buy / sell
+    Column("event", String),                       # post | settle | reject
+    Column("tier", String),                        # deep | moderate | thin | pathological
+    Column("bid", Float),
+    Column("ask", Float),
+    Column("mid", Float),
+    Column("limit_price", Float),                  # where the child limit sat on the spread
+    Column("qty", Integer),                        # shares posted this round (child slice for thin)
+    Column("filled_qty", Integer),                 # cumulative filled for the name after this event
+    Column("target_qty", Integer),                 # the name's full order size (for progress %)
+    Column("status", String),                      # broker status at settle (filled/canceled/…)
+    Column("order_id", String),
+    Column("created_at", DateTime, server_default=func.now()),
+)
+
 # Daily composite + sub-scores per ticker (dashboard + audit trail).
 factor_scores = Table(
     "factor_scores",

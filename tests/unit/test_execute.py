@@ -536,3 +536,56 @@ def test_tiered_auction_fallback_for_unfilled_liquid():
     cls = [o for o in broker.submitted if o["time_in_force"] == "cls"]
     assert len(cls) == 1 and cls[0]["limit_price"] == 50.25                # LOC at the cap
     assert not any(p["symbol"] == "MOD" for p in _rows(eng, db.pending_adjustments))  # not cross-day
+
+
+# ====================================================================== #
+# order_events — chase telemetry for the execution visualizer (Phase 2)
+# ====================================================================== #
+def test_chase_events_recorded_for_deep_fill():
+    # A deep name that fills round 1 leaves a "post" event (bid/ask/mid + the marketable limit) and
+    # a "settle" event carrying the cumulative fill — the raw material for the chase board.
+    eng = _engine(); broker = _FakeBroker()
+    _tier([_po("AAPL", "buy", 50)], broker, eng,
+          {"AAPL": (99.99, 100.01, 100.0)}, {"AAPL": 60_000_000})
+    evs = _rows(eng, db.order_events)
+    posts = [e for e in evs if e["event"] == "post"]
+    settles = [e for e in evs if e["event"] == "settle"]
+    assert len(posts) == 1 and len(settles) == 1
+    p = posts[0]
+    assert (p["symbol"], p["side"], p["tier"], p["round"]) == ("AAPL", "buy", "deep", "r1")
+    assert p["bid"] == 99.99 and p["ask"] == 100.01 and p["mid"] == 100.0
+    assert p["limit_price"] == 100.5 and p["qty"] == 50 and p["target_qty"] == 50 and p["order_id"]
+    assert settles[0]["filled_qty"] == 50 and settles[0]["status"] == "filled"
+
+
+def test_chase_event_captures_mid_for_moderate_ladder():
+    # A moderate name posts its first limit AT the mid; the event captures bid/ask/mid so the board
+    # can place the walking marker on the spread.
+    eng = _engine(); broker = _FakeBroker()
+    _tier([_po("MOD", "buy", 100)], broker, eng,
+          {"MOD": (49.90, 50.10, 50.0)}, {"MOD": 10_000_000})
+    posts = [e for e in _rows(eng, db.order_events) if e["event"] == "post"]
+    assert posts and posts[0]["tier"] == "moderate"
+    assert posts[0]["bid"] == 49.90 and posts[0]["ask"] == 50.10
+    assert posts[0]["mid"] == 50.0 and posts[0]["limit_price"] == 50.0     # first post at the mid
+
+
+def test_chase_event_recorded_on_reject():
+    # A broker rejection emits a "reject" event (no order_id) so the board can flag the name.
+    eng = _engine(); broker = _FakeBroker(reject={"BAD"})
+    _tier([_po("BAD", "buy", 10)], broker, eng,
+          {"BAD": (10.0, 10.02, 10.0)}, {"BAD": 60_000_000})
+    rejects = [e for e in _rows(eng, db.order_events) if e["event"] == "reject"]
+    assert len(rejects) == 1 and rejects[0]["symbol"] == "BAD" and rejects[0]["order_id"] is None
+
+
+def test_chase_telemetry_failure_never_breaks_execution():
+    # Telemetry is best-effort and failure-isolated: with order_events missing, the chase still
+    # fills and reports normally (a telemetry write must never disrupt order placement).
+    eng = _engine()
+    with eng.begin() as c:
+        c.exec_driver_sql("DROP TABLE order_events")
+    broker = _FakeBroker()
+    rep = _tier([_po("AAPL", "buy", 50)], broker, eng,
+                {"AAPL": (99.99, 100.01, 100.0)}, {"AAPL": 60_000_000})
+    assert rep.filled == 1

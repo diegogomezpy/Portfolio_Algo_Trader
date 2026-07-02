@@ -308,6 +308,63 @@ def api_overlay(db_engine, *, market: str = "SPY") -> dict:
             "short_market_value": round(mv, 2) if mv is not None else None}
 
 
+def api_chase(db_engine, *, cycle_key: str | None = None) -> dict:
+    """Per-symbol chase state for the execution visualizer's **chase board** (Phase 2).
+
+    Replays ``order_events`` for one rebalance cycle (the most recent by default) and collapses it
+    to, per name: the latest posted child limit and its bid/ask/mid (so the board can place the
+    walking marker on the spread), the liquidity tier, cumulative fill vs target, broker status,
+    and how many rounds it has taken. ``order_events`` is best-effort engine telemetry, so an
+    absent/empty table simply yields ``{"orders": []}`` — the panel degrades to run-progress only.
+    """
+    try:
+        with db_engine.connect() as conn:
+            if cycle_key is None:
+                cycle_key = conn.execute(
+                    select(db.order_events.c.cycle_key)
+                    .order_by(desc(db.order_events.c.ts)).limit(1)).scalar()
+            if cycle_key is None:
+                return {"cycle_key": None, "orders": []}
+            rows = conn.execute(
+                select(db.order_events).where(db.order_events.c.cycle_key == cycle_key)
+                .order_by(db.order_events.c.ts)).mappings().all()
+    except Exception:  # noqa: BLE001 — telemetry table may not exist yet; degrade quietly
+        return {"cycle_key": None, "orders": []}
+    by_sym: dict[str, dict] = {}
+    for r in rows:
+        s = by_sym.setdefault(r["symbol"], {
+            "symbol": r["symbol"], "side": r["side"], "tier": r["tier"], "rounds": set(),
+            "posts": 0, "target_qty": r["target_qty"], "filled_qty": 0, "status": None,
+            "bid": None, "ask": None, "mid": None, "limit_price": None, "round": None})
+        if r["side"]:
+            s["side"] = r["side"]
+        if r["tier"]:
+            s["tier"] = r["tier"]
+        if r["target_qty"] is not None:
+            s["target_qty"] = r["target_qty"]
+        if r["round"]:
+            s["rounds"].add(r["round"])
+        if r["filled_qty"] is not None:
+            s["filled_qty"] = r["filled_qty"]
+        if r["event"] == "post":
+            s["posts"] += 1
+            s.update(bid=r["bid"], ask=r["ask"], mid=r["mid"],
+                     limit_price=r["limit_price"], round=r["round"])
+        elif r["event"] == "settle" and r["status"]:
+            s["status"] = r["status"]
+        elif r["event"] == "reject":
+            s["status"] = "rejected"
+    out = []
+    for s in by_sym.values():
+        s["n_rounds"] = len(s.pop("rounds"))
+        tw, fq = s.get("target_qty"), s.get("filled_qty")
+        s["fill_pct"] = (min(1.0, fq / tw) if (tw and fq is not None) else (1.0 if fq else 0.0))
+        out.append(s)
+    # Working names (not yet filled) first, then most-worked, then by symbol — the board's priority.
+    out.sort(key=lambda d: (d.get("status") == "filled", -(d.get("n_rounds") or 0), d["symbol"]))
+    return {"cycle_key": cycle_key, "orders": out}
+
+
 def api_factors(db_engine) -> list[dict]:
     """Latest factor scores for currently-held names."""
     with db_engine.connect() as conn:

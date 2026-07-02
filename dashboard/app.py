@@ -327,10 +327,14 @@ def _execution_status(client, db_engine, target_leverage: float) -> dict:
                "price": o.get("filled_avg_price"), "is_option": is_opt(o.get("symbol"))}
               for o in filled[:12]]
 
+    # Chase board (Phase 2): the per-order limit walk for the live cycle. Only while active, so a
+    # finished cycle's telemetry doesn't linger once the panel would otherwise hide.
+    chase = data.api_chase(db_engine).get("orders", []) if active else []
     return {"active": active, "phase": phase, "n_filled": n_filled, "n_target": n_target,
             "n_working": len(openo), "leverage": state.get("leverage"),
             "target_leverage": target_leverage, "gross_exposure": state.get("gross_exposure"),
-            "nav": state.get("nav"), "names": names, "blotter": blotter, "recent_fills": recent}
+            "nav": state.get("nav"), "names": names, "blotter": blotter, "recent_fills": recent,
+            "chase": chase}
 
 
 # Arrival-mid lookups are immutable once an order has filled, so cache them per (symbol, submit
