@@ -302,9 +302,18 @@ def run_cycle(
     n_written, written, skipped = 0, [], []
     if overlay:
         held = _equity_shares(client)
-        written, skipped = write_calls_fn(client, broker, db_engine, held,
-                                          settings=settings, as_of=as_of,
-                                          price_panel=plan.panel, chase=opt_chase, alert=alert)
+        # Overlay mode (default "index"): a portfolio-level SPY call overwrite sized to the book's
+        # market beta — the low-beta book's single-name options are too illiquid to write. "per_name"
+        # keeps the classic covered-call path.
+        if getattr(settings.covered_calls, "overlay_mode", "index") == "index":
+            written, skipped, ov = covered_calls.write_index_overwrite(
+                client, broker, db_engine, held, settings=settings, as_of=as_of,
+                price_panel=plan.panel, chase=opt_chase, alert=alert)
+            log.info("index overwrite result", extra=ov)
+        else:
+            written, skipped = write_calls_fn(client, broker, db_engine, held,
+                                              settings=settings, as_of=as_of,
+                                              price_panel=plan.panel, chase=opt_chase, alert=alert)
         n_written = len(written or [])
 
     mon = monitor.monitor_once(client, db_engine, target_weights=weights.to_dict())

@@ -462,6 +462,74 @@ def write_calls(client, broker, db_engine, holdings_shares: Mapping[str, float],
     return submitted, skipped
 
 
+def portfolio_beta(weights: Mapping[str, float], price_panel: pd.DataFrame, as_of: date,
+                   *, window: int, market: str = "SPY") -> Optional[float]:
+    """Weighted portfolio beta ``β_p = Σ wᵢ·βᵢ / Σ wᵢ`` over names with a computable β vs
+    ``market``. ``weights`` = each name's share of the book (any positive scale; renormalized).
+    Reuses the same per-name market beta as the low-beta factor. ``None`` if nothing usable."""
+    betas = factors.market_beta(price_panel, as_of, window, market)
+    num = den = 0.0
+    for sym, w in weights.items():
+        b = betas.get(sym)
+        if b is not None and np.isfinite(b) and w:
+            num += float(w) * float(b)
+            den += float(w)
+    return (num / den) if den else None
+
+
+def write_index_overwrite(client, broker, db_engine, holdings_shares: Mapping[str, float], *,
+                          settings, as_of: date, price_panel: pd.DataFrame,
+                          chase: OptionChase | None = None, alert=None):
+    """Portfolio-level SPY call **overwrite** sized to the book's market beta (replaces per-name
+    covered calls for low-beta books whose single-name options are illiquid).
+
+    Sells ``N`` ``market`` (SPY) calls at the target delta where ``N ≈ coverage · β_p ·
+    gross_equity / (100 · spot)`` — beta-sizing so the short-call market exposure matches the
+    book's (low-beta ⇒ fewer calls). Value-weights β_p and gross equity are derived from
+    ``holdings_shares`` × the panel's spot. Deliberately **not share-covered** (there are no SPY
+    shares behind it — an index overwrite, margined by the broker); the per-name coverage gate is
+    intentionally skipped here. Returns ``(submitted, skipped, info)``.
+    """
+    cc = settings.covered_calls
+    market = getattr(settings.factors, "beta_market", "SPY")
+    coverage = float(getattr(cc, "overwrite_coverage", 1.0))
+    names = [s for s, sh in holdings_shares.items() if sh]
+    spots = _spots_from_panel(price_panel, [*names, market], as_of)
+    spot = spots.get(market)
+    mv = {s: float(holdings_shares[s]) * spots[s] for s in names if s in spots}
+    gross_equity = sum(mv.values())
+    bp = portfolio_beta(mv, price_panel, as_of, window=settings.factors.beta_window, market=market)
+    info = {"beta_p": round(bp, 3) if bp else bp, "market": market, "coverage": coverage,
+            "gross": round(gross_equity) if gross_equity else 0, "contracts": 0}
+    if not bp or bp <= 0 or not gross_equity or not spot:
+        log.info("index overwrite skipped: no beta / exposure / spot", extra=info)
+        return [], [{"reason": "no beta / exposure / spot"}], info
+    n = int((coverage * bp * gross_equity) // (spot * _CONTRACT_SHARES))
+    info["contracts"] = n
+    if n < 1:
+        return [], [{"reason": "below one contract"}], info
+    chain = fetch_chains(client, [market], as_of, min_dte=cc.min_dte_entry, max_dte=cc.max_dte_entry).get(market) or []
+    iv = estimate_ivs(price_panel, [market], as_of, window=settings.covariance.estimation_window_days).get(market)
+    if iv is None or not chain:
+        return [], [{"reason": "no chain / iv for market"}], info
+    c = select_strike(chain, spot=float(spot), iv=float(iv), target_delta=cc.target_delta,
+                      as_of=as_of, min_dte=cc.min_dte_entry, max_dte=cc.max_dte_entry)
+    if c is None:
+        return [], [{"reason": "no strike at target delta"}], info
+    mid = float(c["mid"])
+    order = CoveredCallOrder(action="sell_to_open", option_symbol=str(c["symbol"]), underlying=market,
+                             contracts=n, limit_price=round(mid, 2), strike=float(c["strike"]),
+                             expiration=str(c["expiration"]), delta=round(float(c["delta"]), 3),
+                             premium=round(n * _CONTRACT_SHARES * mid, 2))
+    info.update(strike=float(c["strike"]), delta=round(float(c["delta"]), 3),
+                notional=round(n * spot * _CONTRACT_SHARES), premium=order.premium)
+    log.info("index overwrite plan", extra=info)
+    submitted = _execute_option_leg(broker, db_engine, [order], side="sell",
+                                    position_intent="sell_to_open", event="write", as_of=as_of,
+                                    final_market=False, chase=chase, alert=alert)
+    return submitted, [], info
+
+
 def _submit_closes(broker, db_engine, closes, *, as_of, event, chase: OptionChase | None = None,
                    alert=None):
     """Submit buy-to-close orders under one lifecycle ``event``, tracked to fill.

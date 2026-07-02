@@ -43,6 +43,28 @@ def test_contracts_for_floor_and_partial_coverage_rule():
     assert cc.contracts_for(50) == 0
 
 
+def test_portfolio_beta_value_weighted():
+    # AAA returns = 2×SPY (β=2), BBB = −1×SPY (β=−1). Value-weight AAA:BBB = 3:1
+    # → β_p = (3·2 + 1·(−1)) / 4 = 1.25.
+    idx = pd.bdate_range("2026-01-01", periods=8)
+    spy_r = [0.01, -0.02, 0.03, -0.01, 0.02, 0.0, 0.015]
+    def px(rets, p0=100.0):
+        p = [p0]
+        for r in rets:
+            p.append(p[-1] * (1 + r))
+        return p
+    panel = pd.DataFrame({"SPY": px(spy_r), "AAA": px([2 * r for r in spy_r]),
+                          "BBB": px([-r for r in spy_r])}, index=idx)
+    bp = cc.portfolio_beta({"AAA": 3.0, "BBB": 1.0}, panel, idx[-1].date(), window=6, market="SPY")
+    assert abs(bp - 1.25) < 1e-6
+
+
+def test_portfolio_beta_none_when_no_usable_names():
+    idx = pd.bdate_range("2026-01-01", periods=8)
+    panel = pd.DataFrame({"SPY": [100.0] * 8}, index=idx)   # no holdings columns present
+    assert cc.portfolio_beta({"AAA": 1.0}, panel, idx[-1].date(), window=6, market="SPY") is None
+
+
 # -------------------------------------------------------- strike select ----
 def test_select_strike_picks_delta_nearest_target():
     strikes = [100, 105, 110, 115, 120]
