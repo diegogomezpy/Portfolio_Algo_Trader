@@ -1493,7 +1493,10 @@ function renderNavHero(s){
   const host=$("ov-navhero"); if(!host||s.nav==null) return;
   const nav=s.nav, dp=s.day_pnl, dpp=s.day_pnl_pct;
   const dayColor=dp==null?"var(--muted)":dp>0?"var(--green)":dp<0?"var(--red)":"var(--muted)";
-  const daySub=(dp==null?"–":(dp>=0?"+$":"-$")+fmt(Math.abs(dp),0))+(dpp==null?"":" · "+spct(dpp)+" today");
+  // Outside RTH the day P&L is driven by pre/after-hours prints, not the RTH session — label it.
+  const sess=mktSession(), sessTag=sess==='pre'?'Pre-market':sess==='post'?'After hours':'';
+  const dayWord=sess==='pre'?'pre-market':sess==='post'?'after hours':'today';
+  const daySub=(dp==null?"–":(dp>=0?"+$":"-$")+fmt(Math.abs(dp),0))+(dpp==null?"":" · "+spct(dpp)+" "+dayWord);
   const base=navWindowed();
   const hist=base.concat([{ts:new Date().toISOString(),nav}]);
   const navs=hist.map(p=>p.nav).filter(v=>v!=null);
@@ -1506,6 +1509,7 @@ function renderNavHero(s){
         <div style="display:flex;align-items:baseline;gap:14px;margin-top:8px">
           <div id="navbig" class="ovflash" style="font:500 46px/1 'Space Grotesk';letter-spacing:-.01em;color:var(--fg);font-variant-numeric:tabular-nums;padding:1px 6px;margin:-1px -6px">${usd(nav)}</div>
           <div id="navpnl" class="ovflash" style="font:500 14px var(--mono);color:${dayColor};padding:1px 5px;margin:-1px -5px">${daySub}</div>
+          ${sessTag?`<span style="font:600 8.5px 'Space Grotesk';letter-spacing:.07em;text-transform:uppercase;color:var(--amber);background:rgba(216,168,75,.10);border:1px solid rgba(216,168,75,.28);border-radius:4px;padding:2px 6px;align-self:center">${sessTag}</span>`:''}
         </div>
         <div style="margin-top:11px;display:flex;align-items:center;gap:10px"><svg width="240" height="38" viewBox="0 0 240 38" preserveAspectRatio="none" style="display:block"><path d="${sparkP(navs.slice(-48),240,38,2)}" fill="none" stroke="${smallCol}" stroke-width="1.6" stroke-linejoin="round"/></svg><span style="font:400 10px var(--mono);color:var(--muted)">intraday · live</span></div>
       </div>
