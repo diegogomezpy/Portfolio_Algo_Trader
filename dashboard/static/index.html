@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SFI · Systematic Equity Premium Income</title>
+<title>SEPI · Systematic Equity Premium Income</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -106,8 +106,8 @@
   .ftval { text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; }
   .brand { display: flex; align-items: center; gap: 11px; flex: none; }
   .brand svg { width: 30px; height: 30px; display: block; flex: none; }
-  .brand .monogram { font-family: var(--mono); font-size: 10px; line-height: 1.16; font-weight: 600;
-    letter-spacing: .13em; color: var(--fg); text-align: center; flex: none; }
+  .brand .monogram { font-family: var(--mono); font-size: 8.5px; line-height: 1.18; font-weight: 600;
+    letter-spacing: .12em; color: var(--fg); text-align: center; flex: none; }
   .brand .mark { font-family: var(--mono); font-size: 15px; font-weight: 600; letter-spacing: .14em;
                  color: var(--fg); white-space: nowrap; }
   .brand .brand-div { width: 1px; height: 26px; background: var(--line-2, #243352); flex: none; }
@@ -257,7 +257,11 @@
   .intro-grid .dot.teal { background: var(--accent); }
   #introOverlay.p1 .dot { transform: scale(1); opacity: 1; }
   #introOverlay.p1 .dot.teal { box-shadow: 0 0 12px rgba(70,184,173,.55); }
-  .intro-div { width: 1px; height: 96px; background: #243352; }
+  .intro-div { width: 1px; height: 150px; background: #243352; opacity: 0; transition: opacity .55s ease; }
+  #introOverlay.p3 .intro-div { opacity: 1; }
+  .intro-fund { font: 500 46px 'Space Grotesk', sans-serif; letter-spacing: -.015em; color: var(--fg);
+    opacity: 0; transition: opacity .55s ease .08s; }
+  #introOverlay.p3 .intro-fund { opacity: 1; }
   .intro-words { display: flex; flex-direction: column; gap: 4px; }
   .iw-row { display: flex; align-items: baseline; line-height: 1.1; }
   .iw-in { font: 600 46px 'IBM Plex Mono', monospace; color: var(--fg); letter-spacing: .04em;
@@ -320,12 +324,14 @@
 <div id="introOverlay" title="click to skip">
   <div class="intro-wrap">
     <div class="intro-grid" id="introGrid"></div>
-    <div class="intro-div"></div>
     <div class="intro-words">
       <div class="iw-row"><span class="iw-in">S</span><span class="iw-tl">ystematic</span></div>
-      <div class="iw-row"><span class="iw-in">F</span><span class="iw-tl">actor</span></div>
+      <div class="iw-row"><span class="iw-in">E</span><span class="iw-tl">quity</span></div>
+      <div class="iw-row"><span class="iw-in">P</span><span class="iw-tl">remium</span></div>
       <div class="iw-row"><span class="iw-in">I</span><span class="iw-tl">ncome</span></div>
     </div>
+    <div class="intro-div"></div>
+    <div class="intro-fund">Fund</div>
   </div>
 </div>
 <div id="topwrap">
@@ -335,7 +341,7 @@
       <circle cx="4" cy="4" r="3.4" fill="var(--faint)"/><circle cx="18" cy="4" r="3.4" fill="var(--accent)"/><circle cx="32" cy="4" r="3.4" fill="var(--faint)"/>
       <circle cx="4" cy="18" r="3.4" fill="var(--faint)"/><circle cx="18" cy="18" r="3.4" fill="var(--accent)"/><circle cx="32" cy="18" r="3.4" fill="var(--faint)"/>
       <circle cx="4" cy="32" r="3.4" fill="var(--faint)"/><circle cx="18" cy="32" r="3.4" fill="var(--accent)"/><circle cx="32" cy="32" r="3.4" fill="var(--faint)"/></svg>
-    <span class="monogram">S<br>F<br>I</span>
+    <span class="monogram">S<br>E<br>P<br>I</span>
     <span class="brand-div"></span>
     <span class="wordmark">Fund</span>
   </div>
@@ -1940,8 +1946,8 @@ function playIntro(){
   ov.addEventListener('click', done);
   requestAnimationFrame(()=>ov.classList.add('p1'));
   setTimeout(()=>ov.classList.add('p2'), 900);
-  setTimeout(()=>ov.classList.add('p3'), 1950);
-  setTimeout(done, 2900);
+  setTimeout(()=>ov.classList.add('p3'), 2050);
+  setTimeout(done, 3400);
 }
 playIntro();
 boot();
