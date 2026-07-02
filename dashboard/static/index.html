@@ -240,6 +240,32 @@
   .prow:last-child { border-bottom: 0; }
   .pmono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
+  /* ---- logo intro (load-in animation) ---- */
+  #introOverlay { position: fixed; inset: 0; z-index: 9999; display: grid; place-items: center; cursor: pointer;
+    background: radial-gradient(120% 80% at 50% -10%, rgba(70,184,173,.07), rgba(7,13,24,0) 55%), #070d18;
+    transition: opacity .55s ease; }
+  #introOverlay.done { opacity: 0; pointer-events: none; }
+  .intro-wrap { display: flex; align-items: center; gap: 26px; }
+  .intro-grid { width: 96px; height: 96px; display: flex; flex-direction: column; justify-content: space-between; }
+  .intro-grid .irow { display: flex; justify-content: space-between; }
+  .intro-grid .dot { width: 18px; height: 18px; border-radius: 50%; background: #34425e; transform: scale(0); opacity: 0;
+    transition: transform .55s cubic-bezier(.2,.8,.2,1), opacity .4s ease; }
+  .intro-grid .dot.teal { background: var(--accent); }
+  #introOverlay.p1 .dot { transform: scale(1); opacity: 1; }
+  #introOverlay.p1 .dot.teal { box-shadow: 0 0 12px rgba(70,184,173,.55); }
+  .intro-div { width: 1px; height: 96px; background: #243352; }
+  .intro-words { display: flex; flex-direction: column; gap: 4px; }
+  .iw-row { display: flex; align-items: baseline; line-height: 1.1; }
+  .iw-in { font: 600 46px 'IBM Plex Mono', monospace; color: var(--fg); letter-spacing: .04em;
+    opacity: 0; transform: translateY(8px); transition: opacity .5s ease, transform .55s cubic-bezier(.2,.8,.2,1); }
+  #introOverlay.p2 .iw-in { opacity: 1; transform: translateY(0); }
+  .iw-tl { display: inline-block; overflow: hidden; white-space: nowrap; max-width: 400px; opacity: 0; margin-left: 2px;
+    font: 400 36px 'Space Grotesk', sans-serif; color: var(--muted); letter-spacing: .005em;
+    transition: max-width .7s cubic-bezier(.7,0,.2,1), opacity .5s ease; }
+  #introOverlay.p2 .iw-tl { opacity: 1; }
+  #introOverlay.p3 .iw-tl { max-width: 0; opacity: 0; }
+  @media (prefers-reduced-motion: reduce) { #introOverlay { display: none; } }
+
   /* upcoming events list */
   .evtlist { display: flex; flex-direction: column; }
   .evt { display: grid; grid-template-columns: 128px 1fr; gap: 14px; align-items: center;
@@ -287,6 +313,17 @@
 </style>
 </head>
 <body>
+<div id="introOverlay" title="click to skip">
+  <div class="intro-wrap">
+    <div class="intro-grid" id="introGrid"></div>
+    <div class="intro-div"></div>
+    <div class="intro-words">
+      <div class="iw-row"><span class="iw-in">S</span><span class="iw-tl">ystematic</span></div>
+      <div class="iw-row"><span class="iw-in">F</span><span class="iw-tl">actor</span></div>
+      <div class="iw-row"><span class="iw-in">I</span><span class="iw-tl">ncome</span></div>
+    </div>
+  </div>
+</div>
 <div id="topwrap">
 <header class="topbar">
   <div class="brand">
@@ -1899,6 +1936,21 @@ async function boot(){
   loadActive();
 }
 $("refreshbtn").onclick = () => { $("refreshbtn").classList.add("spin"); setTimeout(()=>$("refreshbtn").classList.remove("spin"),700); loadActive(); };
+// ---- logo intro: dot grid scales in → wordmark → contracts to SFI → reveals dashboard ----
+function playIntro(){
+  const ov=$("introOverlay"); if(!ov) return;
+  let h=""; for(let r=0;r<3;r++){ h+='<div class="irow">';
+    for(let c=0;c<3;c++) h+=`<span class="dot${c===1?' teal':''}" style="transition-delay:${(r+c)*75}ms"></span>`;
+    h+='</div>'; }
+  $("introGrid").innerHTML=h;
+  const done=()=>{ ov.classList.add('done'); setTimeout(()=>ov.remove(),650); };
+  ov.addEventListener('click', done);
+  requestAnimationFrame(()=>ov.classList.add('p1'));
+  setTimeout(()=>ov.classList.add('p2'), 900);
+  setTimeout(()=>ov.classList.add('p3'), 1950);
+  setTimeout(done, 2900);
+}
+playIntro();
 boot();
 // ---- Performance window picker wiring -------------------------------------
 function syncWin(){
