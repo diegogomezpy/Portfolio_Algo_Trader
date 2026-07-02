@@ -104,11 +104,13 @@
   .ftbar .axis { position: absolute; top: -4px; bottom: -4px; left: 50%; width: 0; border-left: 1.5px dashed var(--faint); z-index: 1; }
   .ftbar i { position: absolute; top: 0; height: 11px; border-radius: 4px; min-width: 2px; transition: width .3s var(--ease); }
   .ftval { text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; }
-  .brand { display: flex; align-items: center; gap: 10px; flex: none; }
-  .brand svg { width: 26px; height: 26px; display: block; flex: none; }
+  .brand { display: flex; align-items: center; gap: 11px; flex: none; }
+  .brand svg { width: 30px; height: 30px; display: block; flex: none; }
+  .brand .monogram { font-family: var(--mono); font-size: 10px; line-height: 1.16; font-weight: 600;
+    letter-spacing: .13em; color: var(--fg); text-align: center; flex: none; }
   .brand .mark { font-family: var(--mono); font-size: 15px; font-weight: 600; letter-spacing: .14em;
                  color: var(--fg); white-space: nowrap; }
-  .brand .brand-div { width: 1px; height: 15px; background: var(--line); flex: none; }
+  .brand .brand-div { width: 1px; height: 26px; background: var(--line-2, #243352); flex: none; }
   .brand .tag  { font-size: 11px; color: var(--muted); white-space: nowrap; letter-spacing: .02em; }
   @media (max-width: 1120px) { .brand .tag, .brand .brand-div { display: none; } }
   nav.tabs { display: flex; gap: 4px; margin-left: 6px; }
@@ -332,7 +334,7 @@
       <circle cx="4" cy="4" r="3.4" fill="var(--faint)"/><circle cx="18" cy="4" r="3.4" fill="var(--accent)"/><circle cx="32" cy="4" r="3.4" fill="var(--faint)"/>
       <circle cx="4" cy="18" r="3.4" fill="var(--faint)"/><circle cx="18" cy="18" r="3.4" fill="var(--accent)"/><circle cx="32" cy="18" r="3.4" fill="var(--faint)"/>
       <circle cx="4" cy="32" r="3.4" fill="var(--faint)"/><circle cx="18" cy="32" r="3.4" fill="var(--accent)"/><circle cx="32" cy="32" r="3.4" fill="var(--faint)"/></svg>
-    <span class="mark">SFI</span>
+    <span class="monogram">S<br>F<br>I</span>
     <span class="brand-div"></span>
     <span class="tag">Systematic Factor Income</span>
   </div>
