@@ -171,6 +171,55 @@ def test_api_calls_renders_position_without_metadata_from_occ():
     assert c0["delta"] is None and c0["premium"] is None   # no write row → metadata absent
 
 
+def _seed_index_overlay(eng):
+    """A live SPY vertical call-spread overlay: short 764C / long 779C, 7 contracts, one write row."""
+    with eng.begin() as c:
+        c.execute(insert(db.snapshots).values(
+            ts=datetime(2026, 7, 2, 16), nav=1_000_000.0, cash=50_000.0, last_equity=1_000_000.0,
+            weights={"AAPL": 0.30, "MSFT": 0.28,
+                     "SPY260731C00764000": -0.02, "SPY260731C00779000": 0.01},
+            positions={"AAPL": 100, "MSFT": 60,
+                       "SPY260731C00764000": -7, "SPY260731C00779000": 7}, drift=0.0))
+        c.execute(insert(db.options_lifecycle).values(
+            ts=datetime(2026, 7, 2), event_type="write", underlying="SPY",
+            option_symbol="SPY260731C00764000", strike=764.0, expiration=date(2026, 7, 31),
+            delta=0.30, contracts=7, premium=1638.0))
+
+
+def test_api_overlay_reconstructs_spread_and_defined_risk():
+    eng = _engine()
+    _seed_index_overlay(eng)
+    ov = data.api_overlay(eng, market="SPY")
+    assert ov["active"] is True and ov["market"] == "SPY"
+    assert ov["contracts"] == 7
+    assert ov["short_strike"] == 764.0 and ov["long_strike"] == 779.0 and ov["width"] == 15.0
+    assert ov["short_delta"] == 0.30 and ov["expiration"] == "2026-07-31"
+    assert ov["premium_total"] == 1638.0
+    assert ov["net_credit"] == 2.34                          # 1638 / (7 × 100)
+    assert ov["max_risk"] == round((15.0 - 2.34) * 100 * 7, 2)   # defined risk of the vertical
+
+
+def test_api_overlay_inactive_without_short_leg():
+    # No SPY short call held → the panel reports inactive (Postgres-only / no overlay written yet).
+    eng = _engine()
+    _seed(eng)                                               # per-name AAPL call only, no SPY
+    ov = data.api_overlay(eng, market="SPY")
+    assert ov["active"] is False and ov["market"] == "SPY"
+
+
+def test_api_overlay_falls_back_to_occ_strikes_without_write_row():
+    # Legs held but no lifecycle write row → strikes come from the OCC symbols; credit unknown.
+    eng = _engine()
+    with eng.begin() as c:
+        c.execute(insert(db.snapshots).values(
+            ts=datetime(2026, 7, 2, 16), nav=1_000_000.0, cash=50_000.0, last_equity=1_000_000.0,
+            weights={"AAPL": 0.30}, positions={
+                "AAPL": 100, "SPY260731C00764000": -7, "SPY260731C00779000": 7}, drift=0.0))
+    ov = data.api_overlay(eng, market="SPY")
+    assert ov["active"] is True and ov["short_strike"] == 764.0 and ov["long_strike"] == 779.0
+    assert ov["net_credit"] is None and ov["premium_total"] is None   # no write row → credit absent
+
+
 def test_api_factors_only_held_names():
     eng = _engine()
     _seed(eng)

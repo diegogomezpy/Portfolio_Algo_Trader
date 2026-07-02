@@ -67,6 +67,11 @@ def _load_meta(env: str, settings) -> dict:
         "max_single_name_pct": getattr(pf, "max_single_name_pct", 0.05) if pf else 0.05,
         "max_sector_pct": getattr(pf, "max_sector_pct", 0.30) if pf else 0.30,
         "target_delta": getattr(cc, "target_delta", 0.30) if cc else 0.30,
+        # Overlay config for the SPY beta-overwrite panel (see engine.covered_calls.write_index_overwrite).
+        "overlay_mode": getattr(cc, "overlay_mode", "index") if cc else "index",
+        "overwrite_coverage": getattr(cc, "overwrite_coverage", 1.0) if cc else 1.0,
+        "wing_delta": getattr(cc, "wing_delta", 0.15) if cc else 0.15,
+        "beta_market": getattr(getattr(settings, "factors", None), "beta_market", "SPY") if settings else "SPY",
         "live_benchmarks": list(getattr(dash, "live_benchmarks", ["SPY", "BXMD", "BXRD"]))
         if dash else ["SPY", "BXMD", "BXRD"],
     }
@@ -565,6 +570,37 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
     @app.get("/api/calls")
     def calls() -> list:
         return data.api_calls(db_engine)
+
+    @app.get("/api/overlay")
+    def overlay() -> dict:
+        """Live state of the SPY beta-overwrite spread overlay for the Overview panel.
+
+        DB layer supplies the contract terms; here we add the live SPY spot, the book's gross
+        equity, and the derived ``beta_overwritten`` = short-leg notional ÷ gross equity — which,
+        by the beta-sizing (N ≈ coverage·β_p·gross / 100·spot), reads back the fraction of the
+        book's market beta the overlay is currently selling against.
+        """
+        market = meta.get("beta_market", "SPY")
+        ov = data.api_overlay(db_engine, market=market)
+        ov["mode"] = meta.get("overlay_mode", "index")
+        ov["coverage_target"] = meta.get("overwrite_coverage", 1.0)
+        if not ov.get("active"):
+            return ov
+        gross = data.api_state(db_engine).get("gross_exposure")
+        ov["gross_equity"] = gross
+        spot = None
+        if client is not None:
+            try:
+                spot = client.latest_trade(market)
+            except Exception:  # noqa: BLE001 — spot is enrichment; the panel degrades gracefully
+                try:
+                    spot = client.latest_quote(market)
+                except Exception:  # noqa: BLE001
+                    spot = None
+        ov["spot"] = round(spot, 2) if spot else None
+        if spot and gross and ov.get("contracts"):
+            ov["beta_overwritten"] = round(ov["contracts"] * 100 * spot / gross, 3)
+        return ov
 
     @app.get("/api/factors")
     def factors() -> list:

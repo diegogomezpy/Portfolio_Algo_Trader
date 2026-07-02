@@ -250,6 +250,64 @@ def api_calls(db_engine) -> list[dict]:
     return out
 
 
+def api_overlay(db_engine, *, market: str = "SPY") -> dict:
+    """Structured state of the index (SPY) **call-spread overwrite** overlay.
+
+    The low-beta book's single-name options are too illiquid to write, so the overlay replaces
+    per-name covered calls with one portfolio-level SPY vertical call spread (short at the target
+    delta, long a further-OTM wing at the same expiry) sized to the book's market beta. This reads
+    the two SPY option legs straight out of the live snapshot (Alpaca truth) and enriches the short
+    leg with its options_lifecycle write terms (strike, delta, net credit collected).
+
+    Returns ``{"active": False, ...}`` when no SPY short call is currently open. ``spot`` /
+    ``gross_equity`` / ``beta_overwritten`` need the live client + account and are filled in by the
+    caller (``dashboard/app.py``); the DB layer supplies the contract terms and defined risk.
+    """
+    with db_engine.connect() as conn:
+        snap = _latest_snapshot(conn)
+        writes = conn.execute(
+            select(db.options_lifecycle)
+            .where(db.options_lifecycle.c.event_type == "write")
+            .order_by(db.options_lifecycle.c.ts)).mappings().all()
+    positions = (snap or {}).get("positions") or {}
+    weights = (snap or {}).get("weights") or {}
+    nav = (snap or {}).get("nav")
+    # Latest write terms per option symbol (a later rewrite supersedes an earlier one).
+    meta: dict[str, dict] = {}
+    for r in writes:
+        meta[r["option_symbol"]] = {"strike": r["strike"], "delta": r["delta"],
+                                    "premium": r["premium"], "contracts": r["contracts"]}
+    short = long_leg = None                                  # the two SPY call legs (short + wing)
+    for sym, qty in positions.items():
+        occ = _parse_occ(sym)
+        if occ is None or occ["type"] != "call" or occ["underlying"] != market:
+            continue
+        q = float(qty)
+        if q < 0 and short is None:
+            short = (sym, q, occ)
+        elif q > 0 and long_leg is None:
+            long_leg = (sym, q, occ)
+    if short is None:
+        return {"active": False, "market": market}
+    ssym, sqty, socc = short
+    m = meta.get(ssym, {})
+    contracts = int(round(abs(sqty)))
+    short_strike = m["strike"] if m.get("strike") is not None else socc["strike"]
+    long_strike = long_leg[2]["strike"] if long_leg else None
+    premium_total = m.get("premium")                        # +cash collected (net credit, real fill)
+    net_credit = round(premium_total / (contracts * 100), 2) if (premium_total and contracts) else None
+    width = round(long_strike - short_strike, 2) if long_strike is not None else None
+    # Defined risk of the vertical: (width − credit) per spread × 100 × N, less the credit kept.
+    max_risk = (round((width - (net_credit or 0.0)) * 100 * contracts, 2)
+                if (width is not None) else None)
+    mv = (float(weights.get(ssym, 0.0)) * nav) if nav is not None else None
+    return {"active": True, "market": market, "contracts": contracts,
+            "short_symbol": ssym, "short_strike": short_strike, "long_strike": long_strike,
+            "width": width, "expiration": socc["expiration"], "short_delta": m.get("delta"),
+            "net_credit": net_credit, "premium_total": premium_total, "max_risk": max_risk,
+            "short_market_value": round(mv, 2) if mv is not None else None}
+
+
 def api_factors(db_engine) -> list[dict]:
     """Latest factor scores for currently-held names."""
     with db_engine.connect() as conn:

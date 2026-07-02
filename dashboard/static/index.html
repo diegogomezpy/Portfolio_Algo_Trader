@@ -871,7 +871,7 @@ function renderReturnsRibbon(tr, slip){
     kpiCell("Since inception", spct(tr.total_return), "paper, net of costs", {valColor:tr.total_return==null?'var(--fg)':(tr.total_return>=0?'var(--green)':'var(--red)')}),
     kpiCell("Ann. return"+star, tr.mature?spct(tr.ann_return):"—", tr.mature?"annualized":"needs ≥10 days"),
     kpiCell("Live Sharpe"+star, tr.mature&&tr.sharpe!=null?tr.sharpe.toFixed(2):"—", tr.mature?"annualized":"needs ≥10 days"),
-    kpiCell("Premium collected", usd(tr.premium_collected), "covered calls"),
+    kpiCell("Premium collected", usd(tr.premium_collected), "SPY overlay"),
     kpiCell("Avg slippage", avgBps, "vs intended price"),
   ].join("");
   $("pr-ribbon").innerHTML=ribWrap(`<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden">${cells}</div>`, "kpiret");
@@ -1095,7 +1095,8 @@ const SRC = {
   benchmarks: "Source: engine NAV curve (Postgres) vs SPY (yfinance) and BXMD/BXRD (CBOE).",
   factors:    "Source: engine factor scores (Postgres) — computed from fundamentals/prices each rebalance.",
   targets:    "Source: engine — target weights & risk gate from the last rebalance (Postgres rebalance_log).",
-  calls:      "Source: engine — covered-call positions & premium (Postgres options_lifecycle + the live snapshot).",
+  calls:      "Source: engine — SPY overlay spread legs & net credit (Postgres options_lifecycle + the live snapshot).",
+  overlay:    "Source: engine — SPY beta-overwrite spread (options_lifecycle net credit + the live SPY leg positions); β overwritten = short-leg notional ÷ gross equity, live SPY spot from Alpaca.",
   premium:    "Source: engine — lifetime option premium collected (Postgres options_lifecycle).",
   quotes:     "Source: Alpaca daily bars (IEX) — OHLCV + 52-week range; the live price is overlaid on top.",
   bars:       "Source: Alpaca market data — hourly/daily bars (IEX), extended live.",
@@ -1263,7 +1264,7 @@ function kpis(s){
     `<span class="${sgn(s.day_pnl)}">${susd(s.day_pnl)}</span>`,
     s.day_pnl_pct==null ? "" : `<span class="${sgn(s.day_pnl_pct)}">${spct(s.day_pnl_pct)} vs prior</span>`,
     "Change in equity vs the prior trading day's close."));
-  cards.push(`<div class="se-kpi kpi-lev" data-tip="Gross equity exposure ÷ account equity. The book runs ~2× on paper to lift covered-call coverage; the risk gate hard-caps it."><div class="label">Leverage</div>
+  cards.push(`<div class="se-kpi kpi-lev" data-tip="Gross equity exposure ÷ account equity. The book runs ~2× on paper; the risk gate hard-caps it."><div class="label">Leverage</div>
       <div class="val ${over?'neg':''}">${lev==null?"–":lev.toFixed(2)+"×"}</div>
       <div class="gauge ${over?'over':''}"><i style="width:${lev==null?0:Math.min(100,lev/cap*100).toFixed(0)}%"></i></div>
       <div class="sub">cap ${cap.toFixed(1)}× · gross ${usd(s.gross_exposure)}</div></div>`);
@@ -1272,7 +1273,7 @@ function kpis(s){
     "Uninvested cash balance — exact to the cent."));
   cards.push(kpi("Premium collected", usd(s.premium_collected),
     (s.premium_collected && s.nav) ? `${pct(s.premium_collected/s.nav)} of NAV` : "lifetime",
-    "Lifetime premium income from writing covered calls."));
+    "Lifetime option premium collected — net credit from the SPY beta-overwrite spread (and any legacy covered calls)."));
   cards.push(kpi("Positions", fmt(s.n_positions),
     `drift (L1) <span class="${s.drift>0.1?'warn':'mut'}">${s.drift==null?"–":pct(s.drift)}</span>`,
     "Number of equity names held (options excluded)."));
@@ -1341,6 +1342,7 @@ function sparkline(hist){
 const _px = {};
 let _navBase = [];
 let _calls = [];
+let _overlay = null;                 // SPY beta-overwrite spread state (/api/overlay)
 const PX_KEEP = 140;
 
 function livePx(r){ return r.last_price != null ? r.last_price : (r.qty ? r.market_value / r.qty : null); }
@@ -1547,7 +1549,7 @@ function renderKpiRibbon(s){
     +kpiCell("Day P&L",dpStr,(dpp==null?'':spct(dpp)+' vs prior close'),{valColor:dayCol})
     +kpiCell("Leverage",lev==null?'–':lev.toFixed(2)+'×',`cap ${cap.toFixed(1)}× · gross ${usd(s.gross_exposure)}`,{extra:levBar})
     +kpiCell("Cash",usd(s.cash),(s.nav?`${(s.cash/s.nav*100).toFixed(1)}% of NAV`:''))
-    +kpiCell("Premium collected",usd(s.premium_collected),(s.nav&&s.premium_collected?`${(s.premium_collected/s.nav*100).toFixed(1)}% of NAV · lifetime`:'covered calls'))
+    +kpiCell("Premium collected",usd(s.premium_collected),(s.nav&&s.premium_collected?`${(s.premium_collected/s.nav*100).toFixed(1)}% of NAV · lifetime`:'SPY overlay'))
     +kpiCell("Positions",fmt(s.n_positions),`drift ${s.drift!=null?pct(s.drift):'–'} L1`)
     +`</div>`, "kpiov");
 }
@@ -1575,8 +1577,46 @@ function renderTreemap(s){
   host.innerHTML=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" width="100%" height="100%" style="display:block">${r}</svg>`;
 }
 
-function renderGauge(s,calls){
+// Short "Jul 31" expiry label from an ISO date (no year — the DTE carries the horizon).
+const _MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function expShort(iso){ if(!iso) return "–"; const p=String(iso).split("-"); return p.length===3?`${_MON[(+p[1]||1)-1]} ${+p[2]}`:iso; }
+
+// Overview overlay panel. The book runs a portfolio-level SPY beta-overwrite as a defined-risk
+// vertical call spread (short target-delta / long wing, same expiry) sized to the book's market
+// beta — the low-beta names' single-name options are too illiquid to write. The gauge arc reads
+// β overwritten (short-leg notional ÷ gross equity); a low-beta book overwrites proportionally
+// less. Falls back to the classic per-name covered-call gauge when overlay_mode = "per_name".
+function renderGauge(s,calls,ov){
   const host=$("ov-gauge"); if(!host) return;
+  if(ov && ov.mode==="per_name"){ renderCoveredGauge(host,s,calls); return; }
+  const st=(l,v,c,sub)=>`<div style="flex:1;min-width:0"><div style="font:600 8.5px 'Space Grotesk';letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">${l}</div>`
+    +`<div style="font:500 16px var(--mono);color:${c||'var(--fg)'};margin-top:5px;white-space:nowrap">${v}</div>`
+    +(sub?`<div style="font:400 9.5px var(--mono);color:var(--muted);margin-top:2px">${sub}</div>`:"")+`</div>`;
+  if(!ov || !ov.active){
+    const body=`<div style="padding:18px 16px;font:400 11.5px var(--mono);color:var(--muted);line-height:1.55">`
+      +`No SPY spread open — the overlay writes one beta-sized SPY call spread (short ~0.30Δ / long wing) at each monthly rebalance, sized to the book's market beta.</div>`;
+    host.innerHTML=ovPanel("SPY beta overlay","β-sized call spread", body, "0", "overlay"); return;
+  }
+  const bo=(ov.beta_overwritten!=null)?ov.beta_overwritten:null;   // short-leg notional ÷ gross ≈ coverage·β_p
+  const frac=bo!=null?Math.max(0,Math.min(1,bo)):0;
+  const W=230,H=116,cx=115,cy=108,rr=88,a0=Math.PI,a1=0,ang=a0+(a1-a0)*frac;
+  const pt=an=>[cx+rr*Math.cos(an),cy-rr*Math.sin(an)];
+  const arc=(an0,an1,c,wd)=>{ const [x0,y0]=pt(an0),[x1,y1]=pt(an1),large=Math.abs(an1-an0)>Math.PI?1:0,sw=an1<an0?1:0;
+    return `<path d="M${x0.toFixed(1)} ${y0.toFixed(1)} A${rr} ${rr} 0 ${large} ${sw} ${x1.toFixed(1)} ${y1.toFixed(1)}" fill="none" stroke="${c}" stroke-width="${wd}" stroke-linecap="round"/>`; };
+  const g=`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="display:block">${arc(a0,a1,"#16223a",11)}${frac>0.001?arc(a0,ang,"#46b8ad",11):""}`
+    +`<text x="${cx}" y="${cy-28}" text-anchor="middle" font-size="26" fill="#eaf2fb" font-family="IBM Plex Mono" font-weight="500">${bo!=null?bo.toFixed(2):"–"}</text>`
+    +`<text x="${cx}" y="${cy-11}" text-anchor="middle" font-size="8.5" fill="#65758c" font-family="Space Grotesk" letter-spacing="1.3">β OVERWRITTEN</text></svg>`;
+  const d=dte(ov.expiration);
+  const spread=(ov.short_strike!=null?fmt(ov.short_strike,0):"–")+" / "+(ov.long_strike!=null?fmt(ov.long_strike,0):"–");
+  const totCredit=ov.premium_total!=null?usd(ov.premium_total):"–";
+  const body=`<div style="display:flex;align-items:center;gap:10px"><div style="flex:none">${g}</div><div style="flex:1;display:flex;flex-direction:column;gap:12px;padding-left:4px">`
+    +`<div style="display:flex;gap:10px">${st("Spread",spread+" C",null,`exp ${expShort(ov.expiration)} · ${d==null?"–":d+"d"}`)}${st("Net credit",ov.net_credit!=null?"$"+ov.net_credit.toFixed(2):"–","#5fb088",totCredit+" total")}</div>`
+    +`<div style="display:flex;gap:10px">${st("Short Δ",ov.short_delta==null?"–":ov.short_delta.toFixed(2))}${st("Spreads",fmt(ov.contracts))}${st("Max risk",ov.max_risk!=null?usd(ov.max_risk):"–","#cf9a5f")}</div></div></div>`;
+  host.innerHTML=ovPanel("SPY beta overlay","β-sized call spread", body, "14px 16px", "overlay");
+}
+
+// Legacy per-name covered-call gauge (kept for overlay_mode = "per_name").
+function renderCoveredGauge(host,s,calls){
   const px={}; (s.positions||[]).forEach(p=>{ px[p.symbol]=p.last_price!=null?p.last_price:(p.qty?p.market_value/p.qty:null); });
   const held={}; (s.positions||[]).forEach(p=>{ if(!_isOpt(p.symbol)) held[p.symbol]=p.qty||0; });
   const coverable=Object.keys(held).filter(k=>held[k]>=100);
@@ -1649,9 +1689,13 @@ function renderExec(ex){
   const host=$("ov-exec"); if(!host) return;
   if(!ex || !ex.active){ host.style.display="none"; host.innerHTML=""; return; }
   host.style.display="block";
-  const phaseName={equity_chase:"Equity chase",writing_calls:"Writing calls",idle:"Settling"}[ex.phase]||"Trading";
+  // Label the option leg by the active overlay: SPY spread overwrite (index) vs per-name calls.
+  const idxOv = !(_overlay && _overlay.mode==="per_name");
+  const writeLbl = idxOv ? "Write SPY spread" : "Write calls";
+  const closeLbl = idxOv ? "Close spread" : "Close calls";
+  const phaseName={equity_chase:"Equity chase",writing_calls:idxOv?"Writing SPY spread":"Writing calls",idle:"Settling"}[ex.phase]||"Trading";
   const curIdx = ex.phase==="equity_chase"?1 : ex.phase==="writing_calls"?2 : 3;
-  const strip=[["Close calls",0],["Equity chase",1],["Write calls",2],["Snapshot",3]].map(([l,i])=>{
+  const strip=[[closeLbl,0],["Equity chase",1],[writeLbl,2],["Snapshot",3]].map(([l,i])=>{
     const done=i<curIdx, cur=i===curIdx, mark=done?"✓":cur?"●":"○";
     const c=done?"var(--green)":cur?"var(--fg)":"var(--muted)";
     return `<span style="color:${c};font:500 11px 'Space Grotesk'">${mark} ${l}</span>`; }).join("");
@@ -1680,19 +1724,19 @@ async function pollExec(){ try{ renderExec(await get("/api/execution")); }catch(
 function paintOverview(s){
   _ovS=s; pushPx(s); renderTape(s);
   renderSession(); renderNavHero(s); renderKpiRibbon(s);
-  renderTreemap(s); renderGauge(s, _calls); renderEventsPanel(); renderWaterfall(s);
+  renderTreemap(s); renderGauge(s, _calls, _overlay); renderEventsPanel(); renderWaterfall(s);
   renderFootstrip(s);
 }
 
 // Overview — the daily glance (design-doc layout)
 async function loadOverview(){
-  const [s, hist, calls, ev] = await Promise.all(
-    ["/api/state","/api/nav_history?limit=1000","/api/calls","/api/events"].map(get));
+  const [s, hist, calls, ev, ov] = await Promise.all(
+    ["/api/state","/api/nav_history?limit=1000","/api/calls","/api/events","/api/overlay"].map(get));
   noteFresh(s);
   if(!s){ $("ov-navhero").innerHTML =
       '<div class="errbox"><div class="big">Backend unreachable</div>Postgres or the dashboard API is not responding.</div>';
     return; }
-  _navBase = hist || []; _calls = calls || []; _eventsData = (ev && ev.events) || [];
+  _navBase = hist || []; _calls = calls || []; _eventsData = (ev && ev.events) || []; _overlay = ov || null;
   paintOverview(s);
   pollExec();                                            // auto-surface the live execution panel
 }
@@ -1780,7 +1824,9 @@ function renderPRadar(s,factors){
   $("p-radar").innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Factor radar</span><span class="ovhs">book-weighted z${srcInfo('factors')}</span></div><div style="padding:10px 14px 14px">${rows.length?g+leg:'<div style=\"color:var(--muted);font:400 12px var(--mono);padding:6px 4px\">appears once scored</div>'}</div></div>`;
 }
 
-function renderPCalls(s,calls){
+function renderPCalls(s,calls,ov){
+  // SPY beta-overwrite spread (index overlay): a defined-risk detail card, not a per-name table.
+  if(ov && ov.mode!=="per_name"){ renderPOverlay(s,ov); return; }
   const G="display:grid;grid-template-columns:1.3fr .6fr .8fr .8fr .55fr .8fr;gap:8px;align-items:center";
   const head=`<div style="${G};padding:8px 16px;font:600 9px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Underlying</span><span style="text-align:right">Ct</span><span style="text-align:right">Strike</span><span style="text-align:right">DTE</span><span style="text-align:right">Δ</span><span style="text-align:right">Premium</span></div>`;
   let body;
@@ -1789,6 +1835,31 @@ function renderPCalls(s,calls){
     return `<div class="prow" style="${G};padding:8px 16px"><span style="display:flex;align-items:center;gap:8px;min-width:0">${tkrChip(c.underlying,r.sector)}<span style="font:400 9px 'Space Grotesk';color:var(--amber);letter-spacing:.04em;text-transform:uppercase">call</span></span><span class="pmono" style="text-align:right;font-size:12px;color:var(--fg-dim)">${fmt(c.contracts)}</span><span class="pmono" style="text-align:right;font-size:12px;color:var(--fg-dim)">${usd2(c.strike)}</span><span class="pmono" style="text-align:right;font-size:12px;font-weight:500;color:${d!=null&&d<=7?'var(--amber)':'var(--fg-dim)'}">${d==null?'–':d+'d'}</span><span class="pmono" style="text-align:right;font-size:12px;color:var(--fg-dim)">${c.delta==null?'–':c.delta.toFixed(2)}</span><span class="pmono" style="text-align:right;font-size:12px;font-weight:500;color:var(--green)">${usd(c.premium)}</span></div>`; }).join('')}</div>`;
   const coveredSh=(calls||[]).reduce((a,c)=>a+(c.contracts||0)*100,0);
   fillPanel("p-calls","Covered calls",(calls&&calls.length)?`${calls.length} open · ${fmt(coveredSh)} sh covered`:"0 open",head+body,"calls");
+}
+
+// Portfolio-tab detail card for the SPY beta-overwrite vertical call spread.
+function renderPOverlay(s,ov){
+  if(!ov || !ov.active){
+    const body=`<div style="padding:16px;font:400 11.5px var(--mono);color:var(--muted);line-height:1.55">No SPY spread open — the overlay writes one beta-sized SPY vertical call spread (short ~0.30Δ / long wing, same expiry) at each monthly rebalance.</div>`;
+    fillPanel("p-calls","SPY beta overlay","0 open · β-sized spread",body,"overlay"); return;
+  }
+  const d=dte(ov.expiration);
+  const legRow=(side,strike,col)=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--line-soft)">`
+    +`<span style="display:flex;align-items:center;gap:9px">${tkrChip(ov.market||"SPY","ETF")}<span style="font:600 9.5px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:${col}">${side}</span></span>`
+    +`<span class="pmono" style="font-size:13px;color:var(--fg)">${strike==null?"–":fmt(strike,0)+"C"}</span></div>`;
+  const kv=(k,v,c)=>`<div style="display:flex;flex-direction:column;gap:3px"><span style="font:600 8.5px 'Space Grotesk';letter-spacing:.07em;text-transform:uppercase;color:var(--muted)">${k}</span><span class="pmono" style="font-size:13px;color:${c||'var(--fg-dim)'}">${v}</span></div>`;
+  const grid=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 12px;padding:14px 16px">`
+    +kv("Expiry",`${expShort(ov.expiration)} · ${d==null?"–":d+"d"}`)
+    +kv("Spreads",fmt(ov.contracts))
+    +kv("Short Δ",ov.short_delta==null?"–":ov.short_delta.toFixed(2))
+    +kv("Net credit",ov.net_credit!=null?"$"+ov.net_credit.toFixed(2)+" / spread":"–","var(--green)")
+    +kv("Credit collected",ov.premium_total!=null?usd(ov.premium_total):"–","var(--green)")
+    +kv("Max risk (defined)",ov.max_risk!=null?usd(ov.max_risk):"–","#cf9a5f")
+    +kv(`<span style="text-transform:none">β</span> overwritten`,ov.beta_overwritten!=null?ov.beta_overwritten.toFixed(2):"–")
+    +kv("Gross overwritten",(ov.beta_overwritten!=null&&ov.gross_equity!=null)?usd(ov.contracts*100*(ov.spot||0)):"–")
+    +`</div>`;
+  const body=legRow("Short call",ov.short_strike,"var(--red)")+legRow("Long wing",ov.long_strike,"var(--green)")+grid;
+  fillPanel("p-calls","SPY beta overlay",`1 spread · ${fmt(ov.contracts)} contracts`,body,"overlay");
 }
 
 function renderPFactors(factors){
@@ -1803,19 +1874,19 @@ function renderPFactors(factors){
   fillPanel("p-factors","Factor scores","held names · z-score",head+body,"factors");
 }
 
-function paintPortfolioLive(s){ pushPx(s); renderTape(s); renderPPositions(s); renderPCalls(s,_calls); }
+function paintPortfolioLive(s){ pushPx(s); renderTape(s); renderPPositions(s); renderPCalls(s,_calls,_overlay); }
 
 // Portfolio — Holdings (design-doc layout) + Activity (orders/alerts)
 async function loadPortfolio(){
-  const [s, orders, calls, factors, alerts] = await Promise.all(
-    ["/api/state","/api/orders","/api/calls","/api/factors","/api/alerts"].map(get));
+  const [s, orders, calls, factors, alerts, ov] = await Promise.all(
+    ["/api/state","/api/orders","/api/calls","/api/factors","/api/alerts","/api/overlay"].map(get));
   noteFresh(s);
   if(!s){ $("p-positions").innerHTML =
       '<div class="errbox"><div class="big">Backend unreachable</div>Postgres or the dashboard API is not responding.</div>';
     return; }
-  _calls = calls || []; _pFactors = factors || []; pushPx(s); renderTape(s);
+  _calls = calls || []; _pFactors = factors || []; _overlay = ov || null; pushPx(s); renderTape(s);
   renderPSector(s); renderPPositions(s); renderPFactorTilt(s,_pFactors); renderPRadar(s,_pFactors);
-  renderPCalls(s,_calls); renderPFactors(_pFactors); renderOrders(orders); renderAlerts(alerts);
+  renderPCalls(s,_calls,_overlay); renderPFactors(_pFactors); renderOrders(orders); renderAlerts(alerts);
 }
 
 // Solid sector colour for ribbons/swatches (brighter than the chip background).
