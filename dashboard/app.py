@@ -131,6 +131,48 @@ def _earnings_map(symbols: list[str]) -> tuple[dict, bool]:
     return _EARN_CACHE["data"], _EARN_CACHE["loading"]
 
 
+# Per-symbol quote detail for the ticker hover-card: today's OHLCV, prior close, and 52-week
+# range, from ~1y of daily bars. Refreshed off-thread and cached (the day bar / 52w range move
+# slowly; the front-end overlays the sub-second live price for the headline number).
+_QUOTE_CACHE: dict = {"ts": 0.0, "data": {}, "loading": False, "key": ""}
+_QUOTE_TTL = 45
+
+
+def _quotes_map(client, symbols: list[str]) -> dict:
+    """Cached ``{symbol: {last, open, high, low, volume, prev_close, wk52_high, wk52_low}}``."""
+    key = ",".join(symbols)
+    fresh = _QUOTE_CACHE["key"] == key and (time.time() - _QUOTE_CACHE["ts"]) < _QUOTE_TTL
+    if client is not None and symbols and not fresh and not _QUOTE_CACHE["loading"]:
+        _QUOTE_CACHE["loading"] = True
+
+        def _load():
+            try:
+                end = datetime.now(timezone.utc)
+                bars = client.bars_multi(symbols, (end - timedelta(days=370)).isoformat(),
+                                         end.isoformat(), timeframe="1Day")
+                out = {}
+                for sym, rows in bars.items():
+                    rows = [b for b in rows if b.get("close") is not None]
+                    if not rows:
+                        continue
+                    last, prev = rows[-1], (rows[-2] if len(rows) > 1 else rows[-1])
+                    highs = [b["high"] for b in rows if b.get("high") is not None]
+                    lows = [b["low"] for b in rows if b.get("low") is not None]
+                    out[sym] = {"last": last.get("close"), "open": last.get("open"),
+                                "high": last.get("high"), "low": last.get("low"),
+                                "volume": last.get("volume"), "prev_close": prev.get("close"),
+                                "wk52_high": max(highs) if highs else None,
+                                "wk52_low": min(lows) if lows else None}
+                _QUOTE_CACHE.update(data=out, ts=time.time(), key=key)
+            except Exception as exc:  # noqa: BLE001 — hover detail is best-effort; never break the page
+                log.warning("quotes fetch failed: %s", exc)
+            finally:
+                _QUOTE_CACHE["loading"] = False
+
+        threading.Thread(target=_load, name="quotes", daemon=True).start()
+    return _QUOTE_CACHE["data"]
+
+
 async def _monitor_loop(client, db_engine, interval: int, price_feed=None) -> None:
     """Every ``interval`` seconds: read Alpaca → write a snapshot (the Alpaca→Postgres bridge),
     and keep the live price feed subscribed to the current held book.
@@ -437,6 +479,14 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
             except Exception as exc:  # noqa: BLE001 — never break the panel on a fees read
                 log.warning("live fees read failed: %s", exc)
         return data.api_fees(db_engine)
+
+    @app.get("/api/quotes")
+    def quotes() -> dict:
+        """Per-symbol quote detail (day OHLCV, prior close, 52-week range) for the ticker hover-card.
+        Live-only + cached; empty when no client. The front-end overlays the live price."""
+        if client is None:
+            return {"quotes": {}}
+        return {"quotes": _quotes_map(client, _events_symbols(db_engine))}
 
     @app.get("/api/price_history")
     def price_history() -> dict:
