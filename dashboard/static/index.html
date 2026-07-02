@@ -127,21 +127,12 @@
             cursor: pointer; transition: all .15s var(--ease); }
   .subtab:hover { color: var(--fg); background: var(--panel-2); }
   .subtab.active { color: var(--fg); background: var(--panel-2); border-color: var(--line); }
-  .winbar { display: flex; align-items: center; gap: 6px; margin: 14px 0 2px; flex-wrap: wrap; }
-  .winbar .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-right: 4px; }
-  .winpill { background: transparent; color: var(--muted); border: 1px solid transparent;
-             border-radius: 6px; padding: 3px 10px; font: inherit; font-size: 11.5px; font-weight: 600;
-             cursor: pointer; transition: all .15s var(--ease); }
-  .winpill:hover { color: var(--fg); background: var(--panel-2); }
-  .winpill.active { color: var(--accent); background: var(--accent-dim); border-color: var(--line); }
   .alertbar { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
   .apill { background: transparent; color: var(--muted); border: 1px solid transparent;
            border-radius: 6px; padding: 3px 11px; font: inherit; font-size: 11.5px; font-weight: 600;
            text-transform: capitalize; cursor: pointer; transition: all .15s var(--ease); }
   .apill:hover { color: var(--fg); background: var(--panel-2); }
   .apill.on { color: var(--fg); background: var(--panel-2); border-color: var(--line); }
-  .windate { background: var(--panel-2); border: 1px solid var(--line); color: var(--fg-dim);
-             border-radius: 6px; padding: 2px 7px; font-family: var(--mono); font-size: 11px; }
   .topbar .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
   .etclock { font-family: var(--mono); font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums;
              white-space: nowrap; letter-spacing: .02em; }
@@ -445,91 +436,52 @@
       <button class="subtab" data-sub="attribution">Attribution</button>
       <button class="subtab" data-sub="execution">Execution</button>
     </div>
-    <div class="winbar" id="winbar" title="window the performance & risk views to a start date">
-      <span class="lbl">Window</span>
-      <button class="winpill" data-win="ALL">All</button>
-      <button class="winpill" data-win="1M">1M</button>
-      <button class="winpill" data-win="3M">3M</button>
-      <button class="winpill" data-win="YTD">YTD</button>
-      <input type="date" class="windate" id="windate" title="custom start date">
-    </div>
-    <div class="subview" id="sub-returns">
-      <div class="se-panel" id="trackempty" style="display:none;text-align:center;color:var(--muted);padding:38px 20px">
+    <!-- Returns -->
+    <div class="subview flexcol" id="sub-returns">
+      <div class="ovpanel" id="pr-empty" style="display:none"><div style="text-align:center;color:var(--muted);padding:38px 20px;font-size:12.5px;line-height:1.55">
         No live track record yet — this fills in automatically once the strategy starts trading and the
-        monitor records NAV snapshots. (It compares the paper book to SPY and covered-call ETF benchmarks.)
-      </div>
-      <div id="trackbody" style="display:none">
-        <div class="kpis" id="trackkpis"></div>
-        <div class="se-panel span2" style="margin-top:16px">
-          <h2>Growth since inception — strategy vs benchmarks <span class="panel-sub" id="tracksub"></span></h2>
-          <div class="spark-meta" id="tracklegend"></div>
-          <div id="trackchart"></div>
-        </div>
-        <div class="se-panel span2" style="margin-top:16px">
-          <h2>Monthly returns <span class="panel-sub" id="monthlysub">calendar of month-over-month paper returns</span></h2>
-          <div id="monthlyheat"></div>
-        </div>
-        <div class="se-panel" style="margin-top:16px">
-          <h2>Benchmark comparison <span class="panel-sub">paper, since go-live</span></h2>
-          <div class="body" id="trackbench"></div>
-          <div id="benchdesc"></div>
-        </div>
+        monitor records NAV snapshots. It compares the paper book to SPY and covered-call ETF benchmarks.</div></div>
+      <div id="pr-body" style="display:none;flex-direction:column;gap:14px">
+        <div id="pr-period"></div>
+        <div id="pr-calendar"></div>
+        <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:14px" class="pr-sa"><div id="pr-sharpe"></div><div id="pr-annual"></div></div>
+        <div id="pr-ribbon"></div>
+        <div id="pr-track"></div>
+        <div id="pr-bench"></div>
       </div>
     </div>
-    <div class="subview" id="sub-risk" style="display:none">
-      <div class="se-panel" id="riskempty" style="display:none;text-align:center;color:var(--muted);padding:38px 20px">
+    <!-- Risk -->
+    <div class="subview flexcol" id="sub-risk" style="display:none">
+      <div class="ovpanel" id="rk-empty" style="display:none"><div style="text-align:center;color:var(--muted);padding:38px 20px;font-size:12.5px;line-height:1.55">
         No risk history yet — this fills in automatically once the strategy starts trading and the
-        monitor records NAV snapshots. (Drawdown, volatility and VaR are derived from the equity curve.)
-      </div>
-      <div id="riskbody" style="display:none">
-        <div class="kpis" id="riskkpis"></div>
-        <div class="se-panel span2" style="margin-top:16px">
-          <h2>Drawdown <span class="panel-sub" id="ddsub"></span></h2>
-          <div id="ddchart"></div>
-        </div>
-        <div class="se-panel span2" style="margin-top:16px">
-          <h2>Rolling volatility <span class="panel-sub" id="rvsub"></span></h2>
-          <div id="rvchart"></div>
-        </div>
-        <div class="se-panel span2" style="margin-top:16px">
-          <h2 data-tip="Annualized Sharpe over a trailing window of daily returns — mean ÷ standard deviation, annualized. Reads as risk-adjusted return: above 0 the book is being paid for its risk. Jumpy on short windows, so near-flat stretches are dropped rather than spiking.">Rolling Sharpe <span class="panel-sub" id="rssub"></span></h2>
-          <div id="rschart"></div>
-        </div>
-        <div class="se-panel span2" style="margin-top:16px">
-          <h2>Daily return distribution <span class="panel-sub" id="distsub"></span></h2>
-          <div id="distchart"></div>
-        </div>
-        <div class="se-panel span2" style="margin-top:16px">
-          <h2>Risk contribution <span class="panel-sub" id="rcsub">share of portfolio risk per holding</span></h2>
-          <div class="body" id="riskcontrib"></div>
-        </div>
+        monitor records NAV snapshots. Drawdown, volatility and VaR are derived from the equity curve.</div></div>
+      <div id="rk-body" style="display:none;flex-direction:column;gap:14px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px" class="rk-cc"><div id="rk-contrib"></div><div id="rk-corr"></div></div>
+        <div id="rk-dist"></div>
+        <div id="rk-ribbon"></div>
+        <div id="rk-dd"></div>
+        <div id="rk-rv"></div>
       </div>
     </div>
-    <div class="subview" id="sub-attribution" style="display:none">
-      <div class="se-panel span2">
-        <h2 data-tip="Today's profit &amp; loss decomposed by holding: each name's contribution = its market value × today's return (change vs the prior close). The bars sum to the day's equity P&amp;L. Live — updates as prices move.">Today's P&amp;L by holding <span class="panel-sub" id="attrsub"></span></h2>
-        <div class="body" id="attrnames"></div>
+    <!-- Attribution (live P&L by holding / sector — an SFI extra beyond the mock) -->
+    <div class="subview flexcol" id="sub-attribution" style="display:none">
+      <div class="ovpanel">
+        <div class="ovhead"><span class="ovhk">Today's P&amp;L by holding</span><span class="ovhs" id="attrsub"></span></div>
+        <div style="padding:12px 16px" id="attrnames"></div>
       </div>
-      <div class="se-panel span2" style="margin-top:16px">
-        <h2 data-tip="The same day's P&amp;L rolled up by GICS sector — which parts of the book drove today's move.">By sector <span class="panel-sub" id="attrsecsub"></span></h2>
-        <div class="body" id="attrsectors"></div>
+      <div class="ovpanel">
+        <div class="ovhead"><span class="ovhk">By sector</span><span class="ovhs" id="attrsecsub"></span></div>
+        <div style="padding:12px 16px" id="attrsectors"></div>
       </div>
-      <div class="se-panel span2" style="margin-top:16px">
-        <div style="font-size:11.5px;color:var(--muted);line-height:1.55">
-          <div style="text-transform:uppercase;letter-spacing:.05em;font-size:10px;margin-bottom:5px">Coming next</div>
-          Since-inception source split (equity vs option premium) and factor-level attribution need per-name cost basis / factor P&amp;L the engine doesn't persist yet — tracked as a follow-up. This view is today's live equity P&amp;L.
-        </div>
-      </div>
+      <div class="ovpanel"><div style="padding:12px 16px;font-size:11.5px;color:var(--muted);line-height:1.55">
+        <div style="text-transform:uppercase;letter-spacing:.05em;font-size:10px;margin-bottom:5px;color:#8295ab">Coming next</div>
+        Since-inception source split (equity vs option premium) and factor-level attribution need per-name cost basis / factor P&amp;L the engine doesn't persist yet — tracked as a follow-up. This view is today's live equity P&amp;L.
+      </div></div>
     </div>
-    <div class="subview" id="sub-execution" style="display:none">
-      <div class="se-panel">
-        <h2>Execution quality / slippage <span class="panel-sub" id="slipsub"></span></h2>
-        <div class="body" id="slippage"></div>
-      </div>
-      <div class="se-panel" style="margin-top:16px">
-        <h2>Fees <span class="panel-sub" id="feesub"></span></h2>
-        <div class="body" id="fees"></div>
-      </div>
+    <!-- Execution -->
+    <div class="subview flexcol" id="sub-execution" style="display:none">
+      <div id="ex-slip"></div>
+      <div id="ex-fees"></div>
     </div>
   </div>
 </div>
@@ -661,45 +613,45 @@ const cssv = (n,f) => getComputedStyle(document.documentElement).getPropertyValu
 const BENCH_VAR = {SPY:"--spy", BXMD:"--purple", BXRD:"--sec-tech"};
 function bcol(sym,i){ const palette=["--spy","--purple","--sec-tech"]; return cssv(BENCH_VAR[sym]||palette[i%palette.length], "#8893a3"); }
 
-function trackChart(dates, series){
-  const W=720,H=240,pl=52,pr=14,pt=12,pb=24,pw=W-pl-pr,ph=H-pt-pb;
-  let all=[]; series.forEach(s=>s.data.forEach(v=>{ if(v!=null) all.push(v); }));
-  if(all.length<2) return '<div class="se-empty">one data point so far — the curve appears after a second day</div>';
-  let lo=Math.min(...all),hi=Math.max(...all); const pad=(hi-lo)*0.08||0.01; lo-=pad; hi+=pad;
-  const n=dates.length, sx=i=>pl+(n<=1?0:i/(n-1)*pw), sy=v=>pt+(hi===lo?0:(hi-v)/(hi-lo)*ph);
-  const grid=cssv('--grid','#16223a'), mut=cssv('--muted','#65758c');
-  let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" style="display:block">`;
-  for(let k=0;k<=4;k++){ const v=lo+(hi-lo)*k/4, y=sy(v).toFixed(1);
-    s+=`<line x1="${pl}" y1="${y}" x2="${W-pr}" y2="${y}" stroke="${grid}"/><text x="${pl-7}" y="${(+y+3.5).toFixed(1)}" text-anchor="end" font-size="11" fill="${mut}">${((v-1)*100).toFixed(0)}%</text>`; }
-  const step=Math.max(1,Math.round(n/6));
-  for(let i=0;i<n;i+=step){ s+=`<text x="${sx(i).toFixed(1)}" y="${H-7}" text-anchor="middle" font-size="11" fill="${mut}">${String(dates[i]).slice(5)}</text>`; }
-  series.forEach(se=>{ let p=""; se.data.forEach((v,i)=>{ if(v!=null) p+=(p?"L":"M")+sx(i).toFixed(1)+" "+sy(v).toFixed(1); });
-    s+=`<path d="${p}" fill="none" stroke="${se.color}" stroke-width="${se.w||2}" stroke-linejoin="round"/>`; });
-  return s+"</svg>";
-}
+// ---- Performance tab (built to the design mock: Returns / Risk / Execution) ----------------
+// Cache of the last payloads so the in-panel period tabs re-render without a refetch.
+let _perfTR=null, _perfSlip=null, _perfFees=null, _perfRisk=null, _perfSt=null, _perfRcx=null, _perfCorr=null;
+let _perfPeriod = "ITD";   // 1M | 3M | YTD | ITD — Period-performance selector (mock)
 
-// Performance window picker (per-browser): re-base the track record + risk to a chosen start.
-let perfWin = localStorage.getItem("perfWin") || "ALL";   // ALL | 1M | 3M | YTD | YYYY-MM-DD
-function winStart(w){
-  if(/^\d{4}-\d{2}-\d{2}$/.test(w)) return w;             // custom date passed straight through
-  const d = new Date();
-  if(w==="YTD") return `${d.getFullYear()}-01-01`;
-  if(w==="1M"){ d.setMonth(d.getMonth()-1); return d.toISOString().slice(0,10); }
-  if(w==="3M"){ d.setMonth(d.getMonth()-3); return d.toISOString().slice(0,10); }
-  return "";                                              // ALL → since inception
+// Stats of a normalized/NAV series, mirroring the backend's series_stats (client-side so the
+// period tabs can re-slice the since-inception curve without another round-trip).
+function statsOf(navs){
+  const n=(navs||[]).length;
+  if(n<2||!navs[0]) return {total:null,ann:null,vol:null,sharpe:null,mdd:0,n};
+  const rets=[]; for(let i=1;i<n;i++){ if(navs[i-1]) rets.push(navs[i]/navs[i-1]-1); }
+  const total=navs[n-1]/navs[0]-1;
+  const ann=rets.length?Math.pow(navs[n-1]/navs[0],252/rets.length)-1:null;
+  let vol=null,sharpe=null;
+  if(rets.length>1){ const m=rets.reduce((a,b)=>a+b,0)/rets.length;
+    const sd=Math.sqrt(rets.reduce((a,b)=>a+(b-m)*(b-m),0)/(rets.length-1)); vol=sd*Math.sqrt(252);
+    sharpe=(vol&&ann!=null)?ann/vol:null; }
+  let peak=navs[0],mdd=0; navs.forEach(v=>{ peak=Math.max(peak,v); if(peak) mdd=Math.min(mdd,v/peak-1); });
+  return {total,ann,vol,sharpe,mdd,n};
 }
+// Heatmap cell colour (green +, red −) with intensity scaled to ``sc`` — the mock's calendar/YTD shade.
+function heat(v,sc){ if(v==null) return "var(--panel-2)"; const t=Math.max(-1,Math.min(1,v/sc));
+  return t>=0?`rgba(95,176,136,${(0.1+t*0.55).toFixed(2)})`:`rgba(207,111,102,${(0.1-t*0.55).toFixed(2)})`; }
+
 async function loadPerformance(){
-  const start = winStart(perfWin), ws = start ? `?start=${start}` : "";
-  const [tr, slip, risk, st, fees, rcx] = await Promise.all(
-    [`/api/track_record${ws}`,"/api/slippage",`/api/risk${ws}`,"/api/state","/api/fees","/api/risk_contrib"].map(get));
+  // Growth + risk are "since inception" to match the mock (the in-panel period tabs window the
+  // Period-performance KPIs client-side); no separate window picker.
+  const [tr, slip, risk, st, fees, rcx, corr] = await Promise.all(
+    ["/api/track_record","/api/slippage","/api/risk","/api/state","/api/fees",
+     "/api/risk_contrib","/api/correlation"].map(get));
   lastFetch = Date.now(); tickFreshness();
+  _perfTR=tr; _perfSlip=slip; _perfFees=fees; _perfRisk=risk; _perfSt=st; _perfRcx=rcx; _perfCorr=corr;
   if(st){ pushPx(st); renderTape(st); }   // keep the pinned ticker tape fresh on the Performance tab
-  renderReturns(tr, slip, fees);   // Returns sub-view
-  renderRisk(risk, st);            // Risk sub-view
-  renderRiskContrib(rcx);          // Risk sub-view — per-name risk decomposition
-  renderAttribution(st);           // Attribution sub-view — today's P&L by holding / sector
-  renderExecution(slip, fees);     // Execution sub-view
+  renderReturns(tr, slip, fees, risk);   // Returns sub-view (period / calendar / sharpe / annual / ribbon / growth / bench)
+  renderRisk(risk, st, rcx, corr);       // Risk sub-view (contrib+corr / dist / ribbon / drawdown / rolling vol)
+  renderAttribution(st);                 // Attribution sub-view — today's P&L by holding / sector
+  renderExecution(slip, fees);           // Execution sub-view
 }
+function setPerfPeriod(p){ _perfPeriod=p; if(_perfTR) renderPeriodPanel(_perfTR, _perfRisk); }
 
 // Today's P&L attribution: each holding's dollar contribution to the day = market value × today's
 // return (day%). Exact intraday decomposition; the bars sum to the day's equity P&L. Rolled up by
@@ -764,280 +716,351 @@ function renderEvents(e){
   }).join("") + '</div>';
 }
 
-function renderReturns(tr, slip, fees){
-  if(!tr || !tr.available){ $("trackempty").style.display="block"; $("trackbody").style.display="none"; return; }
-  $("trackempty").style.display="none"; $("trackbody").style.display="block";
-  const star = tr.mature ? "" : "*";
-  $("trackkpis").innerHTML = [
-    kpi("Days live", fmt(tr.days), tr.inception),
-    kpi("Since inception", `<span class="${sgn(tr.total_return)}">${spct(tr.total_return)}</span>`, "paper, net of costs"),
-    kpi("Ann. return"+star, tr.mature?spct(tr.ann_return):"—", tr.mature?"annualized":"needs ≥10 days"),
-    kpi("Live Sharpe"+star, tr.mature&&tr.sharpe!=null?tr.sharpe.toFixed(2):"—", tr.mature?"annualized":"needs ≥10 days"),
-    kpi("Max drawdown", `<span class="${sgn(tr.max_drawdown)}">${pct(tr.max_drawdown)}</span>`, "since go-live"),
-    kpi("Premium collected", usd(tr.premium_collected), "covered calls"),
-    kpi("Avg slippage", slip&&slip.avg_slippage_bps!=null?slip.avg_slippage_bps.toFixed(1)+" bps":"—",
-        slip&&slip.n_fills?`${susd(-slip.total_slippage_usd)} vs mid`:"vs intended price"),
-    kpi("Fees paid", fees&&fees.total_usd?usd2(fees.total_usd):"—",
-        fees&&fees.n?Object.keys(fees.by_type).join(" · "):"CAT · TAF · SEC"),
+// ---- Returns sub-view (design mock: period / calendar / sharpe+annual / ribbon / growth / bench) --
+function renderReturns(tr, slip, fees, risk){
+  if(!tr || !tr.available){ $("pr-empty").style.display="block"; $("pr-body").style.display="none"; return; }
+  $("pr-empty").style.display="none"; $("pr-body").style.display="flex";
+  renderPeriodPanel(tr, risk);
+  $("pr-calendar").innerHTML = calHtml(tr.monthly);
+  $("pr-sharpe").innerHTML   = sharpeStripHtml(risk);
+  $("pr-annual").innerHTML   = annualHtml(tr);
+  renderReturnsRibbon(tr, slip);
+  renderReturnsTrack(tr);
+  renderBenchTable(tr);
+}
+
+// Slice the since-inception NAV curve to a period (1M/3M/YTD/ITD) — the mock's in-panel selector.
+function sliceNav(dates, navs, period){
+  if(period==="ITD" || !(dates||[]).length) return (navs||[]).slice();
+  const d=new Date(); let cut;
+  if(period==="YTD") cut=`${d.getFullYear()}-01-01`;
+  else { const c=new Date(d); c.setMonth(c.getMonth()-(period==="1M"?1:3)); cut=c.toISOString().slice(0,10); }
+  const out=[]; for(let i=0;i<dates.length;i++){ if(String(dates[i])>=cut) out.push(navs[i]); }
+  return out.length>=2?out:(navs||[]).slice(-2);
+}
+// Period-performance panel: 4 KPI cells (Return/Sharpe/Max-DD/Volatility) for the selected lookback
+// + a spark, computed client-side off the since-inception curve (mock's Period performance).
+function renderPeriodPanel(tr, risk){
+  const host=$("pr-period"); if(!host) return;
+  const slice=sliceNav(tr.dates, tr.nav, _perfPeriod), m=statsOf(slice), imm=slice.length<11;
+  const per=_perfPeriod;
+  const tabBtns=["1M","3M","YTD","ITD"].map(p=>`<button onclick="setPerfPeriod('${p}')" style="background:${p===per?'var(--panel-2)':'transparent'};border:0;border-radius:5px;padding:4px 13px;font:600 11px 'Space Grotesk';color:${p===per?'var(--fg)':'var(--muted)'};cursor:pointer">${p}</button>`).join("");
+  const kc=(label,val,color,sub)=>`<div style="background:var(--panel);padding:12px 16px"><div style="font:600 9px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">${label}</div><div style="font:500 21px var(--mono);margin-top:7px;color:${color};font-variant-numeric:tabular-nums">${val}</div><div style="font:400 10px var(--mono);margin-top:4px;color:var(--muted)">${sub}</div></div>`;
+  const cells=[
+    kc("Return", spct(m.total), m.total==null?'var(--fg)':(m.total>=0?'var(--green)':'var(--red)'), per+" · net"),
+    kc("Sharpe"+(imm?"*":""), m.sharpe!=null?m.sharpe.toFixed(2):"—", 'var(--fg)', imm?"needs ≥10 days":"annualized"),
+    kc("Max drawdown", pct(m.mdd), 'var(--red)', "peak-to-trough"),
+    kc("Volatility"+(imm?"*":""), m.vol!=null?pct(m.vol):"—", 'var(--fg)', imm?"needs ≥10 days":"annualized"),
   ].join("");
-
-  const primary=cssv('--accent','#46b8ad');   // strategy equity is the primary series → teal (SFI)
-  const series=[{name:"strategy", data:tr.norm, color:primary, w:2.4}];
-  const bsyms=Object.keys(tr.benchmarks||{});
-  bsyms.forEach((sym,i)=>series.push({name:sym, data:tr.benchmarks[sym].norm, color:bcol(sym,i), w:1.8}));
-  $("trackchart").innerHTML = trackChart(tr.dates, series);
-  $("tracklegend").innerHTML = series.map(s=>`<span style="display:inline-flex;align-items:center;gap:5px;margin-right:13px;font-size:12px;color:var(--muted)"><i style="width:13px;height:3px;border-radius:2px;background:${s.color};display:inline-block"></i>${s.name}</span>`).join("");
-  $("tracksub").textContent = `${tr.dates[0]} → ${tr.dates[tr.dates.length-1]}`;
-
-  const row=(name,m)=>`<tr><td>${name}</td><td class="${sgn(m.total_return)}">${spct(m.total_return)}</td>`+
-    `<td>${tr.mature&&m.ann_return!=null?spct(m.ann_return):"—"}</td><td>${m.ann_vol!=null?pct(m.ann_vol):"—"}</td>`+
-    `<td>${tr.mature&&m.sharpe!=null?m.sharpe.toFixed(2):"—"}</td><td class="${sgn(m.max_drawdown)}">${pct(m.max_drawdown)}</td></tr>`;
-  let bench=`<table class="se-table"><thead><tr><th>Series</th>`+
-    `<th data-tip="Total return since inception (paper, net of costs).">Return</th>`+
-    `<th data-tip="Annualized return — shown once ≥10 trading days of history accumulate.">Ann.</th>`+
-    `<th data-tip="Annualized volatility of daily returns.">Vol</th>`+
-    `<th data-tip="Annualized return ÷ annualized volatility.">Sharpe</th>`+
-    `<th data-tip="Largest peak-to-trough decline over the window.">MaxDD</th></tr></thead><tbody>`+
-    row("Strategy (this book)", tr) + bsyms.map(sym=>row(sym, tr.benchmarks[sym])).join("") + "</tbody></table>";
-  if(!tr.mature) bench += `<div class="se-empty" style="margin-top:8px">* Annualized return &amp; Sharpe appear once ≥10 trading days of live history accumulate (currently ${tr.days}).</div>`;
-  if(!bsyms.length) bench += `<div class="se-empty" style="margin-top:8px">Benchmarks unavailable (data feed offline) — retries on the next load.</div>`;
-  $("trackbench").innerHTML = bench;
-  $("benchdesc").innerHTML = bsyms.length
-    ? `<div style="font-size:11.5px;color:var(--muted);margin-top:12px;line-height:1.55">`
-      + `<div style="text-transform:uppercase;letter-spacing:.05em;font-size:10px;margin-bottom:5px">What these benchmarks are</div>`
-      + bsyms.map((sym,i)=>`<div style="margin-bottom:4px"><b style="color:${bcol(sym,i)}">${tr.benchmarks[sym].name||sym}</b> — ${tr.benchmarks[sym].desc||""}</div>`).join("")
-      + `</div>`
-    : "";
-
-  $("monthlyheat").innerHTML = monthlyHeatmap(tr.monthly);
-  const mret=(tr.monthly||[]).filter(c=>c.ret!=null);
-  $("monthlysub").textContent = mret.length
-    ? `${mret.length} month${mret.length>1?'s':''} · green = up, red = down · intensity scales with size · “·” = partial month`
-    : "calendar of month-over-month paper returns";
+  host.innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Period performance</span>`
+    +`<span style="display:inline-flex;background:var(--bg-2);border:1px solid var(--line);border-radius:8px;padding:2px">${tabBtns}</span></div>`
+    +`<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line-soft)">${cells}</div>`
+    +`<div style="padding:8px 10px 10px">${periodSparkSvg(slice)}</div></div>`;
+}
+function periodSparkSvg(navs){
+  const a=(navs||[]).filter(v=>v!=null);
+  if(a.length<2) return '<div class="se-empty" style="height:80px;display:flex;align-items:center;justify-content:center">appears after a second day</div>';
+  const W=500,H=80,p=4, d=sparkP(a,W,H,p), up=a[a.length-1]>=a[0], c=up?'#5fb088':'#cf6f66';
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="none" style="display:block;height:80px"><defs><linearGradient id="psg" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${c}" stop-opacity=".2"/><stop offset="1" stop-color="${c}" stop-opacity="0"/></linearGradient></defs><path d="${d} L${W-p} ${H-p} L${p} ${H-p} Z" fill="url(#psg)"/><path d="${d}" fill="none" stroke="${c}" stroke-width="1.8" stroke-linejoin="round"/></svg>`;
 }
 
-// Monthly-returns calendar heatmap: one row per year, one cell per month, coloured green/red
-// by sign with intensity scaling to the largest move (design language §8 — signed-P&L colours).
-function monthlyHeatmap(monthly){
+// Monthly-returns calendar (mock: 54px year · 12 months · YTD, green/red heat cells).
+function calHtml(monthly){
   const cells=(monthly||[]).filter(c=>c.ret!=null);
-  if(!cells.length) return '<div class="se-empty">monthly returns appear once a calendar month of live history accumulates</div>';
-  const byYear={}; let maxAbs=0;
-  (monthly||[]).forEach(c=>{ (byYear[c.year]||(byYear[c.year]={}))[c.month]=c;
-    if(c.ret!=null) maxAbs=Math.max(maxAbs, Math.abs(c.ret)); });
-  maxAbs=maxAbs||0.01;
-  const green=cssv('--green','#4bbf7b'), red=cssv('--red','#cf6f66');
-  const heatColor=r=>{ if(r==null) return "transparent";
-    const t=Math.min(1, Math.abs(r)/maxAbs), base=r>=0?green:red;
-    return `color-mix(in srgb, ${base} ${(14+t*66).toFixed(0)}%, transparent)`; };
-  const years=Object.keys(byYear).map(Number).sort();
-  let h='<table class="heat"><thead><tr><th></th>'+MON.map(m=>`<th>${m}</th>`).join('')+'<th class="yr">Year</th></tr></thead><tbody>';
-  years.forEach(y=>{
-    let comp=1, any=false, row='';
-    for(let m=1;m<=12;m++){ const c=byYear[y][m];
-      if(c && c.ret!=null){ comp*=(1+c.ret); any=true;
-        const prov = c.days<5 ? '<span class="heat-prov">·</span>' : '';
-        row+=`<td class="heat-c" style="background:${heatColor(c.ret)}" data-tip="${MON[m-1]} ${y}: ${spct(c.ret)} over ${c.days} trading day${c.days>1?'s':''}${c.days<5?' (partial month)':''}">${spct(c.ret,1)}${prov}</td>`;
-      } else row+='<td class="heat-c heat-empty"></td>'; }
-    const ytd=any?comp-1:null;
-    h+=`<tr><th>${y}</th>${row}<td class="heat-c heat-yr" style="background:${heatColor(ytd)}" data-tip="${y} compounded: ${spct(ytd)}">${ytd==null?'':spct(ytd,1)}</td></tr>`;
-  });
-  return h+'</tbody></table>';
+  const gc="54px repeat(12,1fr) 64px";
+  const body=(()=>{
+    if(!cells.length) return '<div class="se-empty">monthly returns appear once a calendar month of live history accumulates</div>';
+    const byYear={}; (monthly||[]).forEach(c=>{ (byYear[c.year]||(byYear[c.year]={}))[c.month]=c; });
+    const years=Object.keys(byYear).map(Number).sort();
+    let head=`<div style="display:grid;grid-template-columns:${gc};gap:3px;margin-bottom:3px"><span></span>`
+      +MON.map(m=>`<span style="text-align:center;font:600 9px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:var(--muted)">${m}</span>`).join("")
+      +`<span style="text-align:center;font:600 9px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:#8295ab">YTD</span></div>`;
+    const rows=years.map(y=>{
+      let ytd=1, any=false, cs="";
+      for(let m=1;m<=12;m++){ const c=byYear[y][m];
+        if(c && c.ret!=null){ ytd*=(1+c.ret); any=true;
+          const prov=c.days<5?'<span style="color:var(--muted)">·</span>':'';
+          cs+=`<div title="${MON[m-1]} ${y}: ${spct(c.ret)} · ${c.days}d${c.days<5?' partial':''}" style="height:38px;border-radius:4px;background:${heat(c.ret,0.06)};display:flex;align-items:center;justify-content:center;font:500 10.5px var(--mono);color:var(--fg)">${(c.ret*100).toFixed(1)}${prov}</div>`;
+        } else cs+='<div style="height:38px;border-radius:4px;background:#0c1626"></div>'; }
+      const yv=any?ytd-1:null;
+      return `<div style="display:grid;grid-template-columns:${gc};gap:3px;margin-bottom:3px"><span style="display:flex;align-items:center;font:600 12px var(--mono);color:var(--fg-dim)">${y}</span>${cs}<div style="height:38px;border-radius:4px;background:${heat(yv,0.3)};display:flex;align-items:center;justify-content:center;font:600 11px var(--mono);color:var(--fg);border:1px solid var(--line)">${yv==null?'':(yv*100).toFixed(1)+'%'}</div></div>`;
+    }).join("");
+    return `<div>${head}${rows}</div>`;
+  })();
+  const sub=cells.length?`${cells.length} month${cells.length>1?'s':''} · green up / red down · “·” partial`:"% per month · net";
+  return ovPanel("Monthly returns", sub, body, "13px 16px");
 }
 
+// Rolling Sharpe strip (mock: target band 1.0–1.5) fed the real rolling-Sharpe series.
+function sharpeStripHtml(risk){
+  const arr=(risk&&risk.rolling_sharpe)||[], win=(risk&&risk.rolling_window)||10;
+  const idx=[]; arr.forEach((v,i)=>{ if(v!=null) idx.push(i); });
+  const body=(()=>{
+    if(idx.length<2) return `<div class="se-empty" style="height:200px;display:flex;align-items:center;justify-content:center;text-align:center">rolling Sharpe appears once a ${win}-day window accumulates (needs ≥10 days of history)</div>`;
+    const vals=idx.map(i=>arr[i]);
+    const W=508,H=232,pl=34,pr=12,pt=14,pb=26,pw=W-pl-pr,ph=H-pt-pb;
+    const hi=Math.max(2,...vals), lo=Math.min(0,...vals);
+    const X=k=>pl+(idx.length<=1?0:k/(idx.length-1)*pw), Y=v=>pt+(hi-v)/(hi-lo)*ph;
+    const grid=cssv('--grid','#16223a'),mut=cssv('--muted','#65758c'),acc=cssv('--accent','#46b8ad');
+    let g=`<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;height:232px">`;
+    g+=`<rect x="${pl}" y="${Y(1.5).toFixed(1)}" width="${pw}" height="${(Y(1.0)-Y(1.5)).toFixed(1)}" fill="rgba(70,184,173,.07)"/>`;
+    [0,0.5,1,1.5,2].forEach(v=>{ if(v>hi||v<lo) return; const y=Y(v).toFixed(1); g+=`<line x1="${pl}" y1="${y}" x2="${W-pr}" y2="${y}" stroke="${grid}"/><text x="${pl-6}" y="${(+y+3).toFixed(1)}" text-anchor="end" font-size="9" fill="${mut}" font-family="IBM Plex Mono">${v.toFixed(1)}</text>`; });
+    if(1>=lo && 1<=hi){ const y1=Y(1).toFixed(1); g+=`<line x1="${pl}" y1="${y1}" x2="${W-pr}" y2="${y1}" stroke="${acc}" stroke-dasharray="3 3" stroke-opacity=".5"/>`; }
+    const d=vals.map((v,k)=>(k?"L":"M")+X(k).toFixed(1)+" "+Y(v).toFixed(1)).join(" ");
+    g+=`<path d="${d}" fill="none" stroke="${acc}" stroke-width="1.8" stroke-linejoin="round"/><circle cx="${X(idx.length-1).toFixed(1)}" cy="${Y(vals[vals.length-1]).toFixed(1)}" r="3" fill="${acc}"/></svg>`;
+    const cur=`<div style="display:flex;align-items:baseline;gap:8px;padding:0 2px 8px"><span style="font:500 22px var(--mono);color:var(--fg)">${vals[vals.length-1].toFixed(2)}</span><span style="font:400 10.5px 'Space Grotesk';color:var(--muted)">rolling ${win}-day · target band 1.0–1.5</span></div>`;
+    return cur+g;
+  })();
+  return ovPanel("Rolling Sharpe","annualized", body, "12px 14px 10px");
+}
+
+// Per-calendar-year returns from a daily series (chained off the prior year-end).
+function annualRets(dates, series){
+  const byY={}; (dates||[]).forEach((d,i)=>{ const y=String(d).slice(0,4); (byY[y]||(byY[y]=[])).push(series[i]); });
+  const years=Object.keys(byY).sort(); const out=[]; let prevEnd=null;
+  years.forEach(y=>{ const v=byY[y], base=prevEnd!=null?prevEnd:v[0]; out.push({y:+y, r:base?v[v.length-1]/base-1:null}); prevEnd=v[v.length-1]; });
+  return out;
+}
+// Annual bars: strategy vs SPY (mock annualHtml), from the real curves.
+function annualHtml(tr){
+  const sp=(tr.benchmarks&&tr.benchmarks.SPY)?tr.benchmarks.SPY.norm:null;
+  const sa=annualRets(tr.dates, tr.nav), spm={}; (sp?annualRets(tr.dates, sp):[]).forEach(x=>spm[x.y]=x.r);
+  const A=sa.map(x=>({y:x.y, strat:x.r, spy:spm[x.y]}));
+  const body=(()=>{
+    if(!A.length) return '<div class="se-empty" style="height:270px;display:flex;align-items:center;justify-content:center;text-align:center">annual returns appear once a full year of history accumulates</div>';
+    const W=508,H=270,pl=34,pr=10,pt=12,pb=40,pw=W-pl-pr,ph=H-pt-pb;
+    const all=A.flatMap(a=>[a.strat||0,a.spy||0]); const hi=Math.max(0.05,...all), lo=Math.min(-0.05,...all);
+    const Y=v=>pt+(hi-v)/(hi-lo)*ph, gw=pw/A.length, bw=Math.min(gw*0.32,40);
+    const grid=cssv('--grid','#16223a'),mut=cssv('--muted','#65758c');
+    let g=`<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;height:270px">`;
+    [hi,(hi+lo)/2,0,lo].forEach(v=>{ const y=Y(v).toFixed(1); g+=`<line x1="${pl}" y1="${y}" x2="${W-pr}" y2="${y}" stroke="${grid}"/><text x="${pl-6}" y="${(+y+3).toFixed(1)}" text-anchor="end" font-size="9" fill="${mut}" font-family="IBM Plex Mono">${(v*100).toFixed(0)}</text>`; });
+    const y0=Y(0);
+    A.forEach((a,i)=>{ const cx=pl+gw*i+gw/2;
+      [[a.strat||0,'#46b8ad',-1],[a.spy||0,'#5a6781',1]].forEach(arr=>{ const v=arr[0],c=arr[1],s=arr[2]; const x=cx+s*bw/2-bw/2, yy=Y(v), top=Math.min(yy,y0), hh=Math.abs(yy-y0); g+=`<rect x="${x.toFixed(1)}" y="${top.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1,hh).toFixed(1)}" rx="1.5" fill="${c}"/>`; });
+      g+=`<text x="${cx.toFixed(1)}" y="${H-22}" text-anchor="middle" font-size="9" fill="${mut}" font-family="IBM Plex Mono">'${String(a.y).slice(2)}</text>`; });
+    g+="</svg>";
+    const leg=`<div style="display:flex;gap:16px;justify-content:center;padding-top:2px"><span style="display:inline-flex;align-items:center;gap:6px;font:400 10.5px 'Space Grotesk';color:var(--fg-dim)"><span style="width:12px;height:3px;background:#46b8ad;border-radius:2px"></span>Strategy</span><span style="display:inline-flex;align-items:center;gap:6px;font:400 10.5px 'Space Grotesk';color:#aab4c3"><span style="width:12px;height:3px;background:#5a6781;border-radius:2px"></span>SPY</span></div>`;
+    return g+leg;
+  })();
+  return ovPanel("Annual returns","strategy vs SPY", body, "12px 14px 12px");
+}
+
+// 6-col ribbon (mock): Days live · Since inception · Ann return · Live Sharpe · Premium · Avg slippage.
+function renderReturnsRibbon(tr, slip){
+  const star=tr.mature?"":"*";
+  const avgBps=slip&&slip.avg_slippage_bps!=null?(slip.avg_slippage_bps>0?"+":"")+slip.avg_slippage_bps.toFixed(1)+" bps":"—";
+  const cells=[
+    kpiCell("Days live", fmt(tr.days), "since "+(tr.inception||"—")),
+    kpiCell("Since inception", spct(tr.total_return), "paper, net of costs", {valColor:tr.total_return==null?'var(--fg)':(tr.total_return>=0?'var(--green)':'var(--red)')}),
+    kpiCell("Ann. return"+star, tr.mature?spct(tr.ann_return):"—", tr.mature?"annualized":"needs ≥10 days"),
+    kpiCell("Live Sharpe"+star, tr.mature&&tr.sharpe!=null?tr.sharpe.toFixed(2):"—", tr.mature?"annualized":"needs ≥10 days"),
+    kpiCell("Premium collected", usd(tr.premium_collected), "covered calls"),
+    kpiCell("Avg slippage", avgBps, "vs intended price"),
+  ].join("");
+  $("pr-ribbon").innerHTML=`<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden">${cells}</div>`;
+}
+
+// Growth chart (mock multiLine) — strategy teal + benchmarks neutral/purple/blue.
+function perfMultiLine(dates, series){
+  let all=[]; series.forEach(se=>se.data.forEach(v=>{ if(v!=null) all.push(v); }));
+  if(all.length<2) return '<div class="se-empty">one data point so far — the curve appears after a second day</div>';
+  const W=1160,H=260,pl=58,pr=16,pt=14,pb=28,pw=W-pl-pr,ph=H-pt-pb;
+  let lo=Math.min(...all),hi=Math.max(...all); const pad=(hi-lo)*0.1||0.01; lo-=pad; hi+=pad;
+  const n=dates.length,X=i=>pl+(n<=1?0:i/(n-1)*pw),Y=v=>pt+(hi-v)/(hi-lo)*ph;
+  const grid=cssv('--grid','#16223a'),mut=cssv('--muted','#65758c'),ML="font-family:var(--mono)";
+  let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="none" style="display:block;height:260px">`;
+  for(let k=0;k<=4;k++){ const v=lo+(hi-lo)*k/4,y=Y(v).toFixed(1); s+=`<line x1="${pl}" y1="${y}" x2="${W-pr}" y2="${y}" stroke="${grid}"/><text x="${pl-8}" y="${(+y+3.5).toFixed(1)}" text-anchor="end" font-size="11" fill="${mut}" style="${ML}">${((v-1)*100).toFixed(0)}%</text>`; }
+  const step=Math.max(1,Math.round(n/7));
+  for(let i=0;i<n;i+=step) s+=`<text x="${X(i).toFixed(1)}" y="${H-9}" text-anchor="middle" font-size="10.5" fill="${mut}" style="${ML}">${String(dates[i]).slice(5)}</text>`;
+  series.forEach(se=>{ let p=""; se.data.forEach((v,i)=>{ if(v!=null) p+=(p?"L":"M")+X(i).toFixed(1)+" "+Y(v).toFixed(1); }); s+=`<path d="${p}" fill="none" stroke="${se.color}" stroke-width="${se.w||1.6}" stroke-linejoin="round"/>`; });
+  return s+"</svg>";
+}
+function renderReturnsTrack(tr){
+  const series=[{data:tr.norm,color:cssv('--accent','#46b8ad'),w:2.2,name:"Strategy"}];
+  const bsyms=Object.keys(tr.benchmarks||{});
+  bsyms.forEach((sym,i)=>series.push({data:tr.benchmarks[sym].norm,color:bcol(sym,i),w:1.6,name:sym}));
+  const legend=series.map(s=>`<span style="display:inline-flex;align-items:center;gap:6px;font:400 11.5px 'Space Grotesk';color:var(--fg-dim)"><span style="width:14px;height:3px;border-radius:2px;background:${s.color}"></span>${s.name}</span>`).join("");
+  $("pr-track").innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Growth since inception — strategy vs benchmarks</span><span class="ovhs">${tr.dates[0]} → ${tr.dates[tr.dates.length-1]}</span></div><div style="display:flex;gap:18px;padding:11px 18px 2px;flex-wrap:wrap">${legend}</div><div style="padding:6px 8px 10px">${perfMultiLine(tr.dates,series)}</div></div>`;
+}
+// Benchmark comparison table (mock grid) + descriptions.
+function renderBenchTable(tr){
+  const bsyms=Object.keys(tr.benchmarks||{}), gc="1.6fr .8fr .8fr .8fr .8fr .8fr";
+  const head=`<div style="display:grid;grid-template-columns:${gc};gap:10px;padding:8px 16px;font:600 9.5px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Series</span><span style="text-align:right">Return</span><span style="text-align:right">Ann.</span><span style="text-align:right">Vol</span><span style="text-align:right">Sharpe</span><span style="text-align:right">Max DD</span></div>`;
+  const rowH=(name,swatch,m)=>`<div style="display:grid;grid-template-columns:${gc};gap:10px;align-items:center;padding:9px 16px;border-bottom:1px solid var(--line-soft)"><span style="display:flex;align-items:center;gap:9px;font:500 12.5px 'Space Grotesk';color:var(--fg)"><span style="width:10px;height:3px;border-radius:2px;background:${swatch};flex:none"></span>${name}</span><span style="text-align:right;font:500 12px var(--mono);color:${m.total_return==null?'var(--fg)':(m.total_return>=0?'var(--green)':'var(--red)')}">${spct(m.total_return)}</span><span style="text-align:right;font:400 12px var(--mono);color:var(--fg-dim)">${tr.mature&&m.ann_return!=null?spct(m.ann_return):"—"}</span><span style="text-align:right;font:400 12px var(--mono);color:var(--fg-dim)">${m.ann_vol!=null?pct(m.ann_vol):"—"}</span><span style="text-align:right;font:400 12px var(--mono);color:var(--fg-dim)">${tr.mature&&m.sharpe!=null?m.sharpe.toFixed(2):"—"}</span><span style="text-align:right;font:400 12px var(--mono);color:${m.max_drawdown==null?'var(--fg-dim)':'var(--red)'}">${pct(m.max_drawdown)}</span></div>`;
+  let rows=rowH("Strategy (this book)", cssv('--accent','#46b8ad'), tr);
+  bsyms.forEach((sym,i)=>rows+=rowH(tr.benchmarks[sym].name||sym, bcol(sym,i), tr.benchmarks[sym]));
+  let note="";
+  if(!tr.mature) note+=`<div style="padding:8px 16px 0;font:400 11px var(--mono);color:var(--muted)">* Annualized return &amp; Sharpe appear once ≥10 trading days accumulate (currently ${tr.days}).</div>`;
+  if(!bsyms.length) note+=`<div style="padding:8px 16px 0;font:400 11px var(--mono);color:var(--muted)">Benchmarks unavailable (data feed offline) — retries next load.</div>`;
+  let desc="";
+  if(bsyms.length){ desc=`<div style="padding:12px 16px 14px"><div style="font:500 10px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:7px">What these benchmarks are</div>`
+    +bsyms.map((sym,i)=>`<div style="font:400 11.5px/1.55 'Space Grotesk';color:var(--muted);margin-bottom:4px"><b style="color:${bcol(sym,i)};font-weight:600">${tr.benchmarks[sym].name||sym}</b> — ${tr.benchmarks[sym].desc||""}</div>`).join("")+`</div>`; }
+  $("pr-bench").innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Benchmark comparison</span><span class="ovhs">paper, since go-live</span></div>${head}${rows}${note}${desc}</div>`;
+}
+
+// ---- Execution sub-view (mock: slippage grid) + fees (SFI extra) ----------------
 function renderExecution(slip, fees){
+  const gc="2fr .6fr .7fr 1fr 1fr .9fr .9fr";
+  let slipBody;
   if(slip && slip.n_fills){
-    $("slipsub").textContent = `${slip.n_fills} filled orders · positive bps = paid up vs reference (limit, or arrival mid for market)`;
-    $("slippage").innerHTML = table(slip.fills, [
-      {h:"Symbol", cls:()=>"sym", f:r=>symCell(r.symbol)}, {h:"Side", tip:"Buy or sell.", f:r=>r.side},
-      {h:"Type", tip:"Order type. Market fills are judged against the arrival NBBO mid at submit; limit fills against their limit price.", f:r=>r.type||"—"},
-      {h:"Qty", tip:"Filled quantity.", f:r=>fmt(r.qty)},
-      {h:"Reference", tip:"The price each fill is judged against: the order's limit (limit orders) or the arrival NBBO mid at submit time (market orders).", f:r=>usd2(r.intended)},
-      {h:"Filled", tip:"Actual average fill price.", f:r=>usd2(r.filled)},
-      {h:"Slippage", tip:"Fill vs reference, in basis points. Positive = paid up (adverse); negative = price improvement.",
-        f:r=>`<span class="${r.slippage_bps>0?'neg':'pos'}">${r.slippage_bps>0?'+':''}${r.slippage_bps} bps</span>`},
-      {h:"Cost", tip:"Execution P&L vs the reference price, to the cent — green/positive = price improvement, red/negative = paid up.",
-        f:r=>`<span class="${r.slippage_usd>0?'neg':'pos'}">${susd2(-r.slippage_usd)}</span>`},
+    const head=`<div style="display:grid;grid-template-columns:${gc};gap:10px;padding:8px 16px;font:600 9.5px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Instrument</span><span>Side</span><span style="text-align:right">Qty</span><span style="text-align:right">Intended</span><span style="text-align:right">Filled</span><span style="text-align:right">Slippage</span><span style="text-align:right">Cost</span></div>`;
+    const rows=slip.fills.map(r=>{ const bpsPos=r.slippage_bps>0, costPos=r.slippage_usd>0;
+      const ref=REF[String(r.symbol).toUpperCase()]||{}, sec=ref.sector, nm=ref.name||r.symbol;
+      return `<div style="display:grid;grid-template-columns:${gc};gap:10px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--line-soft)">`
+        +`<span style="display:flex;align-items:center;gap:10px;min-width:0" data-tip="${esc(r.type?('order type: '+r.type):'')}">${tkrChip(r.symbol,sec)}<span style="font:500 12px 'Space Grotesk';color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${nm}</span></span>`
+        +`<span style="font:400 11px 'Space Grotesk';color:var(--muted);text-transform:uppercase">${r.side}</span>`
+        +`<span style="text-align:right;font:400 12px var(--mono);color:var(--fg-dim)">${fmt(r.qty)}</span>`
+        +`<span style="text-align:right;font:400 12px var(--mono);color:var(--fg-dim)">${usd2(r.intended)}</span>`
+        +`<span style="text-align:right;font:400 12px var(--mono);color:var(--fg)">${usd2(r.filled)}</span>`
+        +`<span style="text-align:right;font:500 12px var(--mono);color:${bpsPos?'var(--red)':'var(--green)'}">${bpsPos?'+':''}${r.slippage_bps} bps</span>`
+        +`<span style="text-align:right;font:500 12px var(--mono);color:${costPos?'var(--red)':'var(--green)'}">${susd2(-r.slippage_usd)}</span></div>`; }).join("");
+    slipBody=head+rows;
+  } else {
+    slipBody='<div class="se-empty" style="padding:20px 16px">No filled orders yet — this compares each fill to its reference price (the order’s limit, or the arrival mid for market orders) once there’s trading activity.</div>';
+  }
+  const slipSub=slip&&slip.n_fills?`${slip.n_fills} filled order${slip.n_fills>1?'s':''} · +bps = paid up vs reference`:"vs intended price";
+  $("ex-slip").innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Execution quality / slippage</span><span class="ovhs">${slipSub}</span></div>${slipBody}</div>`;
+
+  // Fees: regulatory / broker charges (CAT, TAF, SEC, …) from Alpaca activities — an SFI extra.
+  const allIn=(fees&&fees.total_usd||0)+(slip&&slip.total_slippage_usd>0?slip.total_slippage_usd:0);
+  let feeBody, feeSub;
+  if(fees && fees.n){
+    feeSub=`${usd2(fees.total_usd)} total · ${fees.n} charge${fees.n>1?'s':''} · all-in ${usd2(allIn)}`;
+    const chips=Object.entries(fees.by_type).map(([t,v])=>`<span title="${t} fees" style="display:inline-flex;align-items:center;gap:6px;padding:3px 9px;background:var(--panel-2);border:1px solid var(--line);border-radius:var(--r-sm);font-size:11px;color:var(--muted)">${t} <b style="color:var(--fg);font-family:var(--mono)">${usd2(v)}</b></span>`).join("");
+    feeBody=`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">${chips}</div>`+table(fees.items,[
+      {h:"Date", tip:"When the fee was booked (Alpaca books fees the morning after the trade).", f:r=>r.date||"—"},
+      {h:"Type", tip:"CAT = Consolidated Audit Trail · TAF = FINRA Trading Activity Fee · REG/SEC = Section 31.", f:r=>r.type},
+      {h:"Amount", tip:"Fee charged (a debit to the account).", f:r=>`<span class="neg">-${usd2(r.amount)}</span>`},
+      {h:"Description", cls:()=>"mut", f:r=>r.description||"—"},
     ]);
   } else {
-    $("slippage").innerHTML = '<div class="se-empty">No filled orders yet — this compares each fill to its reference price (the order\'s limit, or the arrival mid for market orders) once there\'s trading activity.</div>';
+    feeSub=""; feeBody='<div class="se-empty" style="padding:20px 16px">No fees yet. Regulatory fees (CAT, TAF, SEC Section 31) appear here the morning after a trade — tiny (often rounded to $0.01) but real, and already in NAV.</div>';
   }
-
-  // Fees: regulatory / broker charges (CAT, TAF, SEC, …) from Alpaca activities.
-  const allIn = (fees&&fees.total_usd||0) + (slip&&slip.total_slippage_usd>0?slip.total_slippage_usd:0);
-  if(fees && fees.n){
-    $("feesub").textContent = `${usd2(fees.total_usd)} total · ${fees.n} charge${fees.n>1?'s':''} · all-in execution cost ${usd2(allIn)}`;
-    const chips = Object.entries(fees.by_type)
-      .map(([t,v])=>`<span title="${t} fees" style="display:inline-flex;align-items:center;gap:6px;padding:3px 9px;background:var(--panel-2);border:1px solid var(--line);border-radius:var(--r-sm);font-size:11px;color:var(--muted)">${t} <b style="color:var(--fg);font-family:var(--mono)">${usd2(v)}</b></span>`).join("");
-    $("fees").innerHTML =
-      `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">${chips}</div>` +
-      table(fees.items, [
-        {h:"Date", tip:"When the fee was booked (Alpaca books fees the morning after the trade).", f:r=>r.date||"—"},
-        {h:"Type", tip:"CAT = Consolidated Audit Trail · TAF = FINRA Trading Activity Fee · REG/SEC = Section 31.", f:r=>r.type},
-        {h:"Amount", tip:"Fee charged (a debit to the account).", f:r=>`<span class="neg">-${usd2(r.amount)}</span>`},
-        {h:"Description", cls:()=>"mut", f:r=>r.description||"—"},
-      ]);
-  } else {
-    $("feesub").textContent = "";
-    $("fees").innerHTML = '<div class="se-empty">No fees yet. Regulatory fees (CAT, TAF, SEC Section 31) appear here the morning after a trade — they\'re tiny (often rounded up to $0.01) but real, and already reflected in NAV.</div>';
-  }
+  $("ex-fees").innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Fees</span><span class="ovhs">${feeSub}</span></div><div style="padding:12px 16px">${feeBody}</div></div>`;
 }
 
-// ---- Risk sub-view: drawdown / volatility / VaR / leverage ----------------
-function renderRisk(risk, st){
-  if(!risk || !risk.available){ $("riskempty").style.display="block"; $("riskbody").style.display="none"; return; }
-  $("riskempty").style.display="none"; $("riskbody").style.display="block";
-  const star = risk.mature ? "" : "*";
-  const lev = st ? st.leverage : null, cap = META.leverage_cap||2.0, over = lev!=null && lev>cap+1e-9;
-  const dci = risk.days_in_drawdown||0;
-  const ddSub = dci>0 ? `${dci} day${dci>1?'s':''} below high-water mark` : "at a new high";
-  const varTip = `Parametric 1-day Value-at-Risk: with 95% confidence the one-day loss stays under this `+
-    `(≈ 1.65 × daily σ). Empirical 5th-pct VaR ${pct(risk.hist_var95_1d_pct)} · expected shortfall (CVaR) ${pct(risk.cvar95_1d_pct)}.`;
-  $("riskkpis").innerHTML = [
-    kpi("Max drawdown", `<span class="${sgn(risk.max_drawdown)}">${pct(risk.max_drawdown)}</span>`,
-        `worst, on ${String(risk.max_drawdown_date).slice(5)}`,
-        "Largest peak-to-trough decline of account equity since inception."),
-    kpi("Current drawdown", `<span class="${risk.current_drawdown<-1e-9?'neg':'mut'}">${pct(risk.current_drawdown)}</span>`, ddSub,
-        "How far below the running high-water mark the book sits right now."),
-    kpi("Volatility"+star, risk.mature&&risk.ann_vol!=null?pct(risk.ann_vol):"—",
-        risk.daily_vol!=null?`${pct(risk.daily_vol,2)} / day`:"needs ≥10 days",
-        "Annualized standard deviation of daily returns (the per-day figure is in the sub-line)."),
-    kpi("1-day VaR (95%)", risk.var95_1d_pct!=null?`<span class="neg">−${pct(risk.var95_1d_pct)}</span>`:"—",
-        risk.var95_1d_usd!=null?`≈ ${usd(risk.var95_1d_usd)} at today's NAV`:"parametric", varTip),
-    kpi("Live Sharpe"+star, risk.mature&&risk.sharpe!=null?risk.sharpe.toFixed(2):"—",
-        risk.mature?"annualized, since go-live":"needs ≥10 days",
-        "Annualized return ÷ annualized volatility since inception."),
-    `<div class="se-kpi kpi-lev" data-tip="Gross equity exposure ÷ account equity, against the risk-gate cap."><div class="label">Leverage</div>
-       <div class="val ${over?'neg':''}">${lev==null?"–":lev.toFixed(2)+"×"}</div>
-       <div class="gauge ${over?'over':''}"><i style="width:${lev==null?0:Math.min(100,lev/cap*100).toFixed(0)}%"></i></div>
-       <div class="sub">cap ${cap.toFixed(1)}× · gross ${usd(st?st.gross_exposure:null)}</div></div>`,
+// ---- Risk sub-view (mock: contrib+corr / distribution / ribbon / drawdown / rolling vol) --------
+function renderRisk(risk, st, rcx, corr){
+  if(!risk || !risk.available){ $("rk-empty").style.display="block"; $("rk-body").style.display="none"; return; }
+  $("rk-empty").style.display="none"; $("rk-body").style.display="flex";
+  $("rk-contrib").innerHTML = riskcHtml(rcx);
+  $("rk-corr").innerHTML    = corrHtml(corr);
+  $("rk-dist").innerHTML    = distHtml(risk);
+  renderRiskRibbon(risk, st);
+  $("rk-dd").innerHTML = underwaterHtml(risk);
+  $("rk-rv").innerHTML = rollVolHtml(risk);
+}
+
+// Risk contribution (mock riskcHtml): each holding's share of portfolio variance as a sector-tinted bar.
+function riskcHtml(rcx){
+  const body=(()=>{
+    if(!rcx || !rcx.available || !(rcx.names||[]).length) return '<div class="se-empty">Risk contribution appears after the next rebalance — the engine records each holding’s share of portfolio variance (from the covariance matrix) each rebalance.</div>';
+    const mx=Math.max(...rcx.names.map(r=>r.rc_pct),0.01);
+    return rcx.names.map(r=>{ const c=secColor((REF[String(r.symbol).toUpperCase()]||{}).sector);
+      const rw=r.weight?r.rc_pct/r.weight:null, tip=`risk ${pct(r.rc_pct)} · weight ${pct(r.weight)}${rw!=null?` · ${rw.toFixed(2)}× risk/wt`:""}`;
+      return `<div title="${esc(tip)}" style="display:grid;grid-template-columns:54px 1fr 46px;gap:10px;align-items:center;padding:6px 0"><span style="font:600 11px var(--mono);color:var(--fg-dim)">${r.symbol}</span><span style="height:14px;border-radius:3px;background:#0c1626;overflow:hidden;display:block"><span style="display:block;height:100%;width:${(r.rc_pct/mx*100).toFixed(1)}%;background:${c};border-radius:3px"></span></span><span style="text-align:right;font:500 11px var(--mono);color:#aab4c3">${(r.rc_pct*100).toFixed(1)}%</span></div>`; }).join("");
+  })();
+  const sub=(rcx&&rcx.portfolio_vol!=null)?`vol ${pct(rcx.portfolio_vol)} · as of ${String(rcx.ts).slice(0,10)}`:"% of portfolio variance";
+  return ovPanel("Risk contribution", sub, body, "10px 15px 12px");
+}
+
+// Correlation matrix (mock corrHtml): pairwise trailing-60d return correlation heatmap.
+function corrHtml(corr){
+  const body=(()=>{
+    if(!corr || !corr.available || !(corr.symbols||[]).length) return '<div class="se-empty" style="min-height:130px;display:flex;align-items:center;justify-content:center;text-align:center">correlation appears once the market-data feed returns enough daily history for the held names</div>';
+    const syms=corr.symbols, n=syms.length, W=508, cell=(W-70)/n, H=70+cell*n, lab="#8295ab";
+    let g=`<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;height:${H}px">`;
+    syms.forEach((s,i)=>{ g+=`<text x="${(64+cell*i+cell/2).toFixed(1)}" y="14" text-anchor="middle" font-size="9.5" fill="${lab}" font-family="IBM Plex Mono">${s}</text><text x="58" y="${(26+cell*i+cell/2+3).toFixed(1)}" text-anchor="end" font-size="9.5" fill="${lab}" font-family="IBM Plex Mono">${s}</text>`; });
+    for(let i=0;i<n;i++)for(let j=0;j<n;j++){ const c=corr.matrix[i][j], x=64+cell*j, y=22+cell*i;
+      if(c==null){ g+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(cell-2).toFixed(1)}" height="${(cell-2).toFixed(1)}" rx="2" fill="none" stroke="#1b2740" stroke-dasharray="2 2"/>`; continue; }
+      const col=c>=0?`rgba(70,184,173,${(0.06+c*0.6).toFixed(2)})`:`rgba(207,111,102,${(0.06-c*0.5).toFixed(2)})`;
+      g+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(cell-2).toFixed(1)}" height="${(cell-2).toFixed(1)}" rx="2" fill="${col}"/>`;
+      if(cell>40) g+=`<text x="${(x+cell/2-1).toFixed(1)}" y="${(y+cell/2+2).toFixed(1)}" text-anchor="middle" font-size="9" fill="${Math.abs(c)>0.5?'#eaf2fb':lab}" font-family="IBM Plex Mono">${c.toFixed(2)}</text>`; }
+    return g+"</svg>";
+  })();
+  const sub=(corr&&corr.available)?`pairwise · trailing ${corr.window||60}d`:"pairwise · trailing 60d";
+  return ovPanel("Correlation", sub, body, "12px 14px");
+}
+
+// Daily-return distribution (mock distHtml): histogram, VaR line, mean marker.
+function distHtml(risk){
+  const a=(risk&&risk.returns||[]).filter(v=>v!=null);
+  const body=(()=>{
+    if(a.length<3) return '<div class="se-empty" style="height:250px;display:flex;align-items:center;justify-content:center">the return distribution appears once a few days of history accumulate</div>';
+    const W=508,H=250,pl=12,pr=12,pt=14,pb=34,pw=W-pl-pr,ph=H-pt-pb;
+    let lo=Math.min(...a), hi=Math.max(...a); const spanv=Math.max(hi-lo,0.001); lo-=spanv*0.06; hi+=spanv*0.06;
+    const nb=Math.min(23,Math.max(7,Math.round(Math.sqrt(a.length))*2+1)), bins=new Array(nb).fill(0);
+    a.forEach(v=>{ let k=Math.floor((v-lo)/(hi-lo)*nb); k=Math.max(0,Math.min(nb-1,k)); bins[k]++; });
+    const mx=Math.max(...bins), bw=pw/nb;
+    const sorted=a.slice().sort((x,y)=>x-y), var95=sorted[Math.floor(sorted.length*0.05)], mean=a.reduce((x,y)=>x+y,0)/a.length;
+    const X=v=>pl+(v-lo)/(hi-lo)*pw, Y=c=>pt+(1-c/mx)*ph;
+    const mut=cssv('--muted','#65758c'),acc=cssv('--accent','#46b8ad');
+    let g=`<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;height:250px">`;
+    bins.forEach((c,i)=>{ const x=pl+bw*i, y=Y(c), mid=lo+(i+0.5)/nb*(hi-lo); const col=mid<var95?'#cf6f66':(mid<0?'#6e4f55':'#3f7e6e'); g+=`<rect x="${(x+1).toFixed(1)}" y="${y.toFixed(1)}" width="${(bw-2).toFixed(1)}" height="${(pt+ph-y).toFixed(1)}" rx="1.5" fill="${col}"/>`; });
+    if(var95!=null){ const vx=X(var95).toFixed(1); g+=`<line x1="${vx}" y1="${pt}" x2="${vx}" y2="${pt+ph}" stroke="#cf6f66" stroke-width="1.5" stroke-dasharray="3 2"/><text x="${vx}" y="${pt-3}" text-anchor="middle" font-size="9.5" fill="#cf6f66" font-family="IBM Plex Mono">VaR ${(var95*100).toFixed(1)}%</text>`; }
+    const mxx=X(mean).toFixed(1); g+=`<line x1="${mxx}" y1="${pt}" x2="${mxx}" y2="${pt+ph}" stroke="${acc}" stroke-width="1.5"/><text x="${mxx}" y="${pt-3}" text-anchor="middle" font-size="9.5" fill="${acc}" font-family="IBM Plex Mono">μ</text>`;
+    for(let t=0;t<=4;t++){ const v=lo+(hi-lo)*t/4; g+=`<text x="${X(v).toFixed(1)}" y="${H-12}" text-anchor="middle" font-size="9" fill="${mut}" font-family="IBM Plex Mono">${(v*100).toFixed(1)}%</text>`; }
+    return g+"</svg>";
+  })();
+  return ovPanel("Daily return distribution", `${a.length} daily return${a.length===1?'':'s'} · 95% VaR`, body, "12px 12px 8px");
+}
+
+// 6-col risk ribbon (mock): Max DD · Current DD · Volatility · 1-day VaR · Live Sharpe · Leverage.
+function renderRiskRibbon(risk, st){
+  const star=risk.mature?"":"*", cap=META.leverage_cap||2.0, lev=st?st.leverage:null, levW=lev==null?0:Math.min(100,lev/cap*100);
+  const levBar=`<div style="height:4px;border-radius:2px;background:var(--panel-2);margin-top:8px;overflow:hidden"><div style="height:100%;background:var(--accent);width:${levW.toFixed(0)}%"></div></div>`;
+  const dci=risk.days_in_drawdown||0;
+  const cells=[
+    kpiCell("Max drawdown", pct(risk.max_drawdown), "worst, on "+String(risk.max_drawdown_date).slice(5), {valColor:'var(--red)'}),
+    kpiCell("Current drawdown", pct(risk.current_drawdown), dci>0?`${dci} day${dci>1?'s':''} below HWM`:"at a new high", {valColor:risk.current_drawdown<-1e-9?'var(--red)':'var(--muted)'}),
+    kpiCell("Volatility"+star, risk.mature&&risk.ann_vol!=null?pct(risk.ann_vol):"—", risk.daily_vol!=null?pct(risk.daily_vol,2)+" / day":"needs ≥10 days"),
+    kpiCell("1-day VaR (95%)", risk.var95_1d_pct!=null?"−"+pct(risk.var95_1d_pct):"—", risk.var95_1d_usd!=null?"≈ "+usd(risk.var95_1d_usd)+" at NAV":"parametric", {valColor:'var(--red)'}),
+    kpiCell("Live Sharpe"+star, risk.mature&&risk.sharpe!=null?risk.sharpe.toFixed(2):"—", risk.mature?"annualized":"needs ≥10 days"),
+    kpiCell("Leverage", lev==null?"–":lev.toFixed(2)+"×", `cap ${cap.toFixed(1)}× · gross ${usd(st?st.gross_exposure:null)}`, {extra:levBar}),
   ].join("");
-  $("ddsub").textContent = `${risk.dates[0]} → ${risk.dates[risk.dates.length-1]} · 0% = high-water mark`;
-  $("ddchart").innerHTML = underwaterChart(risk.dates, risk.drawdown);
-  const rvPts = (risk.rolling_vol||[]).filter(v=>v!=null).length;
-  const rvPanel = $("rvchart").closest(".se-panel");
-  if(risk.mature && rvPts>=2){
-    rvPanel.style.display=""; $("rvsub").textContent = `${risk.rolling_window}-day window · annualized`;
-    $("rvchart").innerHTML = lineChart(risk.dates, risk.rolling_vol, {floor0:true, fmt:v=>pct(v,0), color:cssv('--amber','#d8a84b')});
-  } else { rvPanel.style.display="none"; }
-
-  const rsPts = (risk.rolling_sharpe||[]).filter(v=>v!=null).length;
-  const rsPanel = $("rschart").closest(".se-panel");
-  if(risk.mature && rsPts>=2){
-    rsPanel.style.display=""; $("rssub").textContent = `${risk.rolling_window}-day window · annualized · 0 = break-even`;
-    $("rschart").innerHTML = lineChart(risk.dates, risk.rolling_sharpe, {zero:true, fmt:v=>v.toFixed(1), color:cssv('--accent','#46b8ad')});
-  } else { rsPanel.style.display="none"; }
-
-  const rets=risk.returns||[];
-  const distPanel=$("distchart").closest(".se-panel");
-  if(rets.filter(v=>v!=null).length>=3){
-    distPanel.style.display="";
-    $("distsub").textContent = `${rets.length} daily returns · red band = 5th-pct VaR ${pct(risk.hist_var95_1d_pct)}`;
-    $("distchart").innerHTML = distChart(rets, risk.hist_var95_1d_pct!=null?-risk.hist_var95_1d_pct:null);
-  } else { distPanel.style.display="none"; }
+  $("rk-ribbon").innerHTML=`<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden">${cells}</div>`;
 }
 
-// Daily-return distribution histogram: bars binned across the return range, coloured by sign,
-// with a dashed line at 0 and a red marker at the empirical 5th-percentile (1-day 95% VaR).
-function distChart(returns, varLevel){
-  const data=(returns||[]).filter(v=>v!=null);
-  if(data.length<3) return '<div class="se-empty">the return distribution appears once a few days of history accumulate</div>';
-  const W=720,H=210,pl=40,pr=14,pt=12,pb=30,pw=W-pl-pr,ph=H-pt-pb;
-  let lo=Math.min(...data,0), hi=Math.max(...data,0); const span=(hi-lo)||0.02;
-  lo-=span*0.04; hi+=span*0.04; const range=hi-lo;
-  const nb=Math.min(23, Math.max(7, Math.round(Math.sqrt(data.length))*2+1)), bw=range/nb;
-  const bins=new Array(nb).fill(0);
-  data.forEach(v=>{ let i=Math.floor((v-lo)/bw); if(i>=nb)i=nb-1; if(i<0)i=0; bins[i]++; });
-  const maxc=Math.max(...bins,1);
-  const sx=v=>pl+((v-lo)/range)*pw, sy=c=>pt+(1-c/maxc)*ph;
-  const grid=cssv('--grid','#16223a'), mut=cssv('--muted','#65758c'), green=cssv('--green','#4bbf7b'), red=cssv('--red','#cf6f66');
-  let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" style="display:block">`;
-  for(let k=0;k<=4;k++){ const c=maxc*k/4, y=sy(c).toFixed(1);
-    s+=`<line x1="${pl}" y1="${y}" x2="${W-pr}" y2="${y}" stroke="${grid}"/><text x="${pl-7}" y="${(+y+3.5).toFixed(1)}" text-anchor="end" font-size="11" fill="${mut}">${Math.round(c)}</text>`; }
-  const y0=sy(0).toFixed(1);
-  for(let i=0;i<nb;i++){ if(!bins[i]) continue;
-    const x0=sx(lo+i*bw), x1=sx(lo+(i+1)*bw), yb=sy(bins[i]), center=lo+(i+0.5)*bw;
-    const col=center>=0?green:red;
-    s+=`<rect x="${(x0+0.6).toFixed(1)}" y="${yb.toFixed(1)}" width="${Math.max(0.5,x1-x0-1.2).toFixed(1)}" height="${(y0-yb).toFixed(1)}" fill="${col}" fill-opacity="0.5"/>`; }
-  // x-axis ticks as percentages
-  for(let k=0;k<=4;k++){ const v=lo+range*k/4, x=sx(v).toFixed(1);
-    s+=`<text x="${x}" y="${H-9}" text-anchor="middle" font-size="11" fill="${mut}">${(v*100).toFixed(1)}%</text>`; }
-  // zero line
-  const xz=sx(0).toFixed(1);
-  s+=`<line x1="${xz}" y1="${pt}" x2="${xz}" y2="${(pt+ph).toFixed(1)}" stroke="${mut}" stroke-dasharray="3 3" opacity="0.55"/>`;
-  // VaR marker
-  if(varLevel!=null && varLevel>lo && varLevel<hi){ const xv=sx(varLevel).toFixed(1);
-    s+=`<line x1="${xv}" y1="${pt}" x2="${xv}" y2="${(pt+ph).toFixed(1)}" stroke="${red}" stroke-width="1.5"/>`
-      +`<text x="${xv}" y="${(pt+9).toFixed(1)}" text-anchor="middle" font-size="10" fill="${red}">VaR</text>`; }
-  return s+"</svg>";
+// Underwater / drawdown (mock underwater): 0% high-water mark at top, losses shaded below.
+function underwaterHtml(risk){
+  const dd=risk.drawdown||[], dates=risk.dates||[], vals=dd.filter(v=>v!=null);
+  const body=(()=>{
+    if(vals.length<2) return '<div class="se-empty">one data point so far — the drawdown curve appears after a second day</div>';
+    const W=1160,H=200,pl=58,pr=16,pt=14,pb=26,pw=W-pl-pr,ph=H-pt-pb;
+    const lo=Math.min(...vals,0), top=0, bot=lo-((0-lo)*0.12||0.001);
+    const n=dates.length,X=i=>pl+(n<=1?0:i/(n-1)*pw),Y=v=>pt+(top-v)/(top-bot)*ph;
+    const grid=cssv('--grid','#16223a'),mut=cssv('--muted','#65758c'),red=cssv('--red','#cf6f66'),ML="font-family:var(--mono)";
+    let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="none" style="display:block;height:200px">`;
+    for(let k=0;k<=4;k++){ const v=top-(top-bot)*k/4,y=Y(v).toFixed(1); s+=`<line x1="${pl}" y1="${y}" x2="${W-pr}" y2="${y}" stroke="${grid}"/><text x="${pl-8}" y="${(+y+3.5).toFixed(1)}" text-anchor="end" font-size="11" fill="${mut}" style="${ML}">${(v*100).toFixed(1)}%</text>`; }
+    const step=Math.max(1,Math.round(n/7));
+    for(let i=0;i<n;i+=step) s+=`<text x="${X(i).toFixed(1)}" y="${H-8}" text-anchor="middle" font-size="10.5" fill="${mut}" style="${ML}">${String(dates[i]).slice(5)}</text>`;
+    const y0=Y(0).toFixed(1), line=dd.map((v,i)=>(i?"L":"M")+X(i).toFixed(1)+" "+Y(v).toFixed(1)).join(" ");
+    s+=`<path d="M${X(0).toFixed(1)} ${y0} ${dd.map((v,i)=>"L"+X(i).toFixed(1)+" "+Y(v).toFixed(1)).join(" ")} L${X(n-1).toFixed(1)} ${y0} Z" fill="${red}" fill-opacity="0.13"/>`;
+    s+=`<path d="${line}" fill="none" stroke="${red}" stroke-width="1.8" stroke-linejoin="round"/>`;
+    return s+"</svg>";
+  })();
+  const sub=dates.length?`${dates[0]} → ${dates[dates.length-1]} · 0% = high-water mark`:"0% = high-water mark";
+  return ovPanel("Drawdown", sub, body, "8px 8px 10px");
 }
 
-// Risk-contribution table: each holding's share of portfolio variance (Euler decomposition,
-// engine-computed at rebalance) with its weight as a tick — bar past the tick = concentration.
-function renderRiskContrib(rcx){
-  const el=$("riskcontrib");
-  if(!rcx || !rcx.available || !(rcx.names||[]).length){
-    el.innerHTML='<div class="se-empty">Risk contribution appears after the next rebalance — the engine records each holding’s share of portfolio risk (from the covariance matrix) each time it rebalances.</div>';
-    $("rcsub").textContent="share of portfolio risk per holding";
-    return;
-  }
-  $("rcsub").textContent = rcx.portfolio_vol!=null
-    ? `annualized portfolio vol ${pct(rcx.portfolio_vol)} · bar = risk share, tick = weight · as of ${String(rcx.ts).slice(0,10)}`
-    : "risk share vs weight";
-  const mx=Math.max(0.01, ...rcx.names.map(n=>Math.max(n.rc_pct, n.weight)));
-  el.innerHTML = table(rcx.names, [
-    {h:"Symbol", cls:()=>"sym", f:n=>symCell(n.symbol)},
-    {h:"Risk share", tip:"Share of total portfolio variance this name contributes (Euler risk decomposition). Bar = risk share; tick = portfolio weight. Bar beyond the tick means the name adds more risk than its size.",
-      f:n=>allocBar(n.rc_pct, n.weight, mx)},
-    {h:"Risk %", tip:"Percent of portfolio risk contributed.", f:n=>pct(n.rc_pct)},
-    {h:"Weight", tip:"Portfolio weight (fraction of NAV) at the last rebalance.", f:n=>pct(n.weight)},
-    {h:"Risk/Wt", tip:"Risk share ÷ weight. Above 1× the name carries more risk than its size (a concentration); below 1× it diversifies.",
-      f:n=>{const r=n.weight?n.rc_pct/n.weight:null;
-        return r==null?"—":`<span style="font-family:var(--mono)${r>1.25?';color:var(--amber)':(r<0.8?';color:var(--muted)':'')}">${r.toFixed(2)}×</span>`;}},
-  ]);
-}
-
-// Underwater (drawdown) area chart: 0% at the top (high-water mark), losses shaded below.
-function underwaterChart(dates, dd){
-  const W=720,H=200,pl=52,pr=14,pt=12,pb=24,pw=W-pl-pr,ph=H-pt-pb;
-  const vals=(dd||[]).filter(v=>v!=null);
-  if(vals.length<2) return '<div class="se-empty">one data point so far — the drawdown curve appears after a second day</div>';
-  const lo=Math.min(...vals,0), top=0, bot=lo-((0-lo)*0.10||0.001);   // 0% (high-water mark) is the ceiling
-  const n=dates.length, sx=i=>pl+(n<=1?0:i/(n-1)*pw), sy=v=>pt+((top-v)/(top-bot))*ph;
-  const grid=cssv('--grid','#16223a'), mut=cssv('--muted','#65758c'), red=cssv('--red','#cf6f66');
-  let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" style="display:block">`;
-  for(let k=0;k<=4;k++){ const v=top-(top-bot)*k/4, y=sy(v).toFixed(1);
-    s+=`<line x1="${pl}" y1="${y}" x2="${W-pr}" y2="${y}" stroke="${grid}"/><text x="${pl-7}" y="${(+y+3.5).toFixed(1)}" text-anchor="end" font-size="11" fill="${mut}">${(v*100).toFixed(1)}%</text>`; }
-  const step=Math.max(1,Math.round(n/6));
-  for(let i=0;i<n;i+=step){ s+=`<text x="${sx(i).toFixed(1)}" y="${H-7}" text-anchor="middle" font-size="11" fill="${mut}">${String(dates[i]).slice(5)}</text>`; }
-  const y0=sy(0).toFixed(1);
-  let line=""; dd.forEach((v,i)=>{ if(v!=null) line+=(line?"L":"M")+sx(i).toFixed(1)+" "+sy(v).toFixed(1); });
-  const area=`M${sx(0).toFixed(1)} ${y0} `+dd.map((v,i)=>v==null?"":`L${sx(i).toFixed(1)} ${sy(v).toFixed(1)}`).join(" ")+` L${sx(n-1).toFixed(1)} ${y0} Z`;
-  s+=`<path d="${area}" fill="${red}" fill-opacity="0.14"/>`;
-  s+=`<line x1="${pl}" y1="${y0}" x2="${W-pr}" y2="${y0}" stroke="${mut}" stroke-dasharray="3 3" opacity="0.5"/>`;
-  s+=`<path d="${line}" fill="none" stroke="${red}" stroke-width="2" stroke-linejoin="round"/>`;
-  return s+"</svg>";
-}
-
-// Generic single-series line chart with a numeric y-axis (rolling Sharpe etc.).
-function lineChart(dates, data, opts={}){
-  const W=720,H=180,pl=52,pr=14,pt=12,pb=24,pw=W-pl-pr,ph=H-pt-pb;
-  const fmtv=opts.fmt||(v=>v.toFixed(2)), color=opts.color||cssv('--accent','#46b8ad');
-  const vals=(data||[]).filter(v=>v!=null);
-  if(vals.length<2) return '<div class="se-empty">not enough history yet</div>';
-  let lo=Math.min(...vals), hi=Math.max(...vals); if(opts.zero){ lo=Math.min(lo,0); hi=Math.max(hi,0); }
-  const pad=(hi-lo)*0.1||0.5; lo-=pad; hi+=pad;
-  if(opts.floor0) lo=Math.max(lo,0);                 // non-negative series (e.g. volatility)
-  const n=dates.length, sx=i=>pl+(n<=1?0:i/(n-1)*pw), sy=v=>pt+((hi-v)/(hi-lo))*ph;
-  const grid=cssv('--grid','#16223a'), mut=cssv('--muted','#65758c');
-  let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" style="display:block">`;
-  for(let k=0;k<=4;k++){ const v=lo+(hi-lo)*k/4, y=sy(v).toFixed(1);
-    s+=`<line x1="${pl}" y1="${y}" x2="${W-pr}" y2="${y}" stroke="${grid}"/><text x="${pl-7}" y="${(+y+3.5).toFixed(1)}" text-anchor="end" font-size="11" fill="${mut}">${fmtv(v)}</text>`; }
-  if(opts.zero && lo<0 && hi>0){ const yz=sy(0).toFixed(1); s+=`<line x1="${pl}" y1="${yz}" x2="${W-pr}" y2="${yz}" stroke="${mut}" stroke-dasharray="3 3" opacity="0.55"/>`; }
-  const step=Math.max(1,Math.round(n/6));
-  for(let i=0;i<n;i+=step){ s+=`<text x="${sx(i).toFixed(1)}" y="${H-7}" text-anchor="middle" font-size="11" fill="${mut}">${String(dates[i]).slice(5)}</text>`; }
-  let p=""; data.forEach((v,i)=>{ if(v!=null) p+=(p?"L":"M")+sx(i).toFixed(1)+" "+sy(v).toFixed(1); });
-  s+=`<path d="${p}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round"/>`;
-  return s+"</svg>";
+// Rolling volatility (mock rvChart): trailing-window annualized vol, amber.
+function rollVolHtml(risk){
+  const rv=risk.rolling_vol||[], dates=risk.dates||[], vals=rv.filter(v=>v!=null), win=risk.rolling_window||10;
+  const body=(()=>{
+    if(vals.length<2) return `<div class="se-empty" style="height:180px;display:flex;align-items:center;justify-content:center;text-align:center">rolling volatility appears once a ${win}-day window accumulates (needs ≥10 days of history)</div>`;
+    const W=1160,H=180,pl=58,pr=16,pt=14,pb=26,pw=W-pl-pr,ph=H-pt-pb;
+    let lo=Math.min(...vals),hi=Math.max(...vals); const pad=(hi-lo)*0.15||0.01; lo=Math.max(0,lo-pad); hi+=pad;
+    const n=dates.length,X=i=>pl+(n<=1?0:i/(n-1)*pw),Y=v=>pt+(hi-v)/(hi-lo)*ph;
+    const grid=cssv('--grid','#16223a'),mut=cssv('--muted','#65758c'),warn=cssv('--amber','#d8a84b'),ML="font-family:var(--mono)";
+    let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="none" style="display:block;height:180px">`;
+    for(let k=0;k<=3;k++){ const v=lo+(hi-lo)*k/3,y=Y(v).toFixed(1); s+=`<line x1="${pl}" y1="${y}" x2="${W-pr}" y2="${y}" stroke="${grid}"/><text x="${pl-8}" y="${(+y+3.5).toFixed(1)}" text-anchor="end" font-size="11" fill="${mut}" style="${ML}">${(v*100).toFixed(0)}%</text>`; }
+    const step=Math.max(1,Math.round(n/7));
+    for(let i=0;i<n;i+=step) s+=`<text x="${X(i).toFixed(1)}" y="${H-8}" text-anchor="middle" font-size="10.5" fill="${mut}" style="${ML}">${String(dates[i]).slice(5)}</text>`;
+    let p=""; rv.forEach((v,i)=>{ if(v!=null) p+=(p?"L":"M")+X(i).toFixed(1)+" "+Y(v).toFixed(1); });
+    s+=`<path d="${p}" fill="none" stroke="${warn}" stroke-width="2" stroke-linejoin="round"/>`;
+    return s+"</svg>";
+  })();
+  return ovPanel("Rolling volatility", `${win}-day window · annualized`, body, "8px 8px 10px");
 }
 
 const esc = s => String(s).replace(/"/g,"&quot;");
@@ -2006,19 +2029,6 @@ function playIntro(){
 }
 playIntro();
 boot();
-// ---- Performance window picker wiring -------------------------------------
-function syncWin(){
-  const isDate = /^\d{4}-\d{2}-\d{2}$/.test(perfWin);
-  $("windate").value = isDate ? perfWin : "";
-  document.querySelectorAll(".winpill").forEach(b => b.classList.toggle("active", !isDate && b.dataset.win === perfWin));
-}
-document.querySelectorAll(".winpill").forEach(b => b.onclick = () => {
-  perfWin = b.dataset.win; localStorage.setItem("perfWin", perfWin); syncWin(); loadPerformance();
-});
-$("windate").onchange = () => {
-  if ($("windate").value) { perfWin = $("windate").value; localStorage.setItem("perfWin", perfWin); syncWin(); loadPerformance(); }
-};
-syncWin();
 
 // ---- live ticks -----------------------------------------------------------
 // Fast 1s tick: refresh the live NAV + KPIs on the Overview (one /api/state read ≈ one Alpaca

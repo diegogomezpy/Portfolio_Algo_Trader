@@ -173,6 +173,48 @@ def _quotes_map(client, symbols: list[str]) -> dict:
     return _QUOTE_CACHE["data"]
 
 
+# Trailing correlation matrix for the Risk view: pairwise Pearson correlation of daily returns
+# across the top holdings, from ~3 months of daily bars. Refreshed off-thread and cached (daily
+# bars move slowly), same pattern as the quote cache.
+_CORR_CACHE: dict = {"ts": 0.0, "data": {}, "loading": False, "key": ""}
+_CORR_TTL = 600
+_CORR_MAX_NAMES = 10       # keep the matrix readable (mock shows ~8); top holdings by market value
+_CORR_WINDOW = 60          # trailing trading days of returns
+
+
+def _correlation_map(client, db_engine) -> dict:
+    """Cached trailing-``_CORR_WINDOW`` correlation matrix over the top held equities by weight."""
+    state = data.api_state(db_engine)
+    held = sorted((r for r in state.get("positions", [])
+                   if r.get("qty") and r.get("market_value") is not None
+                   and not data._is_option(r["symbol"])),
+                  key=lambda r: r["market_value"], reverse=True)
+    symbols = [r["symbol"] for r in held][:_CORR_MAX_NAMES]
+    key = ",".join(symbols)
+    fresh = _CORR_CACHE["key"] == key and (time.time() - _CORR_CACHE["ts"]) < _CORR_TTL
+    if client is not None and len(symbols) >= 2 and not fresh and not _CORR_CACHE["loading"]:
+        _CORR_CACHE["loading"] = True
+
+        def _load():
+            try:
+                end = datetime.now(timezone.utc)
+                bars = client.bars_multi(symbols, (end - timedelta(days=130)).isoformat(),
+                                         end.isoformat(), timeframe="1Day")
+                closes = {sym: {str(b["time"])[:10]: b["close"] for b in rows
+                                if b.get("time") and b.get("close") is not None}
+                          for sym, rows in bars.items()}
+                _CORR_CACHE.update(
+                    data=data.correlation_matrix(closes, symbols, window=_CORR_WINDOW),
+                    ts=time.time(), key=key)
+            except Exception as exc:  # noqa: BLE001 — correlation is best-effort; never break the page
+                log.warning("correlation fetch failed: %s", exc)
+            finally:
+                _CORR_CACHE["loading"] = False
+
+        threading.Thread(target=_load, name="correlation", daemon=True).start()
+    return _CORR_CACHE["data"] or {"available": False, "symbols": [], "matrix": []}
+
+
 async def _monitor_loop(client, db_engine, interval: int, price_feed=None) -> None:
     """Every ``interval`` seconds: read Alpaca → write a snapshot (the Alpaca→Postgres bridge),
     and keep the live price feed subscribed to the current held book.
@@ -562,6 +604,17 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
     def risk_contrib() -> dict:
         """Per-name risk decomposition from the latest rebalance (engine-persisted, Postgres-only)."""
         return data.api_risk_contributions(db_engine)
+
+    @app.get("/api/correlation")
+    def correlation() -> dict:
+        """Trailing-60d return correlation across the top holdings (from daily bars, cached).
+
+        Needs the market-data client for bars; without it (Postgres-only mode) the matrix is
+        unavailable and the Risk view shows a dashed placeholder.
+        """
+        if client is None:
+            return {"available": False, "symbols": [], "matrix": []}
+        return _correlation_map(client, db_engine)
 
     @app.get("/api/reference")
     def reference() -> dict:

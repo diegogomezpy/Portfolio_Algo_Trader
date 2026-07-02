@@ -265,6 +265,42 @@ def test_api_risk_contributions_reads_latest_rebalance():
     assert rc["names"][0]["rc_pct"] == 0.7 and rc["names"][0]["weight"] == 0.5
 
 
+def test_correlation_matrix_perfect_and_anti():
+    # Varying daily returns (constant returns are degenerate → zero variance). Y mirrors X's
+    # returns (corr +1); Z negates them (corr −1) — over a shared calendar.
+    rx = [0.01, -0.02, 0.03, -0.01, 0.02, -0.03, 0.015, -0.005, 0.02, -0.01, 0.005]
+    dts = [f"2026-05-{d:02d}" for d in range(1, len(rx) + 2)]
+    def curve(rets):
+        c, v = [100.0], 100.0
+        for r in rets:
+            v *= 1 + r; c.append(v)
+        return c
+    closes = {"X": dict(zip(dts, curve(rx))), "Y": dict(zip(dts, curve(rx))),
+              "Z": dict(zip(dts, curve([-r for r in rx])))}
+    m = data.correlation_matrix(closes, ["X", "Y", "Z"], window=60, min_obs=5)
+    assert m["available"] and m["symbols"] == ["X", "Y", "Z"]
+    assert m["matrix"][0][0] == 1.0                       # diagonal
+    assert abs(m["matrix"][0][1] - 1.0) < 1e-9           # X vs Y perfectly correlated
+    assert abs(m["matrix"][0][2] - (-1.0)) < 1e-9        # X vs Z perfectly anti-correlated
+
+
+def test_correlation_matrix_insufficient_history_or_names():
+    dts = [f"2026-05-{d:02d}" for d in range(1, 5)]        # only 3 returns < min_obs
+    closes = {"A": {d: 100 + i for i, d in enumerate(dts)},
+              "B": {d: 100 + 2 * i for i, d in enumerate(dts)}}
+    assert data.correlation_matrix(closes, ["A", "B"], min_obs=5)["available"] is False
+    assert data.correlation_matrix({"A": {"2026-05-01": 100}}, ["A"])["available"] is False
+
+
+def test_correlation_matrix_intersects_dates_across_symbols():
+    # B is missing an early date; the matrix aligns on the common calendar rather than crashing.
+    a = {f"2026-05-{d:02d}": 100 + d for d in range(1, 11)}
+    b = {f"2026-05-{d:02d}": 50 + 0.5 * d for d in range(3, 11)}
+    m = data.correlation_matrix({"A": a, "B": b}, ["A", "B"], window=60, min_obs=3)
+    assert m["available"] and m["start"] == "2026-05-03"   # intersection start
+    assert abs(m["matrix"][0][1] - 1.0) < 1e-9             # both linear-up → +1
+
+
 def test_api_risk_contributions_empty_when_no_rebalance_has_it():
     eng = _engine()
     with eng.begin() as c:                                            # a rebalance row without the field

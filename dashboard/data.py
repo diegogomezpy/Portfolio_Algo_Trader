@@ -666,6 +666,50 @@ def api_risk_contributions(db_engine) -> dict:
             "portfolio_vol": (rcx or {}).get("portfolio_vol"), "names": names}
 
 
+def _pearson(x: list[float], y: list[float]) -> float | None:
+    """Pearson correlation of two equal-length series (``None`` if either is flat / < 2 points)."""
+    n = len(x)
+    if n < 2 or len(y) != n:
+        return None
+    mx, my = sum(x) / n, sum(y) / n
+    sxx = sum((a - mx) ** 2 for a in x)
+    syy = sum((b - my) ** 2 for b in y)
+    if sxx <= 1e-18 or syy <= 1e-18:
+        return None
+    sxy = sum((a - mx) * (b - my) for a, b in zip(x, y))
+    return max(-1.0, min(1.0, sxy / math.sqrt(sxx * syy)))
+
+
+def correlation_matrix(closes_by_sym: dict[str, dict[str, float]], symbols: list[str],
+                       *, window: int = 60, min_obs: int = 5) -> dict:
+    """Pairwise Pearson correlation of daily returns across ``symbols`` (trailing window).
+
+    ``closes_by_sym`` maps each symbol to a ``{ISO-date: close}`` series. Dates common to **all**
+    requested symbols are intersected (large-cap names share the exchange calendar, so this ≈ the
+    full window), daily simple returns are taken over the most-recent ``window`` observations, and
+    the full N×N Pearson matrix is built. The diagonal is ``1.0``; a pair with < ``min_obs``
+    overlapping returns is ``None`` (insufficient data → the UI shows a dashed placeholder, §8).
+    ``available`` is False until ≥ 2 symbols each carry a usable series.
+    """
+    syms = [s for s in symbols if closes_by_sym.get(s)]
+    if len(syms) < 2:
+        return {"available": False, "symbols": [], "matrix": [], "n_obs": 0}
+    common = set.intersection(*(set(closes_by_sym[s]) for s in syms))
+    dates = sorted(common)[-(window + 1):]          # +1 close → ``window`` returns
+    rets: dict[str, list[float]] = {}
+    for s in syms:
+        c = closes_by_sym[s]
+        series = [c[d] for d in dates]
+        rets[s] = [series[i] / series[i - 1] - 1 for i in range(1, len(series)) if series[i - 1]]
+    n_obs = len(dates) - 1 if dates else 0
+    if n_obs < min_obs:
+        return {"available": False, "symbols": syms, "matrix": [], "n_obs": n_obs}
+    matrix = [[1.0 if i == j else _pearson(rets[a], rets[b])
+               for j, b in enumerate(syms)] for i, a in enumerate(syms)]
+    return {"available": True, "symbols": syms, "matrix": matrix, "n_obs": n_obs,
+            "window": window, "start": dates[0], "end": dates[-1]}
+
+
 def _slippage_core(records, arrival_mid) -> dict:
     """Execution quality (implementation shortfall): realized fill vs the **arrival** reference.
 
