@@ -54,8 +54,8 @@ def test_create_app_exposes_expected_routes():
     app = create_app(eng, live=False)
     paths = {r.path for r in app.routes}
     assert {"/", "/backtest", "/favicon.svg", "/api/meta", "/api/state",
-            "/api/nav_history", "/api/orders", "/api/calls", "/api/factors",
-            "/api/alerts", "/api/health", "/api/reference", "/api/risk"} <= paths
+            "/api/nav_history", "/api/orders", "/api/calls", "/api/overlay", "/api/factors",
+            "/api/alerts", "/api/health", "/api/reference", "/api/risk", "/api/execution"} <= paths
     # the shared theme is mounted so both tabs reference one design system
     assert any(getattr(r, "path", "") == "/static" for r in app.routes)
 
@@ -92,6 +92,34 @@ def test_orders_route_uses_live_alpaca_when_client_present():
     # comes from Alpaca (a pending 'new' order the engine never wrote to Postgres)
     assert len(out) == 1 and out[0]["symbol"] == "AAPL" and out[0]["status"] == "new"
     assert _route(app, "/api/meta")()["live"] is True
+
+
+def test_execution_route_rotation_excludes_options_and_flags_active():
+    # /api/execution aggregates filled equity orders into the cash-rotation flow (Phase 3): buys
+    # = deployed, sells = raised, the SPY option fill excluded. A still-open order flags active.
+    eng = create_engine("sqlite://")
+    db.create_all(eng)
+    with eng.begin() as c:
+        c.execute(insert(db.snapshots).values(
+            ts=datetime(2026, 7, 2, 16), nav=100_000.0, cash=0.0, last_equity=100_000.0,
+            weights={"AAPL": 0.2}, positions={"AAPL": 100}, drift=0.0))
+    fake = _FakeClient([
+        {"symbol": "AAPL", "side": "buy", "qty": 100, "filled_qty": 100, "type": "limit",
+         "status": "filled", "filled_avg_price": 200.0, "submitted_at": "2026-07-02T13:31:00"},
+        {"symbol": "XOM", "side": "sell", "qty": 50, "filled_qty": 50, "type": "limit",
+         "status": "filled", "filled_avg_price": 100.0, "submitted_at": "2026-07-02T13:31:00"},
+        {"symbol": "SPY260731C00764000", "side": "sell", "qty": 7, "filled_qty": 7, "type": "limit",
+         "status": "filled", "filled_avg_price": 2.34, "submitted_at": "2026-07-02T13:31:00"},
+        {"symbol": "JPM", "side": "buy", "qty": 40, "filled_qty": 0, "type": "limit",
+         "status": "new", "filled_avg_price": None, "submitted_at": "2026-07-02T13:31:00"},
+    ])
+    ex = _route(create_app(eng, client=fake, live=True), "/api/execution")()
+    assert ex["active"] is True                              # the open JPM order → a working cycle
+    rot = ex["rotation"]
+    assert rot["deployed"] == 20000.0 and rot["raised"] == 5000.0   # AAPL 100×200 ; XOM 50×100
+    assert [b["symbol"] for b in rot["buys"]] == ["AAPL"]
+    assert [s["symbol"] for s in rot["sells"]] == ["XOM"]   # SPY option fill is not equity rotation
+    assert ex["chase"] == []                                # no order_events seeded → empty, not error
 
 
 def test_price_history_route_seeds_from_bars():

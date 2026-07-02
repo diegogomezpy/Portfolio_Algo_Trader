@@ -1718,6 +1718,55 @@ function chaseBoard(ex){
     +orders.map(chaseTrack).join("")+`</div>`;
 }
 
+// ---- Rotation flow (Phase 3): a Sankey of equity sells → cash → buys for the live cycle -------
+// Each filled sell (left, soft-red) feeds the central CASH node; each filled buy (right, teal)
+// draws from it. Ribbon widths ∝ filled notional, so the capital rotation reads at a glance.
+function rotationFlow(ex){
+  const r=ex.rotation||{}, sells=(r.sells||[]).slice(0,7), buys=(r.buys||[]).slice(0,7);
+  if(!sells.length && !buys.length) return "";
+  const W=980,H=210,top=22,usableH=H-top-46,nodeW=13,leftX=62,rightX=W-62-nodeW,cashX=W/2-nodeW/2;
+  const raised=r.raised||sells.reduce((a,s)=>a+s.notional,0);
+  const deployed=r.deployed||buys.reduce((a,b)=>a+b.notional,0);
+  const scale=usableH/Math.max(raised,deployed,1), cashH=Math.max(raised,deployed)*scale;
+  const abbr=v=>'$'+(v>=1000?(v/1000).toFixed(v>=1e4?0:1)+'k':Math.round(v));
+  const rib=(x0,y0,x1,y1,w,c)=>{ const cx=(x0+x1)/2;
+    return `<path d="M${x0},${y0.toFixed(1)} C${cx},${y0.toFixed(1)} ${cx},${y1.toFixed(1)} ${x1},${y1.toFixed(1)} L${x1},${(y1+w).toFixed(1)} C${cx},${(y1+w).toFixed(1)} ${cx},${(y0+w).toFixed(1)} ${x0},${(y0+w).toFixed(1)} Z" fill="${c}" fill-opacity="0.26"/>`; };
+  let g=`<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;height:210px">`;
+  let ly=top, cy=top;
+  sells.forEach(s=>{ const h=Math.max(2,s.notional*scale);
+    g+=rib(leftX+nodeW, ly, cashX, cy, h, "#cf6f66")
+      +`<rect x="${leftX}" y="${ly.toFixed(1)}" width="${nodeW}" height="${h.toFixed(1)}" rx="2" fill="#cf6f66"/>`
+      +`<text x="${leftX-7}" y="${(ly+h/2+3.5).toFixed(1)}" text-anchor="end" font-size="10.5" fill="#aab4c3" font-family="IBM Plex Mono">${s.symbol}</text>`;
+    ly+=h+6; cy+=h; });
+  let ry=top, oy=top;
+  buys.forEach(b=>{ const h=Math.max(2,b.notional*scale);
+    g+=rib(cashX+nodeW, oy, rightX, ry, h, "#46b8ad")
+      +`<rect x="${rightX}" y="${ry.toFixed(1)}" width="${nodeW}" height="${h.toFixed(1)}" rx="2" fill="#46b8ad"/>`
+      +`<text x="${rightX+nodeW+7}" y="${(ry+h/2+3.5).toFixed(1)}" text-anchor="start" font-size="10.5" fill="#aab4c3" font-family="IBM Plex Mono">${b.symbol}</text>`;
+    ry+=h+6; oy+=h; });
+  g+=`<rect x="${cashX}" y="${top}" width="${nodeW}" height="${Math.max(2,cashH).toFixed(1)}" rx="2" fill="#7c8bb0"/>`
+    +`<text x="${(cashX+nodeW/2).toFixed(1)}" y="${(top+cashH+15).toFixed(1)}" text-anchor="middle" font-size="9" fill="#8695ad" font-family="Space Grotesk" letter-spacing="1.5">CASH</text>`
+    +`<text x="${leftX-7}" y="${(H-10)}" text-anchor="end" font-size="10" fill="#65758c" font-family="Space Grotesk">sold ${abbr(raised)}</text>`
+    +`<text x="${rightX+nodeW+7}" y="${(H-10)}" text-anchor="start" font-size="10" fill="#65758c" font-family="Space Grotesk">bought ${abbr(deployed)}</text></svg>`;
+  return `<div style="border-top:1px solid var(--line-soft);padding:9px 16px 6px">`
+    +`<div style="font:600 9px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:2px">Rotation — cash → names</div>${g}</div>`;
+}
+
+// ---- Animated fills tape (Phase 3): a live marquee of recent fills, buys teal / sells red -------
+// The negative animation-delay resumes the scroll at the right phase after each 2.5s repaint, so
+// the tape reads as continuous rather than restarting; the content is doubled for a seamless wrap.
+function fillsTape(ex){
+  const fl=(ex.recent_fills||[]).slice(0,12);
+  if(!fl.length) return "";
+  const chip=f=>`<span style="margin:0 15px;white-space:nowrap"><b style="color:${f.side==='sell'?'#cf6f66':'#5fb088'}">${f.symbol}</b> <span style="color:var(--fg-dim)">${fmt(f.qty)}</span> <span style="color:var(--muted)">@</span> <span style="color:var(--fg-dim)">${f.price!=null?(+f.price).toFixed(2):'—'}</span></span>`;
+  const seq=fl.map(chip).join("");
+  const t=(typeof performance!=='undefined'?performance.now():Date.now())/1000;
+  return `<div style="border-top:1px solid var(--line-soft);padding:9px 16px;display:flex;align-items:center;gap:12px;overflow:hidden">`
+    +`<span style="display:inline-flex;align-items:center;gap:6px;flex:none"><span style="width:6px;height:6px;border-radius:50%;background:#5fb088;animation:pulse 1.8s infinite"></span><span style="font:600 9px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Fills</span></span>`
+    +`<div style="overflow:hidden;flex:1;-webkit-mask-image:linear-gradient(90deg,transparent,#000 5%,#000 95%,transparent);mask-image:linear-gradient(90deg,transparent,#000 5%,#000 95%,transparent)">`
+    +`<div style="display:inline-flex;white-space:nowrap;font:400 11px var(--mono);animation:tape-scroll 42s linear infinite;animation-delay:-${(t%42).toFixed(2)}s">${seq}${seq}</div></div></div>`;
+}
+
 // ---- Live execution visualizer (Phase 1: run-progress + blotter; auto-surfaces during trading) ----
 function renderExec(ex){
   const host=$("ov-exec"); if(!host) return;
@@ -1741,7 +1790,6 @@ function renderExec(ex){
       +`<span style="font:600 10px var(--mono);color:var(--fg-dim)">${n.symbol}</span>`
       +`<span style="height:8px;border-radius:4px;background:#0c1626;overflow:hidden;display:block"><span style="display:block;height:100%;width:${fw}%;background:${c};transition:width .4s var(--ease)"></span></span>`
       +`<span style="text-align:right;font:600 8.5px 'Space Grotesk';letter-spacing:.03em;text-transform:uppercase;color:${c}">${n.status}</span></div>`; }).join("");
-  const fills=(ex.recent_fills||[]).slice(0,8).map(f=>`<span style="margin-right:16px;white-space:nowrap"><b style="color:var(--fg)">${f.symbol}</b> ${fmt(f.qty)} @ ${f.price!=null?(+f.price).toFixed(2):'—'}</span>`).join("");
   const body=`<div style="display:flex;gap:18px;flex-wrap:wrap;padding:11px 16px;border-bottom:1px solid var(--line-soft)">${strip}</div>`
     +`<div style="display:flex;align-items:center;gap:14px;padding:12px 16px">`
     +`<span style="font:500 13px var(--mono);color:var(--fg);white-space:nowrap">${ex.n_filled} / ${ex.n_target} <span style="color:var(--muted);font-size:11px">filled</span></span>`
@@ -1750,7 +1798,8 @@ function renderExec(ex){
     +`<span style="font:500 11px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:var(--amber);white-space:nowrap">${ex.n_working} working</span></div>`
     +(names?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(196px,1fr));gap:0 24px;padding:2px 16px 12px">${names}</div>`:"")
     +chaseBoard(ex)
-    +(fills?`<div style="border-top:1px solid var(--line-soft);padding:9px 16px;display:flex;align-items:center;gap:10px;overflow:hidden;font:400 11px var(--mono);color:var(--fg-dim)"><span style="font:600 9px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted);flex:none">Fills</span><div style="overflow:hidden">${fills}</div></div>`:"");
+    +rotationFlow(ex)
+    +fillsTape(ex);
   const title=`<span style="display:inline-flex;align-items:center;gap:7px"><span style="width:8px;height:8px;border-radius:50%;background:#5fb088;box-shadow:0 0 0 3px rgba(95,176,136,.18)"></span>Live rebalance</span>`;
   host.innerHTML=ovPanel(title, phaseName, body, "0", "orders");
 }

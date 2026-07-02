@@ -330,11 +330,32 @@ def _execution_status(client, db_engine, target_leverage: float) -> dict:
     # Chase board (Phase 2): the per-order limit walk for the live cycle. Only while active, so a
     # finished cycle's telemetry doesn't linger once the panel would otherwise hide.
     chase = data.api_chase(db_engine).get("orders", []) if active else []
+
+    # Rotation flow (Phase 3): equity sells → cash → buys for this cycle, by filled notional — the
+    # capital rotation the rebalance performs. Options (the SPY overlay) are excluded; this is the
+    # equity-cash story. Aggregated from filled orders (proceeds fund purchases).
+    sells: dict = {}
+    buys: dict = {}
+    for o in filled:
+        sym = o.get("symbol")
+        if not sym or is_opt(sym):
+            continue
+        fq = float(o.get("filled_qty") or 0)
+        px = o.get("filled_avg_price")
+        if not fq or px is None:
+            continue
+        bucket = sells if str(o.get("side")).lower() == "sell" else buys
+        bucket[sym] = bucket.get(sym, 0.0) + fq * float(px)
+    _flow = lambda d: [{"symbol": s, "notional": round(v, 2)}
+                       for s, v in sorted(d.items(), key=lambda kv: -kv[1])]
+    rotation = {"sells": _flow(sells), "buys": _flow(buys),
+                "raised": round(sum(sells.values()), 2), "deployed": round(sum(buys.values()), 2)}
+
     return {"active": active, "phase": phase, "n_filled": n_filled, "n_target": n_target,
             "n_working": len(openo), "leverage": state.get("leverage"),
             "target_leverage": target_leverage, "gross_exposure": state.get("gross_exposure"),
             "nav": state.get("nav"), "names": names, "blotter": blotter, "recent_fills": recent,
-            "chase": chase}
+            "chase": chase, "rotation": rotation}
 
 
 # Arrival-mid lookups are immutable once an order has filled, so cache them per (symbol, submit
