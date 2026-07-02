@@ -27,8 +27,14 @@
   .sbchips { display: flex; align-items: center; gap: 6px 16px; flex-wrap: wrap; }
 
   /* ticker tape — continuously-scrolling live prices, pinned under the status bar */
-  .tape { overflow: hidden; white-space: nowrap; background: rgba(8,14,26,.94); backdrop-filter: blur(12px);
+  .tape { display: flex; align-items: stretch; background: rgba(8,14,26,.94); backdrop-filter: blur(12px);
           border-bottom: 1px solid var(--line); }
+  .tape-vp { flex: 1; overflow: hidden; white-space: nowrap; }
+  .tape-session { display: none; align-items: center; gap: 6px; padding: 4px 14px; flex: none;
+                  border-right: 1px solid var(--line); background: rgba(216,168,75,.10);
+                  font: 600 9px 'Space Grotesk'; letter-spacing: .08em; text-transform: uppercase;
+                  color: var(--amber); white-space: nowrap; }
+  .tape-session i { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); flex: none; }
   .tape:hover .tape-track { animation-play-state: paused; }
   .tape-track { display: inline-flex; align-items: center; will-change: transform;
                 animation: tape-scroll 90s linear infinite; }
@@ -245,6 +251,8 @@
   .tkp-name { font: 400 11.5px 'Space Grotesk'; color: var(--muted); margin-top: 2px; }
   .tkp-px { font: 600 17px var(--mono); color: var(--fg); font-variant-numeric: tabular-nums; }
   .tkp-chg { font: 500 12px var(--mono); margin-top: 2px; text-align: right; }
+  .tkp-sess { font: 600 8.5px 'Space Grotesk'; letter-spacing: .06em; text-transform: uppercase;
+              color: var(--amber); margin-top: 3px; text-align: right; }
   .tkp-rgt { text-align: right; }
   .tkp-rng { margin-top: 13px; }
   .tkp-rl { font: 600 9px 'Space Grotesk'; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
@@ -376,7 +384,7 @@
 <div class="statusbar" id="statusbar" style="display:none">
   <div class="sbchips" id="sbchips"></div>
 </div>
-<div class="tape" id="tape" style="display:none" title="live prices — hover to pause"><div class="tape-track" id="tapetrack"></div></div>
+<div class="tape" id="tape" style="display:none" title="live prices — hover to pause"><span class="tape-session" id="tapeSession"></span><div class="tape-vp"><div class="tape-track" id="tapetrack"></div></div></div>
 </div>
 
 <div id="overview-view">
@@ -557,8 +565,9 @@ function tkPopHtml(sym){
   const rng = (label,lo,hi) => `<div class="tkp-rng"><div class="tkp-rl">${label}</div>${tkRange(lo,hi,live)}`
     +`<div class="tkp-re"><span>${lo==null?"–":usd2(lo)}</span><span>${hi==null?"–":usd2(hi)}</span></div></div>`;
   const row = (k,v) => `<div class="tkp-row"><span class="tkp-k">${k}</span><span class="tkp-v">${v}</span></div>`;
+  const tag = sessionLabel();   // 'Pre-market' / 'After hours' → the % is the extended-hours move vs prior close
   return `<div class="tkp-h"><div><div class="tkp-sym">${sym}</div><div class="tkp-name">${r.name||"—"}</div></div>`
-    +`<div class="tkp-rgt"><div class="tkp-px">${live==null?"–":usd2(live)}</div><div class="tkp-chg" style="color:${c}">${arw} ${d==null?"–":spct(Math.abs(d))}</div></div></div>`
+    +`<div class="tkp-rgt"><div class="tkp-px">${live==null?"–":usd2(live)}</div><div class="tkp-chg" style="color:${c}">${arw} ${d==null?"–":spct(d)}</div>${tag?`<div class="tkp-sess">${tag}</div>`:""}</div></div>`
     +rng("Day range", q.low, q.high) + rng("52-week range", q.wk52_low, q.wk52_high)
     +`<div class="tkp-hr"></div>` + row("Open", q.open==null?"–":usd2(q.open))
     + row("Prev close", q.prev_close==null?"–":usd2(q.prev_close)) + row("Volume", fmtVol(q.volume));
@@ -1119,6 +1128,18 @@ function sessionInfo(){
   return {dot:"mut", val: toOpen!=null?`Closed · opens in ${dhm(toOpen)}`:"Closed",
           detail: no?`Opens ${etWhen(MKT.next_open)}`:""};
 }
+// Coarse session phase for labeling live prices: 'rth' | 'pre' | 'post' | 'closed'. Alpaca's
+// is_open is authoritative for RTH (it handles holidays); the ET bands split pre/after otherwise.
+function mktSession(){
+  if(!MKT) return 'closed';
+  if(MKT.is_open) return 'rth';
+  const et=etParts(etNow()), t=et.h*60+et.m;
+  if(et.wd==="Sat" || et.wd==="Sun") return 'closed';
+  if(t>=240 && t<570) return 'pre';       // 04:00–09:30 ET
+  if(t>=960 && t<1200) return 'post';     // 16:00–20:00 ET
+  return 'closed';
+}
+function sessionLabel(){ const s=mktSession(); return s==='pre'?'Pre-market':s==='post'?'After hours':''; }
 function sessionChipInner(){ const s=sessionInfo();
   return `<span class="hdot ${s.dot}"></span><span class="sbk">Market</span><span class="sbv">${s.val}</span>`; }
 function tickSession(){
@@ -1323,7 +1344,13 @@ function tapeItem(sym){
 function renderTape(s){
   const rows = (s.positions||[]).filter(r => r.symbol && !_isOpt(r.symbol) && r.qty);
   if(!rows.length){ $("tape").style.display="none"; return; }
-  $("tape").style.display="block";
+  $("tape").style.display="flex";
+  // Global session badge: when the board is priced off pre/after-hours prints (not RTH), say so —
+  // the day % on each item is then the extended-hours move vs the prior close, not the RTH change.
+  const sess = mktSession(), badge = $("tapeSession");
+  if(badge){ if(sess==='pre'||sess==='post'){ badge.style.display="inline-flex";
+      badge.innerHTML = `<i></i>${sess==='pre'?'Pre-market':'After hours'}`; }
+    else badge.style.display="none"; }
   const key = rows.map(r=>r.symbol).join(",");
   if(key !== _tapeSyms){                                  // holdings changed → rebuild the marquee
     _tapeSyms = key;
