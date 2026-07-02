@@ -251,6 +251,83 @@ def _live_orders(client, limit: int) -> list[dict]:
              "submitted_at": o.get("submitted_at")} for o in orders]
 
 
+# Order statuses that mean "still working" (in the market, not terminal).
+_OPEN_ORDER_STATES = {"new", "accepted", "partially_filled", "pending_new",
+                      "accepted_for_bidding", "pending_replace", "replaced", "held"}
+
+
+def _execution_status(client, db_engine, target_leverage: float) -> dict:
+    """Live trading-session progress for the auto-surfacing execution visualizer (Phase 1).
+
+    Poll-only, from Alpaca live orders + the snapshot state — no engine changes. ``active`` is
+    True whenever any order is still working (a rebalance / call-write / roll is happening). Reports
+    the phase (equity chase vs writing calls vs settling), per-name progress vs target weight, the
+    leverage ramp, a working-order blotter, and recent fills.
+    """
+    state = data.api_state(db_engine)
+    try:
+        orders = client.get_orders(status="all", limit=200) if client is not None else []
+    except Exception as exc:  # noqa: BLE001 — a read hiccup just yields an idle panel
+        log.warning("execution status: order read failed: %s", exc)
+        orders = []
+    is_opt = data._is_option
+    openo = [o for o in orders if str(o.get("status") or "").lower() in _OPEN_ORDER_STATES]
+    open_by_sym: dict = {}
+    for o in openo:
+        open_by_sym.setdefault(str(o.get("symbol")), []).append(o)
+    open_eq = [o for o in openo if not is_opt(o.get("symbol"))]
+    open_opt = [o for o in openo if is_opt(o.get("symbol"))]
+
+    active = bool(openo)
+    phase = ("writing_calls" if open_opt and not open_eq
+             else "equity_chase" if open_eq
+             else "idle")
+
+    # Per-name equity progress vs the last rebalance's target weights (carried on each state row).
+    names, n_filled, n_target = [], 0, 0
+    for r in state.get("positions", []):
+        sym = r.get("symbol")
+        if not sym or is_opt(sym):
+            continue
+        tw, hw = r.get("target_weight"), r.get("weight")
+        if not tw and not hw:
+            continue
+        oo = open_by_sym.get(sym, [])
+        if oo:
+            status = "working"
+        elif tw and hw and hw >= tw * 0.9:
+            status = "filled"
+        elif hw:
+            status = "held"
+        else:
+            status = "pending"
+        if tw:                                    # progress is measured against the target book
+            n_target += 1
+            if status in ("filled", "held"):
+                n_filled += 1
+        fill_pct = (min(1.0, hw / tw) if (tw and hw) else (1.0 if hw else 0.0))
+        names.append({"symbol": sym, "target_weight": tw, "held_weight": hw,
+                      "status": status, "fill_pct": fill_pct, "open_orders": len(oo)})
+    names.sort(key=lambda d: -((d["target_weight"] or d["held_weight"]) or 0))
+
+    blotter = [{"symbol": o.get("symbol"), "side": o.get("side"), "qty": o.get("qty"),
+                "filled_qty": o.get("filled_qty"), "type": o.get("type"),
+                "limit_price": o.get("limit_price"), "status": o.get("status"),
+                "is_option": is_opt(o.get("symbol"))} for o in openo]
+    filled = [o for o in orders if str(o.get("status") or "").lower() == "filled"
+              and o.get("filled_avg_price")]
+    filled.sort(key=lambda o: str(o.get("filled_at") or o.get("submitted_at") or ""), reverse=True)
+    recent = [{"symbol": o.get("symbol"), "side": o.get("side"),
+               "qty": o.get("filled_qty") or o.get("qty"),
+               "price": o.get("filled_avg_price"), "is_option": is_opt(o.get("symbol"))}
+              for o in filled[:12]]
+
+    return {"active": active, "phase": phase, "n_filled": n_filled, "n_target": n_target,
+            "n_working": len(openo), "leverage": state.get("leverage"),
+            "target_leverage": target_leverage, "gross_exposure": state.get("gross_exposure"),
+            "nav": state.get("nav"), "names": names, "blotter": blotter, "recent_fills": recent}
+
+
 # Arrival-mid lookups are immutable once an order has filled, so cache them per (symbol, submit
 # time) — a panel refresh shouldn't re-hit the data API for the same fills.
 _ARRIVAL_MID_CACHE: dict = {}
@@ -474,6 +551,16 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
             except Exception as exc:  # noqa: BLE001
                 log.warning("live orders read failed, falling back to Postgres: %s", exc)
         return data.api_orders(db_engine, limit)
+
+    @app.get("/api/execution")
+    def execution() -> dict:
+        """Live trading-session progress for the auto-surfacing execution visualizer.
+
+        ``active`` is False (panel hidden) in Postgres-only mode or when nothing is working.
+        """
+        if client is None:
+            return {"active": False}
+        return _execution_status(client, db_engine, meta.get("leverage_cap", 2.0))
 
     @app.get("/api/calls")
     def calls() -> list:

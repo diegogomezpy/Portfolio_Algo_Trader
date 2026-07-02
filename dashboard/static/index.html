@@ -396,6 +396,7 @@
 
 <div id="overview-view">
   <div class="wrap" style="display:flex;flex-direction:column;gap:14px;padding-top:16px">
+    <div id="ov-exec" style="display:none"></div>
     <div id="ov-session"></div>
     <div id="ov-navhero"></div>
     <div id="ov-kpi"></div>
@@ -1643,6 +1644,39 @@ function renderWaterfall(s){
 }
 
 // Repaint the whole Overview from the latest state (called on load + every 1s tick).
+// ---- Live execution visualizer (Phase 1: run-progress + blotter; auto-surfaces during trading) ----
+function renderExec(ex){
+  const host=$("ov-exec"); if(!host) return;
+  if(!ex || !ex.active){ host.style.display="none"; host.innerHTML=""; return; }
+  host.style.display="block";
+  const phaseName={equity_chase:"Equity chase",writing_calls:"Writing calls",idle:"Settling"}[ex.phase]||"Trading";
+  const curIdx = ex.phase==="equity_chase"?1 : ex.phase==="writing_calls"?2 : 3;
+  const strip=[["Close calls",0],["Equity chase",1],["Write calls",2],["Snapshot",3]].map(([l,i])=>{
+    const done=i<curIdx, cur=i===curIdx, mark=done?"✓":cur?"●":"○";
+    const c=done?"var(--green)":cur?"var(--fg)":"var(--muted)";
+    return `<span style="color:${c};font:500 11px 'Space Grotesk'">${mark} ${l}</span>`; }).join("");
+  const pct = ex.n_target ? Math.round(ex.n_filled/ex.n_target*100) : 0;
+  const lev=ex.leverage, tlev=ex.target_leverage;
+  const scol={filled:"var(--green)",held:"var(--green)",working:"var(--amber)",pending:"var(--muted)"};
+  const names=(ex.names||[]).map(n=>{ const c=scol[n.status]||"var(--muted)", fw=Math.round((n.fill_pct||0)*100);
+    return `<div style="display:grid;grid-template-columns:58px 1fr 56px;gap:8px;align-items:center;padding:4px 0">`
+      +`<span style="font:600 10px var(--mono);color:var(--fg-dim)">${n.symbol}</span>`
+      +`<span style="height:8px;border-radius:4px;background:#0c1626;overflow:hidden;display:block"><span style="display:block;height:100%;width:${fw}%;background:${c};transition:width .4s var(--ease)"></span></span>`
+      +`<span style="text-align:right;font:600 8.5px 'Space Grotesk';letter-spacing:.03em;text-transform:uppercase;color:${c}">${n.status}</span></div>`; }).join("");
+  const fills=(ex.recent_fills||[]).slice(0,8).map(f=>`<span style="margin-right:16px;white-space:nowrap"><b style="color:var(--fg)">${f.symbol}</b> ${fmt(f.qty)} @ ${f.price!=null?(+f.price).toFixed(2):'—'}</span>`).join("");
+  const body=`<div style="display:flex;gap:18px;flex-wrap:wrap;padding:11px 16px;border-bottom:1px solid var(--line-soft)">${strip}</div>`
+    +`<div style="display:flex;align-items:center;gap:14px;padding:12px 16px">`
+    +`<span style="font:500 13px var(--mono);color:var(--fg);white-space:nowrap">${ex.n_filled} / ${ex.n_target} <span style="color:var(--muted);font-size:11px">filled</span></span>`
+    +`<div style="flex:1;min-width:120px;height:8px;border-radius:5px;background:var(--panel-2);overflow:hidden;position:relative"><div style="position:absolute;left:0;top:0;height:100%;width:${pct}%;background:linear-gradient(90deg,#2a6f63,#46b8ad);transition:width .4s var(--ease)"></div></div>`
+    +`<span style="font:500 12px var(--mono);color:var(--fg-dim);white-space:nowrap">${lev!=null?lev.toFixed(2):'–'}× <span style="color:var(--muted)">→ ${tlev?tlev.toFixed(2):'–'}×</span></span>`
+    +`<span style="font:500 11px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:var(--amber);white-space:nowrap">${ex.n_working} working</span></div>`
+    +(names?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(196px,1fr));gap:0 24px;padding:2px 16px 12px">${names}</div>`:"")
+    +(fills?`<div style="border-top:1px solid var(--line-soft);padding:9px 16px;display:flex;align-items:center;gap:10px;overflow:hidden;font:400 11px var(--mono);color:var(--fg-dim)"><span style="font:600 9px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted);flex:none">Fills</span><div style="overflow:hidden">${fills}</div></div>`:"");
+  const title=`<span style="display:inline-flex;align-items:center;gap:7px"><span style="width:8px;height:8px;border-radius:50%;background:#5fb088;box-shadow:0 0 0 3px rgba(95,176,136,.18)"></span>Live rebalance</span>`;
+  host.innerHTML=ovPanel(title, phaseName, body, "0", "orders");
+}
+async function pollExec(){ try{ renderExec(await get("/api/execution")); }catch(e){} }
+
 function paintOverview(s){
   _ovS=s; pushPx(s); renderTape(s);
   renderSession(); renderNavHero(s); renderKpiRibbon(s);
@@ -1660,6 +1694,7 @@ async function loadOverview(){
     return; }
   _navBase = hist || []; _calls = calls || []; _eventsData = (ev && ev.events) || [];
   paintOverview(s);
+  pollExec();                                            // auto-surface the live execution panel
 }
 
 // ===================== Portfolio — design-doc layout =====================
@@ -2114,6 +2149,7 @@ setInterval(async () => {
   if (activeView === "overview") paintOverview(s);        // full live repaint (NAV flash, treemap, gauge, events, session)
   else paintPortfolioLive(s);                              // positions + calls + tape live prices
 }, 1000);
+setInterval(() => { if (activeView === "overview") pollExec(); }, 2500);  // live execution panel while trading
 setInterval(loadActive, 30000);   // full re-read of the active view every 30s
 setInterval(tickFreshness, 1000); // tick the "checked / data age" header every second
 setInterval(tickSession, 1000);   // tick the live ET clock + session countdown every second
