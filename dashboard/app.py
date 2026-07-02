@@ -345,13 +345,13 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
             if price_feed is not None:
                 price_feed.stop()
 
-    app = FastAPI(title="SFI · Systematic Factor Income", lifespan=lifespan)
+    app = FastAPI(title="SFI · Systematic Equity Premium Income", lifespan=lifespan)
     if _STATIC.exists():
         app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
-        return _INDEX.read_text() if _INDEX.exists() else "<h1>SFI · Systematic Factor Income</h1>"
+        return _INDEX.read_text() if _INDEX.exists() else "<h1>SFI · Systematic Equity Premium Income</h1>"
 
     @app.get("/favicon.svg")
     def favicon() -> Response:

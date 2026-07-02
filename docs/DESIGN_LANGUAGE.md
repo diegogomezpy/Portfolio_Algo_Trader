@@ -1,6 +1,6 @@
 # SFI Design Language
 
-**SFI — Systematic Factor Income.** This is the design language for everything the project shows
+**SFI — Systematic Equity Premium Income.** This is the design language for everything the project shows
 a human: the live dashboard, the generated backtest report, emails, and any future surface.
 It supersedes the earlier "dark-institutional / terminal-grade" look (near-monochrome ink, blue
 accent, IBM Plex Sans).
@@ -21,7 +21,7 @@ There are three artefacts; keep them in sync:
 
 ## 1 · Identity
 
-- **Name:** SFI · Systematic Factor Income.
+- **Name:** SFI · Systematic Equity Premium Income.
 - **Mark:** a 3×3 dot grid with the **middle column in teal**, the rest in faint slate. Rendered
   as the header logo (`dashboard/static/index.html`) and the favicon (`dashboard/app.py`).
 - **Voice:** a research terminal, not a storefront. Dense, quiet, numeric. Every pixel either
