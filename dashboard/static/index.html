@@ -226,6 +226,12 @@
   .ovhead { display: flex; align-items: baseline; justify-content: space-between; padding: 9px 16px; border-bottom: 1px solid var(--line-soft); }
   .ovhk { font: 600 10px 'Space Grotesk'; letter-spacing: .13em; text-transform: uppercase; color: #8295ab; }
   .ovhs { font: 400 10px var(--mono); color: #5f6b80; }
+  .srcinfo { font-size: 10px; color: var(--faint); cursor: help; vertical-align: baseline;
+             transition: color .12s var(--ease); }
+  .srcinfo:hover { color: var(--accent); }
+  .ribsrc { position: absolute; top: 6px; right: 8px; font-size: 10px; color: var(--faint);
+            cursor: help; z-index: 2; transition: color .12s var(--ease); }
+  .ribsrc:hover { color: var(--accent); }
   .ov-live { display: grid; grid-template-columns: 1.62fr 1fr; gap: 14px; align-items: stretch; }
   @media (max-width: 1100px) { .ov-live { grid-template-columns: 1fr; } }
   .ovflash { display: inline-block; border-radius: 6px; }
@@ -394,7 +400,7 @@
     <div id="ov-kpi"></div>
     <div class="ov-live">
       <div class="ovpanel" style="display:flex;flex-direction:column;overflow:hidden">
-        <div class="ovhead"><span class="ovhk">Holdings heatmap</span><span class="ovhs">size = weight · color = day move</span></div>
+        <div class="ovhead"><span class="ovhk">Holdings heatmap</span><span class="ovhs">size = weight · color = day move <span class="srcinfo" data-tip="Source: Alpaca account + IEX live trade feed — position weights from the account, day move from the live price stream (vs prior close).">ⓘ</span></span></div>
         <div style="flex:1;min-height:300px" id="ov-treemap"></div>
       </div>
       <div style="display:flex;flex-direction:column;gap:14px" id="ov-side">
@@ -404,7 +410,7 @@
     </div>
     <div id="ov-waterfall"></div>
     <div class="ovpanel">
-      <div class="ovhead"><span class="ovhk">System health</span><span class="ovhs" id="healthsub"></span></div>
+      <div class="ovhead"><span class="ovhk">System health</span><span class="ovhs"><span id="healthsub"></span> <span class="srcinfo" data-tip="Source: engine heartbeat + Alpaca market clock — data freshness, rebalance schedule, drift & alerts.">ⓘ</span></span></div>
       <div class="health" id="healthtiles"></div>
     </div>
     <div class="footstrip" id="footstrip"></div>
@@ -474,11 +480,11 @@
     <!-- Attribution (live P&L by holding / sector — an SFI extra beyond the mock) -->
     <div class="subview flexcol" id="sub-attribution" style="display:none">
       <div class="ovpanel">
-        <div class="ovhead"><span class="ovhk">Today's P&amp;L by holding</span><span class="ovhs" id="attrsub"></span></div>
+        <div class="ovhead"><span class="ovhk">Today's P&amp;L by holding</span><span class="ovhs"><span id="attrsub"></span> <span class="srcinfo" data-tip="Source: engine snapshot × IEX live prices — each holding's day P&amp;L = market value × day % (vs prior close).">ⓘ</span></span></div>
         <div style="padding:12px 16px" id="attrnames"></div>
       </div>
       <div class="ovpanel">
-        <div class="ovhead"><span class="ovhk">By sector</span><span class="ovhs" id="attrsecsub"></span></div>
+        <div class="ovhead"><span class="ovhk">By sector</span><span class="ovhs"><span id="attrsecsub"></span> <span class="srcinfo" data-tip="Source: engine snapshot × IEX live prices — today's P&amp;L rolled up by GICS sector.">ⓘ</span></span></div>
         <div style="padding:12px 16px" id="attrsectors"></div>
       </div>
       <div class="ovpanel"><div style="padding:12px 16px;font-size:11.5px;color:var(--muted);line-height:1.55">
@@ -761,7 +767,7 @@ function renderPeriodPanel(tr, risk){
     kc("Max drawdown", pct(m.mdd), 'var(--red)', "peak-to-trough"),
     kc("Volatility"+(imm?"*":""), m.vol!=null?pct(m.vol):"—", 'var(--fg)', imm?"needs ≥10 days":"annualized"),
   ].join("");
-  host.innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Period performance</span>`
+  host.innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Period performance${srcInfo('navcurve')}</span>`
     +`<span style="display:inline-flex;background:var(--bg-2);border:1px solid var(--line);border-radius:8px;padding:2px">${tabBtns}</span></div>`
     +`<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line-soft)">${cells}</div>`
     +`<div style="padding:8px 10px 10px">${periodSparkSvg(slice)}</div></div>`;
@@ -797,7 +803,7 @@ function calHtml(monthly){
     return `<div>${head}${rows}</div>`;
   })();
   const sub=cells.length?`${cells.length} month${cells.length>1?'s':''} · green up / red down · “·” partial`:"% per month · net";
-  return ovPanel("Monthly returns", sub, body, "13px 16px");
+  return ovPanel("Monthly returns", sub, body, "13px 16px", "navcurve");
 }
 
 // Rolling Sharpe strip (mock: target band 1.0–1.5) fed the real rolling-Sharpe series.
@@ -820,7 +826,7 @@ function sharpeStripHtml(risk){
     const cur=`<div style="display:flex;align-items:baseline;gap:8px;padding:0 2px 8px"><span style="font:500 22px var(--mono);color:var(--fg)">${vals[vals.length-1].toFixed(2)}</span><span style="font:400 10.5px 'Space Grotesk';color:var(--muted)">rolling ${win}-day · target band 1.0–1.5</span></div>`;
     return cur+g;
   })();
-  return ovPanel("Rolling Sharpe","annualized", body, "12px 14px 10px");
+  return ovPanel("Rolling Sharpe","annualized", body, "12px 14px 10px", "risk");
 }
 
 // Per-calendar-year returns from a daily series (chained off the prior year-end).
@@ -851,7 +857,7 @@ function annualHtml(tr){
     const leg=`<div style="display:flex;gap:16px;justify-content:center;padding-top:2px"><span style="display:inline-flex;align-items:center;gap:6px;font:400 10.5px 'Space Grotesk';color:var(--fg-dim)"><span style="width:12px;height:3px;background:#46b8ad;border-radius:2px"></span>Strategy</span><span style="display:inline-flex;align-items:center;gap:6px;font:400 10.5px 'Space Grotesk';color:#aab4c3"><span style="width:12px;height:3px;background:#5a6781;border-radius:2px"></span>SPY</span></div>`;
     return g+leg;
   })();
-  return ovPanel("Annual returns","strategy vs SPY", body, "12px 14px 12px");
+  return ovPanel("Annual returns","strategy vs SPY", body, "12px 14px 12px", "benchmarks");
 }
 
 // 6-col ribbon (mock): Days live · Since inception · Ann return · Live Sharpe · Premium · Avg slippage.
@@ -866,7 +872,7 @@ function renderReturnsRibbon(tr, slip){
     kpiCell("Premium collected", usd(tr.premium_collected), "covered calls"),
     kpiCell("Avg slippage", avgBps, "vs intended price"),
   ].join("");
-  $("pr-ribbon").innerHTML=`<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden">${cells}</div>`;
+  $("pr-ribbon").innerHTML=ribWrap(`<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden">${cells}</div>`, "kpiret");
 }
 
 // Growth chart (mock multiLine) — strategy teal + benchmarks neutral/purple/blue.
@@ -889,7 +895,7 @@ function renderReturnsTrack(tr){
   const bsyms=Object.keys(tr.benchmarks||{});
   bsyms.forEach((sym,i)=>series.push({data:tr.benchmarks[sym].norm,color:bcol(sym,i),w:1.6,name:sym}));
   const legend=series.map(s=>`<span style="display:inline-flex;align-items:center;gap:6px;font:400 11.5px 'Space Grotesk';color:var(--fg-dim)"><span style="width:14px;height:3px;border-radius:2px;background:${s.color}"></span>${s.name}</span>`).join("");
-  $("pr-track").innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Growth since inception — strategy vs benchmarks</span><span class="ovhs">${tr.dates[0]} → ${tr.dates[tr.dates.length-1]}</span></div><div style="display:flex;gap:18px;padding:11px 18px 2px;flex-wrap:wrap">${legend}</div><div style="padding:6px 8px 10px">${perfMultiLine(tr.dates,series)}</div></div>`;
+  $("pr-track").innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Growth since inception — strategy vs benchmarks</span><span class="ovhs">${tr.dates[0]} → ${tr.dates[tr.dates.length-1]}${srcInfo('benchmarks')}</span></div><div style="display:flex;gap:18px;padding:11px 18px 2px;flex-wrap:wrap">${legend}</div><div style="padding:6px 8px 10px">${perfMultiLine(tr.dates,series)}</div></div>`;
 }
 // Benchmark comparison table (mock grid) + descriptions.
 function renderBenchTable(tr){
@@ -904,7 +910,7 @@ function renderBenchTable(tr){
   let desc="";
   if(bsyms.length){ desc=`<div style="padding:12px 16px 14px"><div style="font:500 10px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:7px">What these benchmarks are</div>`
     +bsyms.map((sym,i)=>`<div style="font:400 11.5px/1.55 'Space Grotesk';color:var(--muted);margin-bottom:4px"><b style="color:${bcol(sym,i)};font-weight:600">${tr.benchmarks[sym].name||sym}</b> — ${tr.benchmarks[sym].desc||""}</div>`).join("")+`</div>`; }
-  $("pr-bench").innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Benchmark comparison</span><span class="ovhs">paper, since go-live</span></div>${head}${rows}${note}${desc}</div>`;
+  $("pr-bench").innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Benchmark comparison</span><span class="ovhs">paper, since go-live${srcInfo('benchmarks')}</span></div>${head}${rows}${note}${desc}</div>`;
 }
 
 // ---- Execution sub-view (mock: slippage grid) + fees (SFI extra) ----------------
@@ -928,7 +934,7 @@ function renderExecution(slip, fees){
     slipBody='<div class="se-empty" style="padding:20px 16px">No filled orders yet — this compares each fill to its reference price (the order’s limit, or the arrival mid for market orders) once there’s trading activity.</div>';
   }
   const slipSub=slip&&slip.n_fills?`${slip.n_fills} filled order${slip.n_fills>1?'s':''} · +bps = paid up vs reference`:"vs intended price";
-  $("ex-slip").innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Execution quality / slippage</span><span class="ovhs">${slipSub}</span></div>${slipBody}</div>`;
+  $("ex-slip").innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Execution quality / slippage</span><span class="ovhs">${slipSub}${srcInfo('slippage')}</span></div>${slipBody}</div>`;
 
   // Fees: regulatory / broker charges (CAT, TAF, SEC, …) from Alpaca activities — an SFI extra.
   const allIn=(fees&&fees.total_usd||0)+(slip&&slip.total_slippage_usd>0?slip.total_slippage_usd:0);
@@ -945,7 +951,7 @@ function renderExecution(slip, fees){
   } else {
     feeSub=""; feeBody='<div class="se-empty" style="padding:20px 16px">No fees yet. Regulatory fees (CAT, TAF, SEC Section 31) appear here the morning after a trade — tiny (often rounded to $0.01) but real, and already in NAV.</div>';
   }
-  $("ex-fees").innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Fees</span><span class="ovhs">${feeSub}</span></div><div style="padding:12px 16px">${feeBody}</div></div>`;
+  $("ex-fees").innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Fees</span><span class="ovhs">${feeSub}${srcInfo('fees')}</span></div><div style="padding:12px 16px">${feeBody}</div></div>`;
 }
 
 // ---- Risk sub-view (mock: contrib+corr / distribution / ribbon / drawdown / rolling vol) --------
@@ -970,7 +976,7 @@ function riskcHtml(rcx){
       return `<div title="${esc(tip)}" style="display:grid;grid-template-columns:54px 1fr 46px;gap:10px;align-items:center;padding:6px 0"><span style="font:600 11px var(--mono);color:var(--fg-dim)">${r.symbol}</span><span style="height:14px;border-radius:3px;background:#0c1626;overflow:hidden;display:block"><span style="display:block;height:100%;width:${(r.rc_pct/mx*100).toFixed(1)}%;background:${c};border-radius:3px"></span></span><span style="text-align:right;font:500 11px var(--mono);color:#aab4c3">${(r.rc_pct*100).toFixed(1)}%</span></div>`; }).join("");
   })();
   const sub=(rcx&&rcx.portfolio_vol!=null)?`vol ${pct(rcx.portfolio_vol)} · as of ${String(rcx.ts).slice(0,10)}`:"% of portfolio variance";
-  return ovPanel("Risk contribution", sub, body, "10px 15px 12px");
+  return ovPanel("Risk contribution", sub, body, "10px 15px 12px", "riskcontrib");
 }
 
 // Correlation matrix (mock corrHtml): pairwise trailing-60d return correlation heatmap.
@@ -988,7 +994,7 @@ function corrHtml(corr){
     return g+"</svg>";
   })();
   const sub=(corr&&corr.available)?`pairwise · trailing ${corr.window||60}d`:"pairwise · trailing 60d";
-  return ovPanel("Correlation", sub, body, "12px 14px");
+  return ovPanel("Correlation", sub, body, "12px 14px", "correlation");
 }
 
 // Daily-return distribution (mock distHtml): histogram, VaR line, mean marker.
@@ -1011,7 +1017,7 @@ function distHtml(risk){
     for(let t=0;t<=4;t++){ const v=lo+(hi-lo)*t/4; g+=`<text x="${X(v).toFixed(1)}" y="${H-12}" text-anchor="middle" font-size="9" fill="${mut}" font-family="IBM Plex Mono">${(v*100).toFixed(1)}%</text>`; }
     return g+"</svg>";
   })();
-  return ovPanel("Daily return distribution", `${a.length} daily return${a.length===1?'':'s'} · 95% VaR`, body, "12px 12px 8px");
+  return ovPanel("Daily return distribution", `${a.length} daily return${a.length===1?'':'s'} · 95% VaR`, body, "12px 12px 8px", "risk");
 }
 
 // 6-col risk ribbon (mock): Max DD · Current DD · Volatility · 1-day VaR · Live Sharpe · Leverage.
@@ -1027,7 +1033,7 @@ function renderRiskRibbon(risk, st){
     kpiCell("Live Sharpe"+star, risk.mature&&risk.sharpe!=null?risk.sharpe.toFixed(2):"—", risk.mature?"annualized":"needs ≥10 days"),
     kpiCell("Leverage", lev==null?"–":lev.toFixed(2)+"×", `cap ${cap.toFixed(1)}× · gross ${usd(st?st.gross_exposure:null)}`, {extra:levBar}),
   ].join("");
-  $("rk-ribbon").innerHTML=`<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden">${cells}</div>`;
+  $("rk-ribbon").innerHTML=ribWrap(`<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden">${cells}</div>`, "kpirisk");
 }
 
 // Underwater / drawdown (mock underwater): 0% high-water mark at top, losses shaded below.
@@ -1049,7 +1055,7 @@ function underwaterHtml(risk){
     return s+"</svg>";
   })();
   const sub=dates.length?`${dates[0]} → ${dates[dates.length-1]} · 0% = high-water mark`:"0% = high-water mark";
-  return ovPanel("Drawdown", sub, body, "8px 8px 10px");
+  return ovPanel("Drawdown", sub, body, "8px 8px 10px", "risk");
 }
 
 // Rolling volatility (mock rvChart): trailing-window annualized vol, amber.
@@ -1069,10 +1075,44 @@ function rollVolHtml(risk){
     s+=`<path d="${p}" fill="none" stroke="${warn}" stroke-width="2" stroke-linejoin="round"/>`;
     return s+"</svg>";
   })();
-  return ovPanel("Rolling volatility", `${win}-day window · annualized`, body, "8px 8px 10px");
+  return ovPanel("Rolling volatility", `${win}-day window · annualized`, body, "8px 8px 10px", "risk");
 }
 
 const esc = s => String(s).replace(/"/g,"&quot;");
+
+// ---- data-source provenance: a hover-only ⓘ per panel (design §12 disclosure) --------------
+// One entry per source of truth; each panel header carries an ⓘ whose tooltip names its origin.
+const SRC = {
+  live:       "Source: Alpaca account + IEX live trade feed — NAV & positions marked to the live price stream, day % vs the prior close. Falls back to the 60s snapshot when the stream is quiet.",
+  alpaca:     "Source: Alpaca (broker) — live account, positions, orders & fills.",
+  orders:     "Source: Alpaca — live order book (open + recent), else the engine's Postgres order log.",
+  navcurve:   "Source: engine / Postgres — daily NAV snapshots written by the 60s monitor from the Alpaca account.",
+  risk:       "Source: engine — risk analytics derived from the daily NAV curve (Postgres snapshots).",
+  riskcontrib:"Source: engine — Euler risk decomposition (from the covariance matrix) computed at each rebalance, stored in Postgres.",
+  correlation:"Source: Alpaca daily bars (IEX) — pairwise trailing-60-day return correlation across the top holdings.",
+  benchmarks: "Source: engine NAV curve (Postgres) vs SPY (yfinance) and BXMD/BXRD (CBOE).",
+  factors:    "Source: engine factor scores (Postgres) — computed from fundamentals/prices each rebalance.",
+  targets:    "Source: engine — target weights & risk gate from the last rebalance (Postgres rebalance_log).",
+  calls:      "Source: engine — covered-call positions & premium (Postgres options_lifecycle + the live snapshot).",
+  premium:    "Source: engine — lifetime option premium collected (Postgres options_lifecycle).",
+  quotes:     "Source: Alpaca daily bars (IEX) — OHLCV + 52-week range; the live price is overlaid on top.",
+  bars:       "Source: Alpaca market data — hourly/daily bars (IEX), extended live.",
+  events:     "Source: yfinance (earnings dates) + engine (option expiries & the rebalance schedule).",
+  fees:       "Source: Alpaca account activities — regulatory/broker fees (CAT · TAF · SEC).",
+  slippage:   "Source: Alpaca fills vs the arrival NBBO mid (Alpaca historical quotes/trades).",
+  reference:  "Source: SEC company names + the SIC→GICS sector map.",
+  clock:      "Source: Alpaca market clock & calendar (holiday-aware).",
+  health:     "Source: engine heartbeat + Alpaca clock — freshness, rebalance schedule, drift & alerts.",
+  alerts:     "Source: engine — alert log (Postgres), classified by severity.",
+  attribution:"Source: engine snapshot × IEX live prices — each holding's day P&L = market value × day %.",
+  kpiov:      "Source: Alpaca live account — NAV, day P&L, leverage, cash & positions; premium collected from the engine's options ledger.",
+  kpiret:     "Source: engine — days live, return, annualized & Sharpe from the NAV curve, premium from the options ledger; avg slippage from Alpaca fills.",
+  kpirisk:    "Source: engine — drawdown, volatility, VaR & Sharpe from the NAV curve; leverage from the live Alpaca account.",
+};
+function srcInfo(key){ const t = SRC[key] || key; return ` <span class="srcinfo" data-tip="${esc(t)}">ⓘ</span>`; }
+// Wrap a KPI-ribbon grid (which has no header) with a corner ⓘ.
+function ribWrap(gridHtml, key){ return `<div style="position:relative">${gridHtml}<span class="ribsrc" data-tip="${esc(SRC[key]||key)}">ⓘ</span></div>`; }
+
 function table(rows, cols){
   if(!rows || !rows.length) return '<div class="se-empty">none</div>';
   const head = "<thead><tr>"+cols.map(c=>`<th${c.tip?` data-tip="${esc(c.tip)}"`:""}>${c.h}</th>`).join("")+"</tr></thead>";
@@ -1401,12 +1441,12 @@ function sparkP(arr,w,h,p){ p=p||1.5; const a=(arr||[]).filter(v=>v!=null); if(a
   return a.map((v,i)=>(i?"L":"M")+(p+i/(a.length-1)*(w-2*p)).toFixed(1)+" "+(p+(hi-v)/(hi-lo)*(h-2*p)).toFixed(1)).join(" "); }
 function hms(secs){ const s=Math.max(0,Math.floor(secs)),d=Math.floor(s/86400),h=Math.floor(s%86400/3600),
   m=Math.floor(s%3600/60),ss=s%60,p=n=>String(n).padStart(2,"0"); return (d>0?d+"d ":"")+p(h)+":"+p(m)+":"+p(ss); }
-function ovPanel(title,sub,body,pad){ return `<div class="ovpanel"><div class="ovhead"><span class="ovhk">${title}</span>`
-  +`<span class="ovhs">${sub}</span></div><div style="padding:${pad||'14px 16px'}">${body}</div></div>`; }
+function ovPanel(title,sub,body,pad,src){ return `<div class="ovpanel"><div class="ovhead"><span class="ovhk">${title}</span>`
+  +`<span class="ovhs">${sub}${src?srcInfo(src):''}</span></div><div style="padding:${pad||'14px 16px'}">${body}</div></div>`; }
 
 function renderSession(){
   const host=$("ov-session"); if(!host) return;
-  if(!MKT){ host.innerHTML=ovPanel("Trading session","NYSE","<div style='font:400 12px var(--mono);color:var(--muted)'>market clock offline</div>"); return; }
+  if(!MKT){ host.innerHTML=ovPanel("Trading session","NYSE","<div style='font:400 12px var(--mono);color:var(--muted)'>market clock offline</div>","14px 16px","clock"); return; }
   const now=etNow(), et=etParts(now), secs=et.h*3600+et.m*60+et.s, open=9.5*3600, close=16*3600;
   const f=Math.max(0,Math.min(1,(secs-open)/(close-open)));
   const nc=MKT.next_close?Date.parse(MKT.next_close):null, no=MKT.next_open?Date.parse(MKT.next_open):null;
@@ -1417,7 +1457,7 @@ function renderSession(){
   const head=`<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px"><div style="display:flex;align-items:baseline;gap:9px">${clk}<span style="font:400 11px var(--mono);color:var(--muted)">${sub}</span></div><span style="display:inline-flex;align-items:center;gap:6px;font:500 10px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:${pillCol}"><span style="width:7px;height:7px;border-radius:50%;background:${pillCol}"></span>${pill}</span></div>`;
   const bar=`<div style="position:relative;height:9px;border-radius:5px;background:var(--panel-2);overflow:hidden;margin-top:11px"><div style="position:absolute;left:0;top:0;height:100%;width:${barW.toFixed(1)}%;background:linear-gradient(90deg,#2a6f63,#46b8ad)"></div><div style="position:absolute;top:-3px;width:2px;height:15px;background:var(--fg);left:${barW.toFixed(1)}%"></div></div>`;
   const marks=`<div style="display:flex;justify-content:space-between;margin-top:6px;font:400 9.5px var(--mono);color:var(--muted)"><span>09:30 open</span><span>12:45</span><span>16:00 close</span></div>`;
-  host.innerHTML=ovPanel("Trading session","NYSE · regular hours", head+bar+marks);
+  host.innerHTML=ovPanel("Trading session","NYSE · regular hours", head+bar+marks, "14px 16px", "clock");
 }
 
 function navAreaSVG(hist){
@@ -1462,7 +1502,7 @@ function renderNavHero(s){
   host.innerHTML=`<div class="ovpanel">
     <div style="display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:18px;padding:18px 22px 14px;border-bottom:1px solid var(--line-soft)">
       <div>
-        <div style="font:600 10px 'Space Grotesk';letter-spacing:.16em;text-transform:uppercase;color:var(--muted)">Net asset value</div>
+        <div style="font:600 10px 'Space Grotesk';letter-spacing:.16em;text-transform:uppercase;color:var(--muted)">Net asset value${srcInfo('live')}</div>
         <div style="display:flex;align-items:baseline;gap:14px;margin-top:8px">
           <div id="navbig" class="ovflash" style="font:500 46px/1 'Space Grotesk';letter-spacing:-.01em;color:var(--fg);font-variant-numeric:tabular-nums;padding:1px 6px;margin:-1px -6px">${usd(nav)}</div>
           <div id="navpnl" class="ovflash" style="font:500 14px var(--mono);color:${dayColor};padding:1px 5px;margin:-1px -5px">${daySub}</div>
@@ -1496,14 +1536,14 @@ function renderKpiRibbon(s){
   const daySub=dpStr+(dpp==null?'':' · '+spct(dpp)+' today');
   const cap=META.leverage_cap||2.0, lev=s.leverage, levW=lev==null?0:Math.min(100,lev/cap*100);
   const levBar=`<div style="height:4px;border-radius:2px;background:var(--panel-2);margin-top:8px;overflow:hidden"><div style="height:100%;background:var(--accent);width:${levW.toFixed(0)}%"></div></div>`;
-  host.innerHTML=`<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden">`
+  host.innerHTML=ribWrap(`<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden">`
     +kpiCell("Net asset value",usd(s.nav),daySub,{subColor:dayCol})
     +kpiCell("Day P&L",dpStr,(dpp==null?'':spct(dpp)+' vs prior close'),{valColor:dayCol})
     +kpiCell("Leverage",lev==null?'–':lev.toFixed(2)+'×',`cap ${cap.toFixed(1)}× · gross ${usd(s.gross_exposure)}`,{extra:levBar})
     +kpiCell("Cash",usd(s.cash),(s.nav?`${(s.cash/s.nav*100).toFixed(1)}% of NAV`:''))
     +kpiCell("Premium collected",usd(s.premium_collected),(s.nav&&s.premium_collected?`${(s.premium_collected/s.nav*100).toFixed(1)}% of NAV · lifetime`:'covered calls'))
     +kpiCell("Positions",fmt(s.n_positions),`drift ${s.drift!=null?pct(s.drift):'–'} L1`)
-    +`</div>`;
+    +`</div>`, "kpiov");
 }
 
 function renderTreemap(s){
@@ -1553,7 +1593,7 @@ function renderGauge(s,calls){
   const body=`<div style="display:flex;align-items:center;gap:10px"><div style="flex:none">${g}</div><div style="flex:1;display:flex;flex-direction:column;gap:12px;padding-left:4px">`
     +`<div style="display:flex;gap:10px">${st("Net delta",netDelta.toFixed(2))}${st("Theta / day",theta?"+"+usd(theta):"–","#5fb088")}</div>`
     +`<div style="display:flex;gap:10px">${st("Prem. yield",yld==null?"–":yld.toFixed(1)+"%","#5fb088")}${st("Calls open",fmt((calls||[]).length))}</div></div></div>`;
-  host.innerHTML=ovPanel("Covered-call overlay","Δ · θ · coverage", body);
+  host.innerHTML=ovPanel("Covered-call overlay","Δ · θ · coverage", body, "14px 16px", "calls");
 }
 
 let _eventsData=[];
@@ -1574,7 +1614,7 @@ function renderEventsPanel(){
   else { list=ev.map(e=>{ const secs=evtSecsLeft(e.date),col=COL[e.type]||"#65758c",live=secs<7*86400;
     const label=(e.symbol?e.symbol+" ":"")+((EVT[e.type]||{}).label||e.type)+(e.detail&&e.type==='expiry'?" · "+e.detail:"");
     return `<div style="display:flex;align-items:center;gap:11px;padding:9px 16px;border-bottom:1px solid var(--line-soft)"><span style="width:7px;height:7px;border-radius:50%;background:${col};flex:none"></span><div style="flex:1;min-width:0"><div style="font:500 12px 'Space Grotesk';color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${label}</div><div style="font:400 10px var(--mono);color:var(--muted)">${mdy(e.date)}</div></div><span style="font:500 12px var(--mono);color:${live?'#46b8ad':'#aab4c3'}">${hms(secs)}</span></div>`; }).join(""); }
-  host.innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Events</span><span class="ovhs">countdown · live</span></div>${filterRow}<div style="max-height:280px;overflow-y:auto" class="sf-scroll">${list}</div></div>`;
+  host.innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Events</span><span class="ovhs">countdown · live${srcInfo('events')}</span></div>${filterRow}<div style="max-height:280px;overflow-y:auto" class="sf-scroll">${list}</div></div>`;
 }
 
 function renderWaterfall(s){
@@ -1594,7 +1634,7 @@ function renderWaterfall(s){
     const lv=st[2]==="base"?usd(st[1]):((st[1]>=0?"+":"-")+"$"+fmt(Math.abs(st[1]),0));
     g+=`<text x="${(x+bw/2).toFixed(1)}" y="${(top-5).toFixed(1)}" text-anchor="middle" font-size="11" fill="#cdd9e8" font-family="IBM Plex Mono">${lv}</text>`;
     g+=`<text x="${(x+bw/2).toFixed(1)}" y="${H-12}" text-anchor="middle" font-size="11" fill="#65758c" font-family="Space Grotesk">${st[0]}</text>`; });
-  host.innerHTML=ovPanel("P&L attribution — today","price vs premium vs costs", g+"</svg>", "10px 12px 6px");
+  host.innerHTML=ovPanel("P&L attribution — today","price vs premium vs costs", g+"</svg>", "10px 12px 6px", "attribution");
 }
 
 // Repaint the whole Overview from the latest state (called on load + every 1s tick).
@@ -1619,14 +1659,14 @@ async function loadOverview(){
 
 // ===================== Portfolio — design-doc layout =====================
 let _pFactors = [];
-function fillPanel(id,title,sub,inner){ const el=$(id); if(el) el.innerHTML=`<div class="ovhead"><span class="ovhk">${title}</span><span class="ovhs">${sub||''}</span></div>${inner}`; }
+function fillPanel(id,title,sub,inner,src){ const el=$(id); if(el) el.innerHTML=`<div class="ovhead"><span class="ovhk">${title}</span><span class="ovhs">${sub||''}${src?srcInfo(src):''}</span></div>${inner}`; }
 const scol=v=>v==null?'var(--muted)':v>1e-9?'var(--green)':v<-1e-9?'var(--red)':'var(--muted)';
 const zcol=v=>v==null?'var(--muted)':v>0.05?'var(--green)':v<-0.05?'var(--red)':'var(--fg-dim)';
 const sz=v=>v==null?'–':(v>=0?'+':'')+v.toFixed(2);
 
 function renderPSector(s){
   const rows=(s.positions||[]).filter(p=>p.symbol&&!_isOpt(p.symbol)&&p.weight);
-  if(!rows.length){ fillPanel("p-sector","Sector exposure","",'<div style="padding:16px;color:var(--muted);font:400 12px var(--mono)">no holdings yet</div>'); return; }
+  if(!rows.length){ fillPanel("p-sector","Sector exposure","",'<div style="padding:16px;color:var(--muted);font:400 12px var(--mono)">no holdings yet</div>',"live"); return; }
   const tot=rows.reduce((a,p)=>a+(p.weight||0),0)||1, cap=META.max_sector_pct||0.30;
   const bySec={}; rows.forEach(p=>{ const sec=(REF[p.symbol.toUpperCase()]||{}).sector||'—'; (bySec[sec]=bySec[sec]||{w:0,n:0}); bySec[sec].w+=p.weight; bySec[sec].n++; });
   const secs=Object.entries(bySec).map(([name,v])=>({name,w:v.w/tot,n:v.n})).sort((a,b)=>b.w-a.w);
@@ -1635,7 +1675,7 @@ function renderPSector(s){
   const ws=rows.map(p=>p.weight/tot).sort((a,b)=>b-a);
   const top5=ws.slice(0,5).reduce((a,b)=>a+b,0), eff=1/ws.reduce((a,b)=>a+b*b,0), largest=ws[0]||0;
   const foot=`<div style="display:flex;flex-wrap:wrap;gap:8px 30px;margin-top:16px;padding-top:14px;border-top:1px solid var(--line-soft);font:400 11.5px 'Space Grotesk';color:var(--muted)"><span>Top 5 names <b class="pmono" style="font-weight:500;color:var(--fg-dim)">${pct(top5)}</b></span><span>Effective names <b class="pmono" style="font-weight:500;color:var(--fg-dim)">${eff.toFixed(1)}</b> of ${rows.length}</span><span>Largest <b class="pmono" style="font-weight:500;color:var(--fg-dim)">${pct(largest)}</b></span><span>Sectors <b class="pmono" style="font-weight:500;color:var(--fg-dim)">${secs.length}</b></span></div>`;
-  fillPanel("p-sector","Sector exposure",`share of book · sectors over ${(cap*100).toFixed(0)}% cap flagged`,`<div style="padding:16px 18px">${bar}${legend}${foot}</div>`);
+  fillPanel("p-sector","Sector exposure",`share of book · sectors over ${(cap*100).toFixed(0)}% cap flagged`,`<div style="padding:16px 18px">${bar}${legend}${foot}</div>`,"live");
 }
 
 function renderPPositions(s){
@@ -1655,14 +1695,14 @@ function renderPPositions(s){
       <span class="pmono" style="text-align:right;font-size:12px;color:var(--fg)">${usd(p.market_value)}</span>
       <span style="display:flex;align-items:center;gap:9px"><span style="position:relative;flex:1;height:5px;border-radius:2px;background:var(--panel-2)"><span style="position:absolute;left:0;top:0;height:100%;border-radius:2px;background:var(--accent);width:${fillW.toFixed(1)}%"></span><span style="position:absolute;top:-2px;width:2px;height:9px;background:var(--fg-dim);left:${tickW.toFixed(1)}%"></span></span><span class="pmono" style="font-size:11px;color:var(--fg-dim);min-width:42px;text-align:right">${pct(p.weight)}</span></span>
       <span class="pmono" style="text-align:right;font-size:12px;font-weight:500;color:${scol(d)}">${d==null?'–':spct(d,1)}</span></div>`; }).join("");
-  fillPanel("p-positions","Positions vs target",`${rows.length} equity positions · bar = weight, tick = target`,head+body);
+  fillPanel("p-positions","Positions vs target",`${rows.length} equity positions · bar = weight, tick = target`,head+body,"live");
 }
 
 function renderPFactorTilt(s,factors){
   const fmap={}; (factors||[]).forEach(f=>fmap[f.symbol]=f);
   const rows=(s.positions||[]).filter(p=>p.symbol&&!_isOpt(p.symbol)&&p.weight&&fmap[p.symbol]);
   const held=(s.positions||[]).filter(p=>!_isOpt(p.symbol)&&p.qty).length;
-  if(!rows.length){ fillPanel("p-ftilt","Factor tilt","book-weighted z-score",'<div style="padding:16px;color:var(--muted);font:400 12px var(--mono)">factor tilt appears once the book is scored (after the next rebalance)</div>'); return; }
+  if(!rows.length){ fillPanel("p-ftilt","Factor tilt","book-weighted z-score",'<div style="padding:16px;color:var(--muted);font:400 12px var(--mono)">factor tilt appears once the book is scored (after the next rebalance)</div>',"factors"); return; }
   const sub={quality:0,value:0,momentum:0,lowvol:0}; let tw=0;
   rows.forEach(p=>{ tw+=p.weight; ["quality","value","momentum","lowvol"].forEach(k=>{ if(fmap[p.symbol][k]!=null) sub[k]+=p.weight*fmap[p.symbol][k]; }); });
   if(tw>0) Object.keys(sub).forEach(k=>sub[k]/=tw);
@@ -1673,7 +1713,7 @@ function renderPFactorTilt(s,factors){
     return `<div style="display:grid;grid-template-columns:200px 1fr 56px;gap:16px;align-items:center;padding:9px 0;border-top:1px solid var(--line-soft)"><span style="font:500 12.5px 'Space Grotesk';color:var(--fg-dim)">${label} <span style="color:var(--muted);font-weight:400">· ${desc}</span></span><span style="position:relative;height:11px;background:var(--panel-2);border-radius:5px"><span style="position:absolute;top:-4px;bottom:-4px;left:50%;width:0;border-left:1px dashed var(--faint)"></span><span style="position:absolute;top:0;height:11px;border-radius:4px;background:${c};${barFor(z)}"></span></span><span class="pmono" style="text-align:right;font-weight:600;font-size:13px;color:${c}">${sz(z)}</span></div>`; }).join("");
   const comp=(sub.quality+sub.value+sub.momentum+sub.lowvol)/4;
   const foot=`<div style="display:flex;flex-wrap:wrap;gap:8px 30px;margin-top:14px;padding-top:13px;border-top:1px solid var(--line-soft);font:400 11.5px 'Space Grotesk';color:var(--muted)"><span>Composite tilt <b class="pmono" style="font-weight:600;color:${zcol(comp)}">${sz(comp)}</b></span><span>Names scored <b class="pmono" style="font-weight:500;color:var(--fg-dim)">${rows.length}</b> of ${held}</span></div>`;
-  fillPanel("p-ftilt","Factor tilt","book-weighted z-score · 0 = universe average",`<div style="padding:12px 18px 16px">${header}${rowsHtml}${foot}</div>`);
+  fillPanel("p-ftilt","Factor tilt","book-weighted z-score · 0 = universe average",`<div style="padding:12px 18px 16px">${header}${rowsHtml}${foot}</div>`,"factors");
 }
 
 function renderPRadar(s,factors){
@@ -1697,7 +1737,7 @@ function renderPRadar(s,factors){
   axes.forEach((a,i)=>{ const p=[cx+(R+16)*Math.cos(ang(i)),cy+(R+16)*Math.sin(ang(i))+3]; g+=`<text x="${p[0].toFixed(1)}" y="${p[1].toFixed(1)}" ${la[i]} font-size="10.5" fill="#aab4c3" font-family="Space Grotesk" font-weight="500">${a[0]}</text>`; });
   g+="</svg>";
   const leg=`<div style="display:flex;gap:16px;justify-content:center;margin-top:4px"><span style="display:inline-flex;align-items:center;gap:6px;font:400 10.5px 'Space Grotesk';color:#aab4c3"><span style="width:12px;height:3px;background:${acc};border-radius:2px"></span>Book tilt</span><span style="display:inline-flex;align-items:center;gap:6px;font:400 10.5px 'Space Grotesk';color:var(--muted)"><span style="width:12px;height:3px;background:#2a3a58;border-radius:2px"></span>Universe</span></div>`;
-  $("p-radar").innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Factor radar</span><span class="ovhs">book-weighted z</span></div><div style="padding:10px 14px 14px">${rows.length?g+leg:'<div style=\"color:var(--muted);font:400 12px var(--mono);padding:6px 4px\">appears once scored</div>'}</div></div>`;
+  $("p-radar").innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Factor radar</span><span class="ovhs">book-weighted z${srcInfo('factors')}</span></div><div style="padding:10px 14px 14px">${rows.length?g+leg:'<div style=\"color:var(--muted);font:400 12px var(--mono);padding:6px 4px\">appears once scored</div>'}</div></div>`;
 }
 
 function renderPCalls(s,calls){
@@ -1708,7 +1748,7 @@ function renderPCalls(s,calls){
   else body=`<div class="sf-scroll" style="max-height:340px;overflow:auto">${calls.map(c=>{ const d=dte(c.expiration),r=REF[(c.underlying||'').toUpperCase()]||{};
     return `<div class="prow" style="${G};padding:8px 16px"><span style="display:flex;align-items:center;gap:8px;min-width:0">${tkrChip(c.underlying,r.sector)}<span style="font:400 9px 'Space Grotesk';color:var(--amber);letter-spacing:.04em;text-transform:uppercase">call</span></span><span class="pmono" style="text-align:right;font-size:12px;color:var(--fg-dim)">${fmt(c.contracts)}</span><span class="pmono" style="text-align:right;font-size:12px;color:var(--fg-dim)">${usd2(c.strike)}</span><span class="pmono" style="text-align:right;font-size:12px;font-weight:500;color:${d!=null&&d<=7?'var(--amber)':'var(--fg-dim)'}">${d==null?'–':d+'d'}</span><span class="pmono" style="text-align:right;font-size:12px;color:var(--fg-dim)">${c.delta==null?'–':c.delta.toFixed(2)}</span><span class="pmono" style="text-align:right;font-size:12px;font-weight:500;color:var(--green)">${usd(c.premium)}</span></div>`; }).join('')}</div>`;
   const coveredSh=(calls||[]).reduce((a,c)=>a+(c.contracts||0)*100,0);
-  fillPanel("p-calls","Covered calls",(calls&&calls.length)?`${calls.length} open · ${fmt(coveredSh)} sh covered`:"0 open",head+body);
+  fillPanel("p-calls","Covered calls",(calls&&calls.length)?`${calls.length} open · ${fmt(coveredSh)} sh covered`:"0 open",head+body,"calls");
 }
 
 function renderPFactors(factors){
@@ -1720,7 +1760,7 @@ function renderPFactors(factors){
     const cell=v=>`<span class="pmono" style="text-align:right;font-size:11.5px;color:${zcol(v)}">${sz(v)}</span>`;
     body=`<div class="sf-scroll" style="max-height:340px;overflow:auto">${rows.map(f=>{ const r=REF[f.symbol.toUpperCase()]||{};
       return `<div class="prow" style="${G};padding:7px 16px"><span>${tkrChip(f.symbol,r.sector)}</span><span class="pmono" style="text-align:right;font-size:12px;font-weight:600;color:${zcol(f.composite)}">${sz(f.composite)}</span>${cell(f.quality)}${cell(f.value)}${cell(f.momentum)}${cell(f.lowvol)}</div>`; }).join('')}</div>`; }
-  fillPanel("p-factors","Factor scores","held names · z-score",head+body);
+  fillPanel("p-factors","Factor scores","held names · z-score",head+body,"factors");
 }
 
 function paintPortfolioLive(s){ pushPx(s); renderTape(s); renderPPositions(s); renderPCalls(s,_calls); }
@@ -1977,7 +2017,7 @@ function renderOrders(orders){
   if(!(orders&&orders.length)) body='<div style="padding:16px;font:400 11.5px var(--mono);color:var(--muted)">No orders this session.</div>';
   else body=`<div class="sf-scroll" style="max-height:440px;overflow-y:auto">${orders.map(o=>{ const r=REF[(o.symbol||'').toUpperCase()]||{}, sc=o.side==='buy'?'var(--green)':'var(--red)';
     return `<div class="prow" style="${G};padding:8px 16px"><span style="display:flex;align-items:center;gap:10px;min-width:0">${tkrChip(o.symbol,r.sector)}<span style="font:500 12px 'Space Grotesk';color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.name||o.symbol}</span></span><span style="font:600 10px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:${sc}">${o.side||'–'}</span><span class="pmono" style="text-align:right;font-size:12px;color:var(--fg-dim)">${fmt(o.qty)}</span><span class="pmono" style="font-size:11px;color:var(--muted)">${o.status||'–'}</span><span class="pmono" style="text-align:right;font-size:12px;color:var(--fg)">${o.filled_avg_price==null?'–':usd2(o.filled_avg_price)}</span></div>`; }).join('')}</div>`;
-  fillPanel("a-orders","Recent orders","limit orders · last session",head+body);
+  fillPanel("a-orders","Recent orders","limit orders · last session",head+body,"orders");
 }
 
 // Alerts log — filterable by severity. _alerts holds the last fetch; _alertFilter the active pill.
@@ -1996,7 +2036,7 @@ function drawAlerts(){
   let body;
   if(!rows.length) body=`<div style="padding:16px;font:400 11.5px var(--mono);color:var(--muted)">No ${f==="all"?"":f+" "}alerts.</div>`;
   else body=`<div class="sf-scroll" style="max-height:440px;overflow-y:auto">${rows.map(a=>`<div class="prow" style="${G};padding:9px 16px"><span class="pmono" style="font-size:11px;color:var(--muted)">${(a.ts||'').replace('T',' ').slice(0,19)}</span><span style="font:500 10px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:${_alertCls(a.severity)}">${a.severity||'info'}</span><span style="font:400 12px 'Space Grotesk';color:var(--fg-dim);min-width:0;overflow:hidden;text-overflow:ellipsis" title="${esc(a.message||'')}">${a.message||'–'}</span><span class="pmono" style="text-align:right;font-size:11px;color:${a.delivered?'var(--green)':'var(--muted)'}">${a.delivered?'✓ sent':'dry-run'}</span></div>`).join('')}</div>`;
-  fillPanel("a-alerts","Alerts",`${_alerts.length} in last 24h · dot = worst severity`,filterRow+head+body);
+  fillPanel("a-alerts","Alerts",`${_alerts.length} in last 24h · dot = worst severity`,filterRow+head+body,"alerts");
 }
 
 function renderFootstrip(s){
