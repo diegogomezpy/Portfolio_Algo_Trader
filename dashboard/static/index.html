@@ -234,6 +234,7 @@
           padding: 3px 9px; font: 600 10.5px 'Space Grotesk'; letter-spacing: .02em; cursor: pointer; transition: all .15s var(--ease); }
   .evtf:hover { color: var(--fg); background: var(--panel-2); }
   .evtf.on { color: var(--fg); background: var(--panel-2); border-color: var(--line); }
+  .flexcol { display: flex; flex-direction: column; gap: 14px; }
   @media (max-width: 1100px) { .p-ftrow, .p-ccrow { grid-template-columns: 1fr !important; } }
   .pgrid { display: grid; gap: 10px; align-items: center; }
   .prow { border-bottom: 1px solid var(--line-soft); }
@@ -386,7 +387,7 @@
       <button class="subtab active" data-sub="holdings">Holdings</button>
       <button class="subtab" data-sub="activity">Activity</button>
     </div>
-    <div class="subview" id="sub-holdings" style="display:flex;flex-direction:column;gap:14px">
+    <div class="subview flexcol" id="sub-holdings">
       <div class="ovpanel" id="p-sector"></div>
       <div class="ovpanel" id="p-positions"></div>
       <div class="p-ftrow" style="display:grid;grid-template-columns:1.5fr 1fr;gap:14px">
@@ -398,15 +399,9 @@
         <div class="ovpanel" id="p-factors"></div>
       </div>
     </div>
-    <div class="subview grid" id="sub-activity" style="display:none">
-      <div class="se-panel span2">
-        <h2>Recent orders</h2>
-        <div class="body" id="orders"></div>
-      </div>
-      <div class="se-panel span2">
-        <h2>Alerts <span class="panel-sub" id="alertssub"></span></h2>
-        <div class="body" id="alerts"></div>
-      </div>
+    <div class="subview flexcol" id="sub-activity" style="display:none">
+      <div class="ovpanel" id="a-orders"></div>
+      <div class="ovpanel" id="a-alerts"></div>
     </div>
   </div>
 </div>
@@ -1263,7 +1258,7 @@ function renderTape(s){
       el.querySelector('.tape-px').textContent = p==null?"–":p.toFixed(2);
       el.querySelector('.tape-spk').innerHTML = spk
         ? `<svg width="34" height="13" viewBox="0 0 34 13" preserveAspectRatio="none" style="display:block"><path d="${spk}" fill="none" stroke="${c}" stroke-width="1.3" stroke-linejoin="round"/></svg>` : "";
-      const chgEl = el.querySelector('.tape-chg'); chgEl.textContent = chg==null?"":spct(chg); chgEl.style.color = c;
+      const chgEl = el.querySelector('.tape-chg'); chgEl.textContent = chg==null?"":spct(chg,2); chgEl.style.color = c;
       el.querySelector('.tape-call').textContent = covered.has(r.symbol) ? "CALL" : "";
     });
   });
@@ -1332,13 +1327,24 @@ function navAreaSVG(hist){
   s+=`<circle cx="${X(n-1).toFixed(1)}" cy="${Y(navs[navs.length-1]).toFixed(1)}" r="2.6" fill="${col}"/>`;
   return s+"</svg>";
 }
-let _lastNav=null;
+let _lastNav=null, _navWin='ALL', _ovS=null;
+const NAV_WINS=[["1W","1W"],["1M","1M"],["3M","3M"],["YTD","YTD"],["ALL","All"]];
+function navWindowed(){
+  if(_navWin==='ALL'||_navBase.length<2) return _navBase;
+  let cut;
+  if(_navWin==='YTD') cut=new Date(new Date().getFullYear(),0,1).getTime();
+  else cut=Date.now()-({ '1W':7,'1M':30,'3M':90 }[_navWin])*864e5;
+  const f=_navBase.filter(p=>{ const t=tsMs(p.ts); return t==null||t>=cut; });
+  return f.length>=2?f:_navBase.slice(-2);
+}
+function setNavWin(w){ _navWin=w; if(_ovS) renderNavHero(_ovS); }
 function renderNavHero(s){
   const host=$("ov-navhero"); if(!host||s.nav==null) return;
   const nav=s.nav, dp=s.day_pnl, dpp=s.day_pnl_pct;
   const dayColor=dp==null?"var(--muted)":dp>0?"var(--green)":dp<0?"var(--red)":"var(--muted)";
   const daySub=(dp==null?"–":(dp>=0?"+$":"-$")+fmt(Math.abs(dp),0))+(dpp==null?"":" · "+spct(dpp)+" today");
-  const hist=_navBase.concat([{ts:new Date().toISOString(),nav}]);
+  const base=navWindowed();
+  const hist=base.concat([{ts:new Date().toISOString(),nav}]);
   const navs=hist.map(p=>p.nav).filter(v=>v!=null);
   const winChg=navs.length?nav-navs[0]:null, winPct=(navs.length&&navs[0])?winChg/navs[0]:null;
   const smallCol=navs.length&&nav>=navs[0]?"#5fb088":"#cf6f66";
@@ -1357,8 +1363,9 @@ function renderNavHero(s){
         <div><div style="font:500 10px 'Space Grotesk';letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Window high / low</div><div style="font:500 16px var(--mono);color:var(--fg);margin-top:5px">${navs.length?usd(Math.max(...navs)):'–'} <span style="color:var(--muted)">/ ${navs.length?usd(Math.min(...navs)):'–'}</span></div></div>
       </div>
     </div>
-    <div style="padding:8px 8px 4px">${navAreaSVG(hist)}</div>
-    <div style="padding:4px 22px 12px;font:400 10.5px var(--mono);color:var(--muted)">${_navBase.length} snapshots · ${(_navBase[0]?.ts||'').slice(0,10)} → ${(_navBase[_navBase.length-1]?.ts||'').slice(0,10)}</div>
+    <div style="display:flex;justify-content:flex-end;gap:4px;padding:8px 18px 0">${NAV_WINS.map(([k,l])=>`<button onclick="setNavWin('${k}')" class="evtf${_navWin===k?' on':''}">${l}</button>`).join('')}</div>
+    <div style="padding:6px 8px 4px">${navAreaSVG(hist)}</div>
+    <div style="padding:4px 22px 12px;font:400 10.5px var(--mono);color:var(--muted)">${base.length} snapshots · ${(base[0]?.ts||'').slice(0,10)} → ${(base[base.length-1]?.ts||'').slice(0,10)}</div>
   </div>`;
   if(_lastNav!=null && nav!==_lastNav){ const dir=nav>_lastNav?1:-1;
     ["navbig","navpnl"].forEach(id=>{ const el=$(id); if(el&&el.animate)
@@ -1393,7 +1400,8 @@ function renderTreemap(s){
   const items=(s.positions||[]).filter(p=>p.symbol&&!_isOpt(p.symbol)&&p.weight)
     .map(p=>({sym:p.symbol,value:p.weight,chg:p.day_pct==null?0:p.day_pct})).sort((a,b)=>b.value-a.value);
   if(!items.length){ host.innerHTML='<div class="se-empty">no holdings yet</div>'; return; }
-  const W=1003,H=452;
+  // Render at the container's actual pixel size so the viewBox is 1:1 — no stretched text.
+  const W=Math.max(320,Math.round(host.clientWidth||1003)), H=Math.max(240,Math.round(host.clientHeight||452));
   const tm=(arr,x,y,w,h,horiz)=>{ if(arr.length===1){ arr[0].rect={x,y,w,h}; return; }
     const tot=arr.reduce((a,b)=>a+b.value,0),half=tot/2; let c=0,best=0,bd=1e9;
     for(let k=0;k<arr.length-1;k++){ c+=arr[k].value; if(Math.abs(c-half)<bd){bd=Math.abs(c-half);best=k;} }
@@ -1478,7 +1486,7 @@ function renderWaterfall(s){
 
 // Repaint the whole Overview from the latest state (called on load + every 1s tick).
 function paintOverview(s){
-  pushPx(s); renderTape(s);
+  _ovS=s; pushPx(s); renderTape(s);
   renderSession(); renderNavHero(s); renderKpiRibbon(s);
   renderTreemap(s); renderGauge(s, _calls); renderEventsPanel(); renderWaterfall(s);
   renderFootstrip(s);
@@ -1487,7 +1495,7 @@ function paintOverview(s){
 // Overview — the daily glance (design-doc layout)
 async function loadOverview(){
   const [s, hist, calls, ev] = await Promise.all(
-    ["/api/state","/api/nav_history","/api/calls","/api/events"].map(get));
+    ["/api/state","/api/nav_history?limit=1000","/api/calls","/api/events"].map(get));
   noteFresh(s);
   if(!s){ $("ov-navhero").innerHTML =
       '<div class="errbox"><div class="big">Backend unreachable</div>Postgres or the dashboard API is not responding.</div>';
@@ -1850,50 +1858,32 @@ function renderFactors(factors){
 }
 
 function renderOrders(orders){
-  $("orders").innerHTML = table(orders, [
-    {h:"Symbol", cls:()=>"sym", f:r=>symCell(r.symbol)},
-    {h:"Side", tip:"Buy or sell.", cls:r=>r.side==="buy"?"pos":"neg", f:r=>`<span class="se-pill ${r.side==='buy'?'ok':'bad'}" style="font-size:10px">${r.side}</span>`},
-    {h:"Qty", tip:"Order quantity (shares).", f:r=>fmt(r.qty)},
-    {h:"Type", tip:"Order type — the engine places limit orders.", cls:()=>"mut", f:r=>r.type},
-    {h:"Status", tip:"Order lifecycle status (new, filled, canceled…).", f:r=>r.status},
-    {h:"Fill px", tip:"Average price the order filled at.", f:r=>r.filled_avg_price==null?"–":usd2(r.filled_avg_price)},
-  ]);
+  const G="display:grid;grid-template-columns:2fr .7fr .7fr 1fr .9fr;gap:10px;align-items:center";
+  const head=`<div style="${G};padding:8px 16px;font:600 9.5px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Instrument</span><span>Side</span><span style="text-align:right">Qty</span><span>Status</span><span style="text-align:right">Fill px</span></div>`;
+  let body;
+  if(!(orders&&orders.length)) body='<div style="padding:16px;font:400 11.5px var(--mono);color:var(--muted)">No orders this session.</div>';
+  else body=`<div class="sf-scroll" style="max-height:440px;overflow-y:auto">${orders.map(o=>{ const r=REF[(o.symbol||'').toUpperCase()]||{}, sc=o.side==='buy'?'var(--green)':'var(--red)';
+    return `<div class="prow" style="${G};padding:8px 16px"><span style="display:flex;align-items:center;gap:10px;min-width:0">${tkrChip(o.symbol,r.sector)}<span style="font:500 12px 'Space Grotesk';color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.name||o.symbol}</span></span><span style="font:600 10px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:${sc}">${o.side||'–'}</span><span class="pmono" style="text-align:right;font-size:12px;color:var(--fg-dim)">${fmt(o.qty)}</span><span class="pmono" style="font-size:11px;color:var(--muted)">${o.status||'–'}</span><span class="pmono" style="text-align:right;font-size:12px;color:var(--fg)">${o.filled_avg_price==null?'–':usd2(o.filled_avg_price)}</span></div>`; }).join('')}</div>`;
+  fillPanel("a-orders","Recent orders","limit orders · last session",head+body);
 }
 
-// Full alerts log: the complete record, filterable by severity. _alerts holds the last fetch;
-// _alertFilter is the active severity pill.
-let _alerts = [];
-let _alertFilter = "all";
-const _alertCls = sv => sv==="error" ? "bad" : sv==="warn" ? "warn" : "info";
-
-function renderAlerts(alerts){
-  _alerts = alerts || [];
-  const c = {error:0, warn:0, info:0};
-  _alerts.forEach(a => { c[a.severity||"info"] = (c[a.severity||"info"]||0) + 1; });
-  $("alertssub").innerHTML = _alerts.length
-    ? `${_alerts.length} total · <span class="bad">${c.error} err</span> · `
-      + `<span class="warn">${c.warn} warn</span> · <span class="mut">${c.info} info</span>`
-    : "no alerts yet";
-  drawAlerts();
-}
-
+// Alerts log — filterable by severity. _alerts holds the last fetch; _alertFilter the active pill.
+let _alerts = [], _alertFilter = "all";
+const _alertCls = sv => sv==="error" ? "var(--red)" : sv==="warn" ? "var(--amber)" : "var(--muted)";
+function setAlertFilter(f){ _alertFilter=f; drawAlerts(); }
+function renderAlerts(alerts){ _alerts = alerts || []; drawAlerts(); }
 function drawAlerts(){
-  const f = _alertFilter;
-  const rows = _alerts.filter(a => f==="all" || (a.severity||"info")===f);
-  const pill = k => `<button class="apill${_alertFilter===k?' on':''}" data-af="${k}">`
-    + `${k==="all"?"All":k[0].toUpperCase()+k.slice(1)}</button>`;
-  const bar = `<div class="alertbar">${["all","error","warn","info"].map(pill).join("")}</div>`;
-  const body = rows.length ? table(rows, [
-    {h:"Time (UTC)", cls:()=>"mut", f:r=>`${(r.ts||"").replace("T"," ").slice(0,19)}`
-       + `<span class="mut" style="margin-left:8px">${ageOf(r.ts)}</span>`},
-    {h:"Severity", f:r=>`<span class="se-pill ${_alertCls(r.severity)}" style="font-size:10px">${r.severity||"info"}</span>`},
-    {h:"Type", cls:()=>"mut", f:r=>r.type||"–"},
-    {h:"Message", f:r=>r.message||"–"},
-    {h:"Emailed", cls:r=>r.delivered?"pos":"mut", f:r=>r.delivered?"✓ sent":"dry-run"},
-  ]) : `<div class="mut" style="padding:10px 2px">No ${f==="all"?"":f+" "}alerts.</div>`;
-  $("alerts").innerHTML = bar + body;
-  document.querySelectorAll("#alerts .apill").forEach(b =>
-    b.onclick = () => { _alertFilter = b.dataset.af; drawAlerts(); });
+  const f=_alertFilter, rows=_alerts.filter(a=>f==="all"||(a.severity||"info")===f);
+  const c={error:0,warn:0,info:0}; _alerts.forEach(a=>{ c[a.severity||"info"]=(c[a.severity||"info"]||0)+1; });
+  const FIL=[["all","All",_alerts.length],["error","Errors",c.error],["warn","Warnings",c.warn],["info","Info",c.info]];
+  const pills=FIL.map(([k,l,n])=>`<button onclick="setAlertFilter('${k}')" class="evtf${_alertFilter===k?' on':''}">${l}${k!=="all"?` <span style="opacity:.55">${n}</span>`:''}</button>`).join('');
+  const filterRow=`<div style="display:flex;gap:5px;flex-wrap:wrap;padding:10px 14px 6px;border-bottom:1px solid var(--line-soft)">${pills}</div>`;
+  const G="display:grid;grid-template-columns:150px 84px 1fr 70px;gap:12px;align-items:center";
+  const head=`<div style="${G};padding:8px 16px;font:600 9.5px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Time (UTC)</span><span>Sev</span><span>Message</span><span style="text-align:right">Emailed</span></div>`;
+  let body;
+  if(!rows.length) body=`<div style="padding:16px;font:400 11.5px var(--mono);color:var(--muted)">No ${f==="all"?"":f+" "}alerts.</div>`;
+  else body=`<div class="sf-scroll" style="max-height:440px;overflow-y:auto">${rows.map(a=>`<div class="prow" style="${G};padding:9px 16px"><span class="pmono" style="font-size:11px;color:var(--muted)">${(a.ts||'').replace('T',' ').slice(0,19)}</span><span style="font:500 10px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:${_alertCls(a.severity)}">${a.severity||'info'}</span><span style="font:400 12px 'Space Grotesk';color:var(--fg-dim);min-width:0;overflow:hidden;text-overflow:ellipsis" title="${esc(a.message||'')}">${a.message||'–'}</span><span class="pmono" style="text-align:right;font-size:11px;color:${a.delivered?'var(--green)':'var(--muted)'}">${a.delivered?'✓ sent':'dry-run'}</span></div>`).join('')}</div>`;
+  fillPanel("a-alerts","Alerts",`${_alerts.length} in last 24h · dot = worst severity`,filterRow+head+body);
 }
 
 function renderFootstrip(s){
