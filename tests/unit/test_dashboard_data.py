@@ -50,7 +50,7 @@ def _seed(eng):
             delta=0.30, contracts=1, premium=-120.0))
         c.execute(insert(db.factor_scores).values(
             date=date(2026, 7, 1), symbol="AAPL", composite_score=1.2, quality_score=0.5,
-            value_score=0.3, momentum_score=0.9, lowvol_score=0.1))
+            value_score=0.3, beta_score=0.9, lowvol_score=0.1))
         c.execute(insert(db.factor_scores).values(
             date=date(2026, 7, 1), symbol="OTHER", composite_score=0.4))   # not held
         c.execute(insert(db.alerts).values(

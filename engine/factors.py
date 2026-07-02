@@ -1,4 +1,4 @@
-"""Factor scoring — composite Quality / Value / Momentum / Low-vol per stock.
+"""Factor scoring — composite Quality / Value / Low-Beta / Low-vol per stock.
 
 Every stock that survives the liquidity filter gets a composite factor score on a
 given date (SPEC "Factor scoring"). The composite is an equal-weighted average of
@@ -6,8 +6,13 @@ four cross-sectionally z-scored sub-scores:
 
 * **Quality**  — double-z of ``z(ROE) + z(gross_margin)``
 * **Value**    — double-z of ``z(E/P) + z(B/P)`` where E/P = 1/PE, B/P = 1/PB
-* **Momentum** — z of 12-1 momentum: ``close[t-21] / close[t-252] - 1``
+* **Low-Beta** — z of ``-β`` where β is the OLS beta of daily returns vs the market
+  (``settings.factors.beta_market``, SPY) over ``beta_window`` days — low beta ranks high
 * **Low-vol**  — z of ``-realized_vol`` over the trailing 252 trading days
+
+*Amendment (2026-07-02, Diego):* Momentum (12-1) was replaced by a **Low-Beta** screen —
+the book targets stable, low-market-sensitivity names to pair with the covered-call income
+overlay. β is measured vs SPY (already present in the price panel) over 252 trading days.
 
 **Methodology decisions (2026-06-18, confirmed with Diego):**
 
@@ -21,7 +26,7 @@ four cross-sectionally z-scored sub-scores:
    rest toward zero — every sub-score lands at ~unit variance. Quality and Value
    re-standardize the sum of their two metric z-scores so all four sub-scores share
    that scale before the equal-weight average (true equal weight). The winsor pct and
-   the momentum/vol windows live in ``settings.factors`` — nothing here is hardcoded
+   the beta/vol windows live in ``settings.factors`` — nothing here is hardcoded
    that belongs in the YAML.
 3. *Point-in-time fundamentals with a reporting lag.* ``report_date`` in the
    fundamentals store is the quarter-*end* date, not the filing date, so a quarter
@@ -55,7 +60,7 @@ DEFAULT_PRICES_DIR = Path("data/raw/equities")
 DEFAULT_FUNDAMENTALS_DIR = Path("data/raw/fundamentals")
 
 # Columns written to the factor_scores table (matches engine.db.factor_scores).
-SUBSCORE_COLUMNS = ["quality_score", "value_score", "momentum_score", "lowvol_score"]
+SUBSCORE_COLUMNS = ["quality_score", "value_score", "beta_score", "lowvol_score"]
 FUNDAMENTAL_FIELDS = ["pe_ratio", "pb_ratio", "roe", "gross_margin"]
 
 
@@ -92,24 +97,37 @@ def _double_z(z_a: pd.Series, z_b: pd.Series, winsor_pct: float) -> pd.Series:
     """Combine two metric z-scores into a re-standardized sub-score.
 
     Each component is neutral-filled (missing → 0) before summing, then the sum is
-    z-scored again so the sub-score is unit-variance like momentum and low-vol.
+    z-scored again so the sub-score is unit-variance like low-beta and low-vol.
     """
     combined = z_a.fillna(0.0) + z_b.fillna(0.0)
     return zscore(combined, winsor_pct)
 
 
-def momentum_12_1(price_panel: pd.DataFrame, as_of: _date, long_w: int, short_w: int) -> pd.Series:
-    """12-1 momentum per symbol: ``close[t-short_w] / close[t-long_w] - 1``.
+def market_beta(price_panel: pd.DataFrame, as_of: _date, window: int, market: str = "SPY") -> pd.Series:
+    """OLS market beta per symbol: ``β = cov(rᵢ, r_mkt) / var(r_mkt)`` over ``window`` days.
 
-    ``price_panel`` is a (date × symbol) close matrix; ``as_of`` must be its last
-    row. Symbols without a price at either offset (thin history) come back NaN.
+    ``price_panel`` is a (date × symbol) close matrix that must include the ``market``
+    column (SPY is in the equity price store). Uses pairwise-complete daily returns over
+    the trailing ``window`` days ending at ``as_of``; a symbol with < 80% of the window's
+    observations — or no market data / degenerate market variance — comes back NaN (the
+    composite neutral-fills it). Lower β is better, so the sub-score is ``z(-β)``.
     """
-    panel = price_panel.loc[: pd.Timestamp(as_of)]
-    if len(panel) < long_w + 1:
+    panel = price_panel.loc[: pd.Timestamp(as_of)].iloc[-(window + 1):]
+    if market not in panel.columns or len(panel) < 2:
         return pd.Series(np.nan, index=price_panel.columns, dtype=float)
-    p_recent = panel.iloc[-1 - short_w]
-    p_old = panel.iloc[-1 - long_w]
-    return p_recent / p_old - 1.0
+    rets = panel.pct_change().iloc[1:]                       # up to ``window`` rows of daily returns
+    m = rets[market]
+    # Pairwise-complete: for each column keep rows where both it and the market have a return.
+    present = rets.notna() & m.notna().to_numpy()[:, None]
+    n = present.sum()
+    r = rets.where(present)
+    mm = pd.DataFrame(np.where(present, m.to_numpy()[:, None], np.nan),
+                      index=rets.index, columns=rets.columns)
+    r_mean, m_mean = r.sum() / n, mm.sum() / n
+    cov = (r * mm).sum() / n - r_mean * m_mean
+    var = (mm * mm).sum() / n - m_mean * m_mean
+    beta = cov / var.where(var > 0)
+    return beta.where(n >= int(window * 0.8))
 
 
 def realized_vol(price_panel: pd.DataFrame, as_of: _date, window: int) -> pd.Series:
@@ -138,7 +156,7 @@ def compute_factor_scores(
     Args:
         settings: namespace from ``load_settings()`` (uses ``.universe`` + ``.factors``).
         price_panel: (date × symbol) close matrix, last row == ``as_of``, with at
-            least ``momentum_long_window + 1`` rows of history.
+            least ``beta_window + 1`` rows of history and the ``beta_market`` column present.
         fundamentals_pit: point-in-time fundamentals indexed by symbol, columns
             ``pe_ratio, pb_ratio, roe, gross_margin`` (see :func:`point_in_time_fundamentals`).
         universe_snapshot: ``as_of`` equity snapshot indexed by symbol with
@@ -172,9 +190,9 @@ def compute_factor_scores(
     # --- Quality: ROE and gross margin -----------------------------------------
     quality = _double_z(zscore(f["roe"], wp), zscore(f["gross_margin"], wp), wp)
 
-    # --- Momentum: 12-1 -------------------------------------------------------
-    mom = momentum_12_1(price_panel, as_of, fac.momentum_long_window, fac.momentum_short_window)
-    momentum = zscore(mom.reindex(symbols), wp)
+    # --- Low-Beta: -β vs the market (SPY) -------------------------------------
+    beta = market_beta(price_panel, as_of, fac.beta_window, getattr(fac, "beta_market", "SPY"))
+    lowbeta = zscore(-beta.reindex(symbols), wp)
 
     # --- Low volatility: -realized vol ----------------------------------------
     vol = realized_vol(price_panel, as_of, fac.vol_window)
@@ -184,7 +202,7 @@ def compute_factor_scores(
     w = fac.weights
     composite = (w.quality * quality.fillna(0.0)
                  + w.value * value.fillna(0.0)
-                 + w.momentum * momentum.fillna(0.0)
+                 + w.low_beta * lowbeta.fillna(0.0)
                  + w.low_vol * lowvol.fillna(0.0))
 
     stale = f[FUNDAMENTAL_FIELDS].isna().any(axis=1)
@@ -194,7 +212,7 @@ def compute_factor_scores(
         "symbol": symbols,
         "quality_score": quality.to_numpy(),
         "value_score": value.to_numpy(),
-        "momentum_score": momentum.to_numpy(),
+        "beta_score": lowbeta.to_numpy(),
         "lowvol_score": lowvol.to_numpy(),
         "composite_score": composite.to_numpy(),
         "stale": stale.to_numpy(),
@@ -330,9 +348,9 @@ def score_date(
     universe_snapshot = pd.read_parquet(snap_path, columns=["close", "adv_20d"])
 
     if price_panel is None:
-        price_panel = load_close_panel(
-            prices_dir, end=as_of, lookback=settings.factors.momentum_long_window + 5
-        )
+        fac = settings.factors
+        lookback = max(fac.beta_window, fac.vol_window) + 5
+        price_panel = load_close_panel(prices_dir, end=as_of, lookback=lookback)
     else:
         price_panel = price_panel.loc[: pd.Timestamp(as_of)]
 

@@ -44,10 +44,10 @@ factors:
   weights:
     quality: 0.25
     value: 0.25
-    momentum: 0.25
+    low_beta: 0.25               # amendment 2026-07-02: was momentum (12-1); now a low-beta screen
     low_vol: 0.25
-  momentum_long_window: 252      # 12 months
-  momentum_short_window: 21      # 1 month (excluded from momentum)
+  beta_window: 252               # trailing days for β vs the market (12 months)
+  beta_market: SPY               # market proxy for β (present in the equity price panel)
   vol_window: 252
   exclude_missing_fundamentals: false
   winsor_pct: 0.01               # winsorize each raw metric to its [1st, 99th] pct

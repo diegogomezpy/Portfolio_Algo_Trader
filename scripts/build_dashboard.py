@@ -113,7 +113,7 @@ def collect(settings) -> dict:
                    bps_small=settings.execution.cost_bps_small)
     clip, bench_sym = settings.backtest.return_clip, settings.backtest.benchmark
 
-    burn = settings.factors.momentum_long_window + 1
+    burn = settings.factors.beta_window + 1
     rebal = [d for d in eq.month_start_dates(panel.index)
              if START <= d.date() <= END and panel.index.get_loc(d) >= burn]
 
@@ -266,7 +266,7 @@ def overlay_block(settings) -> dict:
 def sleeves_block(settings) -> dict:
     res = eq.run_walkforward(START, END, settings=settings).set_index("date")
     return {k: _r(eq.portfolio_metrics(res[k])["ann_return"], 4)
-            for k in ("quality", "value", "momentum", "lowvol")}
+            for k in ("quality", "value", "beta", "lowvol")}
 
 
 def vrp_block(settings) -> dict:

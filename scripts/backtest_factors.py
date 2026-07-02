@@ -78,7 +78,7 @@ def run_backtest(
     the source (consistent split basis across the panel) rather than winsorize.
     """
     settings = settings or load_settings()
-    burn = settings.factors.momentum_long_window + 1
+    burn = settings.factors.beta_window + 1
     if fwd_winsor_pct is None:
         fwd_winsor_pct = settings.factors.winsor_pct
 
@@ -91,7 +91,7 @@ def run_backtest(
     if len(rebal) < 2:
         raise SystemExit(
             f"only {len(rebal)} scorable months in range — need ≥2 "
-            f"(momentum needs {burn} trading days of burn-in before {start})"
+            f"(beta needs {burn} trading days of burn-in before {start})"
         )
 
     rows = []
@@ -187,7 +187,7 @@ def main() -> None:
     settings = load_settings()
     ap = argparse.ArgumentParser(description="Factor sanity backtest (Phase 1 gate)")
     ap.add_argument("--start", type=lambda s: date.fromisoformat(s), default=date(2021, 7, 1),
-                    help="first rebalance month (default 2021-07-01, after momentum burn-in)")
+                    help="first rebalance month (default 2021-07-01, after the beta burn-in)")
     ap.add_argument("--end", type=lambda s: date.fromisoformat(s), default=date.today(),
                     help="last date to consider (default today)")
     ap.add_argument("--quintiles", type=int, default=5)

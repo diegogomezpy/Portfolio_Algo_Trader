@@ -20,17 +20,17 @@ import pytest
 from engine import factors
 
 
-def make_settings(*, winsor_pct=0.01, long_w=4, short_w=1, vol_w=4,
+def make_settings(*, winsor_pct=0.01, beta_w=4, vol_w=4, beta_market="SPY",
                   min_price=5.0, min_adv=1_000_000):
     return SimpleNamespace(
         universe=SimpleNamespace(min_price=min_price, min_adv_usd=min_adv),
         factors=SimpleNamespace(
             winsor_pct=winsor_pct,
-            momentum_long_window=long_w,
-            momentum_short_window=short_w,
+            beta_window=beta_w,
+            beta_market=beta_market,
             vol_window=vol_w,
             report_lag_days=45,
-            weights=SimpleNamespace(quality=0.25, value=0.25, momentum=0.25, low_vol=0.25),
+            weights=SimpleNamespace(quality=0.25, value=0.25, low_beta=0.25, low_vol=0.25),
         ),
     )
 
@@ -76,24 +76,39 @@ def test_double_z_neutral_fills_one_missing_metric():
     assert out["AAA"] > out["CCC"]  # AAA's strong A survives its missing B
 
 
-# --------------------------------------------------------------- momentum
-def test_momentum_12_1_uses_correct_offsets():
-    # long_w=4, short_w=1 → mom = close[t-1] / close[t-4] - 1
+# --------------------------------------------------------------- low-beta
+def _px_from_rets(rets, p0=100.0):
+    p = [p0]
+    for r in rets:
+        p.append(p[-1] * (1 + r))
+    return p
+
+
+def test_market_beta_matches_ols():
+    # AAA returns = 2×SPY (β=2), BBB = −1×SPY (β=−1), the market itself β=1.
     idx = pd.bdate_range("2026-01-01", periods=6)
-    # positions:      0    1    2    3    4    5(as_of)
-    prices = [100, 50, 70, 80, 110, 999]
-    panel = pd.DataFrame({"AAA": prices}, index=idx)
-    as_of = idx[-1].date()
-    mom = factors.momentum_12_1(panel, as_of, long_w=4, short_w=1)
-    # close[t-1] = iloc[-2] = 110 ; close[t-4] = iloc[-5] = 50  → 110/50 - 1 = 1.2
-    assert mom["AAA"] == pytest.approx(1.2)
+    spy_r = [0.01, -0.02, 0.03, -0.01, 0.02]
+    panel = pd.DataFrame({"SPY": _px_from_rets(spy_r),
+                          "AAA": _px_from_rets([2 * r for r in spy_r]),
+                          "BBB": _px_from_rets([-r for r in spy_r])}, index=idx)
+    b = factors.market_beta(panel, idx[-1].date(), window=5, market="SPY")
+    assert b["AAA"] == pytest.approx(2.0, abs=1e-6)
+    assert b["BBB"] == pytest.approx(-1.0, abs=1e-6)
+    assert b["SPY"] == pytest.approx(1.0, abs=1e-6)
 
 
-def test_momentum_thin_history_is_nan():
+def test_market_beta_thin_history_is_nan():
     idx = pd.bdate_range("2026-01-01", periods=3)
-    panel = pd.DataFrame({"AAA": [1, 2, 3]}, index=idx)
-    mom = factors.momentum_12_1(panel, idx[-1].date(), long_w=4, short_w=1)
-    assert mom["AAA"] != mom["AAA"]  # NaN
+    panel = pd.DataFrame({"SPY": [100.0, 101, 102], "AAA": [10.0, 11, 12]}, index=idx)
+    b = factors.market_beta(panel, idx[-1].date(), window=10, market="SPY")  # 2 obs < 80% of 10
+    assert b["AAA"] != b["AAA"]  # NaN
+
+
+def test_market_beta_no_market_column_is_nan():
+    idx = pd.bdate_range("2026-01-01", periods=6)
+    panel = pd.DataFrame({"AAA": [1.0, 2, 3, 4, 5, 6]}, index=idx)
+    b = factors.market_beta(panel, idx[-1].date(), window=5, market="SPY")
+    assert b.isna().all()  # no market series → nothing to regress against
 
 
 # ----------------------------------------------------- point-in-time / look-ahead

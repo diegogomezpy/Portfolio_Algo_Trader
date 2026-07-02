@@ -45,7 +45,7 @@ def results() -> pd.DataFrame:
 def test_produces_rows_with_expected_schema(results):
     assert len(results) >= 2
     for col in ["date", "n_names", "status", "gross_return", "cost", "net_return",
-                "turnover", "benchmark_return", "quality", "value", "momentum", "lowvol"]:
+                "turnover", "benchmark_return", "quality", "value", "beta", "lowvol"]:
         assert col in results.columns
 
 
@@ -66,6 +66,6 @@ def test_book_is_sized_and_feasible(results):
 
 def test_summary_and_gate_compute(results):
     summary = bt.summarize(results)
-    assert set(summary["sleeves"]) == {"quality", "value", "momentum", "lowvol"}
+    assert set(summary["sleeves"]) == {"quality", "value", "beta", "lowvol"}
     assert isinstance(summary["passed"], bool)
     assert summary["n_months"] == len(results)

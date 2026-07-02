@@ -161,7 +161,7 @@ factor_scores = Table(
     Column("composite_score", Float),
     Column("quality_score", Float),
     Column("value_score", Float),
-    Column("momentum_score", Float),
+    Column("beta_score", Float),
     Column("lowvol_score", Float),
     Column("stale", Boolean, server_default=false()),
     Column("created_at", DateTime, server_default=func.now()),

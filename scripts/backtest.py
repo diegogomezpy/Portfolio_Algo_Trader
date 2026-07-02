@@ -55,7 +55,7 @@ log = get_logger(__name__)
 PRICES_DIR = "data/raw/equities"
 FUNDAMENTALS_DIR = "data/raw/fundamentals"
 RESULTS_PATH = Path("data/backtest/walkforward.parquet")
-SUBSCORES = ["quality_score", "value_score", "momentum_score", "lowvol_score"]
+SUBSCORES = ["quality_score", "value_score", "beta_score", "lowvol_score"]
 
 
 # ====================================================================== #
@@ -187,7 +187,7 @@ def run_walkforward(start: date, end: date, *, settings=None) -> pd.DataFrame:
     sector_map = sectors.load_sector_map()["sector"]
     adv = _latest_adv(panel.index[-1])
 
-    burn = settings.factors.momentum_long_window + 1
+    burn = settings.factors.beta_window + 1
     rebal = [d for d in month_start_dates(panel.index)
              if start <= d.date() <= end and panel.index.get_loc(d) >= burn]
     if len(rebal) < 2:

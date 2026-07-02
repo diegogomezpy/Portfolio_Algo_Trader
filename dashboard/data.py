@@ -263,7 +263,7 @@ def api_factors(db_engine) -> list[dict]:
         rows = conn.execute(
             select(db.factor_scores).where(db.factor_scores.c.date == latest_date)).mappings().all()
     return [{"symbol": r["symbol"], "composite": r["composite_score"], "quality": r["quality_score"],
-             "value": r["value_score"], "momentum": r["momentum_score"], "lowvol": r["lowvol_score"]}
+             "value": r["value_score"], "beta": r["beta_score"], "lowvol": r["lowvol_score"]}
             for r in rows if r["symbol"] in held]
 
 

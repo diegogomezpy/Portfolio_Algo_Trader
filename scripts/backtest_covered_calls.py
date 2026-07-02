@@ -133,7 +133,7 @@ def run_overlay(start: date, end: date, *, settings=None, iv_mode: str = "vix_sc
     vix = load_vix()
     adv = eq._latest_adv(panel.index[-1])
 
-    burn = settings.factors.momentum_long_window + 1
+    burn = settings.factors.beta_window + 1
     rebal = [d for d in eq.month_start_dates(panel.index)
              if start <= d.date() <= end and panel.index.get_loc(d) >= burn]
 

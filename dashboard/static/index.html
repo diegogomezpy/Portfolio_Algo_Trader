@@ -1708,15 +1708,15 @@ function renderPFactorTilt(s,factors){
   const rows=(s.positions||[]).filter(p=>p.symbol&&!_isOpt(p.symbol)&&p.weight&&fmap[p.symbol]);
   const held=(s.positions||[]).filter(p=>!_isOpt(p.symbol)&&p.qty).length;
   if(!rows.length){ fillPanel("p-ftilt","Factor tilt","book-weighted z-score",'<div style="padding:16px;color:var(--muted);font:400 12px var(--mono)">factor tilt appears once the book is scored (after the next rebalance)</div>',"factors"); return; }
-  const sub={quality:0,value:0,momentum:0,lowvol:0}; let tw=0;
-  rows.forEach(p=>{ tw+=p.weight; ["quality","value","momentum","lowvol"].forEach(k=>{ if(fmap[p.symbol][k]!=null) sub[k]+=p.weight*fmap[p.symbol][k]; }); });
+  const sub={quality:0,value:0,beta:0,lowvol:0}; let tw=0;
+  rows.forEach(p=>{ tw+=p.weight; ["quality","value","beta","lowvol"].forEach(k=>{ if(fmap[p.symbol][k]!=null) sub[k]+=p.weight*fmap[p.symbol][k]; }); });
   if(tw>0) Object.keys(sub).forEach(k=>sub[k]/=tw);
-  const keys=[["quality","Quality","profitability & balance sheet"],["value","Value","cheapness on fundamentals"],["momentum","Momentum","12-1 month price trend"],["lowvol","Low Vol","lower realized volatility"]];
+  const keys=[["quality","Quality","profitability & balance sheet"],["value","Value","cheapness on fundamentals"],["beta","Low Beta","lower market sensitivity (β vs SPY)"],["lowvol","Low Vol","lower realized volatility"]];
   const barFor=z=>{ const half=Math.min(1,Math.abs(z)/2)*50; return z>=0?`left:50%;width:${half.toFixed(1)}%`:`left:${(50-half).toFixed(1)}%;width:${half.toFixed(1)}%`; };
   const header=`<div style="display:grid;grid-template-columns:200px 1fr 56px;gap:16px;font:400 10px 'Space Grotesk';color:var(--muted);margin-bottom:8px"><span></span><span style="display:flex;justify-content:space-between"><span>‹ leans away</span><span>neutral</span><span>leans in ›</span></span><span></span></div>`;
   const rowsHtml=keys.map(([k,label,desc])=>{ const z=sub[k],c=zcol(z);
     return `<div style="display:grid;grid-template-columns:200px 1fr 56px;gap:16px;align-items:center;padding:9px 0;border-top:1px solid var(--line-soft)"><span style="font:500 12.5px 'Space Grotesk';color:var(--fg-dim)">${label} <span style="color:var(--muted);font-weight:400">· ${desc}</span></span><span style="position:relative;height:11px;background:var(--panel-2);border-radius:5px"><span style="position:absolute;top:-4px;bottom:-4px;left:50%;width:0;border-left:1px dashed var(--faint)"></span><span style="position:absolute;top:0;height:11px;border-radius:4px;background:${c};${barFor(z)}"></span></span><span class="pmono" style="text-align:right;font-weight:600;font-size:13px;color:${c}">${sz(z)}</span></div>`; }).join("");
-  const comp=(sub.quality+sub.value+sub.momentum+sub.lowvol)/4;
+  const comp=(sub.quality+sub.value+sub.beta+sub.lowvol)/4;
   const foot=`<div style="display:flex;flex-wrap:wrap;gap:8px 30px;margin-top:14px;padding-top:13px;border-top:1px solid var(--line-soft);font:400 11.5px 'Space Grotesk';color:var(--muted)"><span>Composite tilt <b class="pmono" style="font-weight:600;color:${zcol(comp)}">${sz(comp)}</b></span><span>Names scored <b class="pmono" style="font-weight:500;color:var(--fg-dim)">${rows.length}</b> of ${held}</span></div>`;
   fillPanel("p-ftilt","Factor tilt","book-weighted z-score · 0 = universe average",`<div style="padding:12px 18px 16px">${header}${rowsHtml}${foot}</div>`,"factors");
 }
@@ -1724,10 +1724,10 @@ function renderPFactorTilt(s,factors){
 function renderPRadar(s,factors){
   const fmap={}; (factors||[]).forEach(f=>fmap[f.symbol]=f);
   const rows=(s.positions||[]).filter(p=>p.symbol&&!_isOpt(p.symbol)&&p.weight&&fmap[p.symbol]);
-  const t={quality:0,value:0,momentum:0,lowvol:0}; let tw=0;
-  rows.forEach(p=>{ tw+=p.weight; ["quality","value","momentum","lowvol"].forEach(k=>{ if(fmap[p.symbol][k]!=null) t[k]+=p.weight*fmap[p.symbol][k]; }); });
+  const t={quality:0,value:0,beta:0,lowvol:0}; let tw=0;
+  rows.forEach(p=>{ tw+=p.weight; ["quality","value","beta","lowvol"].forEach(k=>{ if(fmap[p.symbol][k]!=null) t[k]+=p.weight*fmap[p.symbol][k]; }); });
   if(tw>0) Object.keys(t).forEach(k=>t[k]/=tw);
-  const axes=[["Quality",t.quality],["Value",t.value],["Momentum",t.momentum],["Low Vol",t.lowvol]];
+  const axes=[["Quality",t.quality],["Value",t.value],["Low Beta",t.beta],["Low Vol",t.lowvol]];
   const W=360,H=250,cx=180,cy=124,R=84,ang=i=>(-90+i*90)*Math.PI/180,map=z=>Math.max(0.06,Math.min(1,(z+1)/2.2));
   const ring=rad=>axes.map((_,i)=>[cx+rad*Math.cos(ang(i)),cy+rad*Math.sin(ang(i))]);
   const poly=(pts,fill,stroke,sw)=>`<polygon points="${pts.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ')}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
@@ -1758,13 +1758,13 @@ function renderPCalls(s,calls){
 
 function renderPFactors(factors){
   const G="display:grid;grid-template-columns:1.1fr .7fr .55fr .55fr .55fr .6fr;gap:6px;align-items:center";
-  const head=`<div style="${G};padding:8px 16px;font:600 9px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Symbol</span><span style="text-align:right">Comp</span><span style="text-align:right">Qual</span><span style="text-align:right">Val</span><span style="text-align:right">Mom</span><span style="text-align:right">LoVol</span></div>`;
+  const head=`<div style="${G};padding:8px 16px;font:600 9px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Symbol</span><span style="text-align:right">Comp</span><span style="text-align:right">Qual</span><span style="text-align:right">Val</span><span style="text-align:right">Beta</span><span style="text-align:right">LoVol</span></div>`;
   let body;
   if(!(factors&&factors.length)) body=`<div style="padding:16px;font:400 11.5px var(--mono);color:var(--muted)">Factor scores appear after the next rebalance scores the book.</div>`;
   else { const rows=[...factors].sort((a,b)=>(b.composite||0)-(a.composite||0));
     const cell=v=>`<span class="pmono" style="text-align:right;font-size:11.5px;color:${zcol(v)}">${sz(v)}</span>`;
     body=`<div class="sf-scroll" style="max-height:340px;overflow:auto">${rows.map(f=>{ const r=REF[f.symbol.toUpperCase()]||{};
-      return `<div class="prow" style="${G};padding:7px 16px"><span>${tkrChip(f.symbol,r.sector)}</span><span class="pmono" style="text-align:right;font-size:12px;font-weight:600;color:${zcol(f.composite)}">${sz(f.composite)}</span>${cell(f.quality)}${cell(f.value)}${cell(f.momentum)}${cell(f.lowvol)}</div>`; }).join('')}</div>`; }
+      return `<div class="prow" style="${G};padding:7px 16px"><span>${tkrChip(f.symbol,r.sector)}</span><span class="pmono" style="text-align:right;font-size:12px;font-weight:600;color:${zcol(f.composite)}">${sz(f.composite)}</span>${cell(f.quality)}${cell(f.value)}${cell(f.beta)}${cell(f.lowvol)}</div>`; }).join('')}</div>`; }
   fillPanel("p-factors","Factor scores","held names · z-score",head+body,"factors");
 }
 
@@ -1871,7 +1871,7 @@ function renderSectorExposure(positions){
 const FACTOR_KEYS = [
   ["quality","Quality","profitability","Quality — profitability, margins & balance-sheet strength."],
   ["value","Value","cheapness","Value — cheapness on earnings & book multiples."],
-  ["momentum","Momentum","price trend","Momentum — 12-month return, skipping the most recent month."],
+  ["beta","Low Beta","market β","Low Beta — trailing-252d β vs SPY; lower (less market-sensitive) scores higher."],
   ["lowvol","Low Vol","stability","Low Vol — lower realized volatility scores higher."]];
 function renderFactorTilt(positions, factors){
   const facBy = {}; (factors||[]).forEach(f=>{ facBy[String(f.symbol).toUpperCase()] = f; });
@@ -2006,11 +2006,11 @@ function renderCalls(s, calls){
 function renderFactors(factors){
   $("factors").innerHTML = table(factors, [
     {h:"Symbol", cls:()=>"sym", f:r=>symCell(r.symbol)},
-    {h:"Composite", tip:"Blended factor score — equal-weight Quality/Value/Momentum/Low-Vol. Higher = more attractive.",
+    {h:"Composite", tip:"Blended factor score — equal-weight Quality/Value/Low-Beta/Low-Vol. Higher = more attractive.",
       cls:r=>sgn(r.composite), f:r=>r.composite==null?"–":r.composite.toFixed(2)},
     {h:"Qual", tip:"Quality factor z-score (profitability, balance-sheet strength).", cls:r=>sgn(r.quality), f:r=>r.quality==null?"–":r.quality.toFixed(2)},
     {h:"Val", tip:"Value factor z-score (cheapness on fundamentals).", cls:r=>sgn(r.value), f:r=>r.value==null?"–":r.value.toFixed(2)},
-    {h:"Mom", tip:"Momentum factor z-score (12-month return, skipping the last month).", cls:r=>sgn(r.momentum), f:r=>r.momentum==null?"–":r.momentum.toFixed(2)},
+    {h:"Beta", tip:"Low-Beta factor z-score (trailing-252d β vs SPY; lower beta scores higher).", cls:r=>sgn(r.beta), f:r=>r.beta==null?"–":r.beta.toFixed(2)},
     {h:"LowVol", tip:"Low-volatility factor z-score (lower realized vol scores higher).", cls:r=>sgn(r.lowvol), f:r=>r.lowvol==null?"–":r.lowvol.toFixed(2)},
   ]);
 }
