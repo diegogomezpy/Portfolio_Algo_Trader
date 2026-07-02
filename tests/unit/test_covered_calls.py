@@ -79,6 +79,16 @@ def test_select_strike_picks_delta_nearest_target():
     assert chosen["delta"] == deltas[expected]
 
 
+def test_select_strike_expiration_filter_pins_vertical():
+    # Two expiries in-window; the filter must confine the long wing to the short's expiry
+    # (a vertical spread), never a diagonal across expiries.
+    later = "2026-08-12"     # 42 DTE (also in [30,45])
+    chain = [_call("A", 110, exp=IN_WINDOW), _call("B", 115, exp=later)]
+    chosen = cc.select_strike(chain, spot=100.0, iv=0.30, target_delta=0.30,
+                              as_of=AS_OF, min_dte=30, max_dte=45, expiration=IN_WINDOW)
+    assert chosen["symbol"] == "A" and str(chosen["expiration"]) == IN_WINDOW
+
+
 def test_select_strike_filters_dte_window_and_missing_mid():
     chain = [
         _call("near", 105, exp=OUT_WINDOW),       # too soon (7 DTE) — excluded

@@ -134,20 +134,24 @@ def select_strike(
     as_of: date,
     min_dte: int,
     max_dte: int,
+    expiration: str | None = None,
 ) -> Optional[dict]:
     """Pick the call nearest ``target_delta`` within the DTE window, from a real chain.
 
     ``calls`` are chain contracts (``strike``, ``expiration``, ``mid``, ``symbol`` …). Only
     contracts with a usable mid and an expiry in ``[min_dte, max_dte]`` days are considered;
     delta is computed via Black-Scholes from ``spot``/``iv`` (the indicative feed has no
-    greeks). Returns the chosen contract dict with a computed ``delta``, or ``None`` if none
-    qualify (illiquid / nothing in the window → the name goes uncovered).
+    greeks). ``expiration`` (ISO) restricts to a single expiry — used to pin a spread's long
+    wing to the short leg's expiration (a *vertical*, not a diagonal). Returns the chosen
+    contract dict with a computed ``delta``, or ``None`` if none qualify.
     """
     best = None
     best_gap = None
     for c in calls:
         strike, exp, mid = c.get("strike"), c.get("expiration"), c.get("mid")
         if strike is None or exp is None or not mid:
+            continue
+        if expiration is not None and str(exp) != str(expiration):
             continue
         dte = (_to_date(exp) - as_of).days
         if not (min_dte <= dte <= max_dte):
@@ -480,15 +484,15 @@ def portfolio_beta(weights: Mapping[str, float], price_panel: pd.DataFrame, as_o
 def write_index_overwrite(client, broker, db_engine, holdings_shares: Mapping[str, float], *,
                           settings, as_of: date, price_panel: pd.DataFrame,
                           chase: OptionChase | None = None, alert=None):
-    """Portfolio-level SPY call **overwrite** sized to the book's market beta (replaces per-name
-    covered calls for low-beta books whose single-name options are illiquid).
+    """Portfolio-level SPY **call-spread overwrite** sized to the book's market beta (replaces
+    per-name covered calls for low-beta books whose single-name options are illiquid).
 
-    Sells ``N`` ``market`` (SPY) calls at the target delta where ``N ≈ coverage · β_p ·
-    gross_equity / (100 · spot)`` — beta-sizing so the short-call market exposure matches the
-    book's (low-beta ⇒ fewer calls). Value-weights β_p and gross equity are derived from
-    ``holdings_shares`` × the panel's spot. Deliberately **not share-covered** (there are no SPY
-    shares behind it — an index overwrite, margined by the broker); the per-name coverage gate is
-    intentionally skipped here. Returns ``(submitted, skipped, info)``.
+    Sells ``N`` SPY vertical call spreads (short at ``target_delta``, long wing at ``wing_delta``,
+    same expiry) where ``N ≈ coverage · β_p · gross_equity / (100 · spot)`` — beta-sizing so the
+    short-leg market exposure matches the book's (low-beta ⇒ fewer spreads). Value-weighted β_p
+    and gross equity come from ``holdings_shares`` × the panel spot. A **spread, not a naked call**
+    — defined-risk, tradable at Alpaca's spread tier (uncovered short calls are not permitted).
+    The lifecycle row records the **net credit** collected. Returns ``(submitted, skipped, info)``.
     """
     cc = settings.covered_calls
     market = getattr(settings.factors, "beta_market", "SPY")
@@ -512,22 +516,59 @@ def write_index_overwrite(client, broker, db_engine, holdings_shares: Mapping[st
     iv = estimate_ivs(price_panel, [market], as_of, window=settings.covariance.estimation_window_days).get(market)
     if iv is None or not chain:
         return [], [{"reason": "no chain / iv for market"}], info
-    c = select_strike(chain, spot=float(spot), iv=float(iv), target_delta=cc.target_delta,
-                      as_of=as_of, min_dte=cc.min_dte_entry, max_dte=cc.max_dte_entry)
-    if c is None:
-        return [], [{"reason": "no strike at target delta"}], info
-    mid = float(c["mid"])
-    order = CoveredCallOrder(action="sell_to_open", option_symbol=str(c["symbol"]), underlying=market,
-                             contracts=n, limit_price=round(mid, 2), strike=float(c["strike"]),
-                             expiration=str(c["expiration"]), delta=round(float(c["delta"]), 3),
-                             premium=round(n * _CONTRACT_SHARES * mid, 2))
-    info.update(strike=float(c["strike"]), delta=round(float(c["delta"]), 3),
-                notional=round(n * spot * _CONTRACT_SHARES), premium=order.premium)
-    log.info("index overwrite plan", extra=info)
-    submitted = _execute_option_leg(broker, db_engine, [order], side="sell",
-                                    position_intent="sell_to_open", event="write", as_of=as_of,
-                                    final_market=False, chase=chase, alert=alert)
-    return submitted, [], info
+    # Vertical call spread (defined risk, tradable at Alpaca's spread tier — naked calls are not
+    # permitted): sell the target-delta short, buy a further-OTM long wing at the SAME expiry.
+    short = select_strike(chain, spot=float(spot), iv=float(iv), target_delta=cc.target_delta,
+                          as_of=as_of, min_dte=cc.min_dte_entry, max_dte=cc.max_dte_entry)
+    if short is None:
+        return [], [{"reason": "no short strike at target delta"}], info
+    exp = str(short["expiration"])
+    wing_delta = float(getattr(cc, "wing_delta", 0.15))
+    long_leg = select_strike(chain, spot=float(spot), iv=float(iv), target_delta=wing_delta,
+                             as_of=as_of, min_dte=cc.min_dte_entry, max_dte=cc.max_dte_entry,
+                             expiration=exp)
+    if long_leg is None or float(long_leg["strike"]) <= float(short["strike"]):
+        return [], [{"reason": "no long wing above short at same expiry"}], info
+    net = round(float(short["mid"]) - float(long_leg["mid"]), 2)
+    info.update(expiration=exp, short_strike=float(short["strike"]), long_strike=float(long_leg["strike"]),
+                short_delta=round(float(short["delta"]), 3), net_credit=net,
+                premium=round(n * _CONTRACT_SHARES * net, 2))
+    if net <= 0:
+        return [], [{"reason": "non-positive net credit"}], info
+    log.info("index spread overwrite plan", extra=info)
+    coid = f"ovw:{as_of.isoformat()}:{market}"
+    try:
+        resp = broker.submit_option_spread(
+            [(short["symbol"], "sell", "sell_to_open"), (long_leg["symbol"], "buy", "buy_to_open")],
+            contracts=n, net_limit_price=net, client_order_id=coid)
+    except AlpacaAPIError as exc:
+        log.error("index spread overwrite rejected", extra={"error": str(exc)})
+        if alert:
+            alert(f"SPY spread overwrite rejected: {exc}")
+        return [], [{"reason": f"rejected: {exc}"}], info
+    oid = resp["id"]
+    filled = int(float(resp.get("filled_qty") or 0))
+    for _ in range(20):                                   # poll to fill (SPY spreads are liquid)
+        if filled >= n or str(resp.get("status") or "").lower() in ("filled", "canceled", "rejected", "expired"):
+            break
+        time.sleep(2)
+        try:
+            resp = broker.get_order(oid)
+        except AlpacaAPIError:
+            break
+        filled = int(float(resp.get("filled_qty") or 0))
+    if filled < 1:
+        log.info("index spread overwrite unfilled", extra={"id": oid, "status": resp.get("status")})
+        return [], [{"reason": f"unfilled ({resp.get('status')})"}], info
+    # Lifecycle: one row on the short leg carrying the NET credit collected (real cash income).
+    order = CoveredCallOrder(action="sell_to_open", option_symbol=str(short["symbol"]), underlying=market,
+                             contracts=filled, limit_price=net, strike=float(short["strike"]),
+                             expiration=exp, delta=round(float(short["delta"]), 3),
+                             premium=round(filled * _CONTRACT_SHARES * net, 2))
+    _log_lifecycle(db_engine, "write", order)
+    info["filled"] = filled
+    log.info("index spread overwrite filled", extra=info)
+    return [order], [], info
 
 
 def _submit_closes(broker, db_engine, closes, *, as_of, event, chase: OptionChase | None = None,

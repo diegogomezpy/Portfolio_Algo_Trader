@@ -25,8 +25,8 @@ from typing import Any
 
 from alpaca.common.exceptions import APIError
 from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import OrderSide, PositionIntent, TimeInForce
-from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest
+from alpaca.trading.enums import OrderClass, OrderSide, PositionIntent, TimeInForce
+from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest, OptionLegRequest
 
 from engine.alpaca_client import AlpacaAPIError
 from engine.logger import get_logger
@@ -181,6 +181,33 @@ class Broker:
                  extra={"symbol": option_symbol, "side": str(side).lower(),
                         "intent": str(position_intent).lower(), "contracts": int(contracts),
                         "type": order_type, "id": out["id"], "status": out["status"]})
+        return out
+
+    def submit_option_spread(self, legs, contracts: int, net_limit_price: float, *,
+                             client_order_id: str | None = None) -> dict:
+        """Submit a multi-leg option order (e.g. a vertical call spread) at a **net limit price**.
+
+        ``legs`` = iterable of ``(option_symbol, side, position_intent)`` — for a call credit
+        spread: sell the short call (``"sell"``/``"sell_to_open"``) + buy the long wing
+        (``"buy"``/``"buy_to_open"``). ``contracts`` = number of spreads. ``net_limit_price`` is
+        the per-spread net premium; **positive = net credit** (received). Trades at Alpaca's
+        spread (Level 3) tier — no uncovered/naked eligibility needed. Returns the normalized order.
+        """
+        order_legs = [OptionLegRequest(symbol=str(sym), side=self._side(side), ratio_qty=1,
+                                       position_intent=self._intent(intent))
+                      for sym, side, intent in legs]
+        req = LimitOrderRequest(qty=int(contracts), limit_price=round(float(net_limit_price), 2),
+                                order_class=OrderClass.MLEG, time_in_force=TimeInForce.DAY,
+                                legs=order_legs, client_order_id=client_order_id)
+        try:
+            order = self._trading.submit_order(order_data=req)
+        except APIError as exc:
+            raise AlpacaAPIError(_NO_SYMBOL, "submit_option_spread", str(exc)) from exc
+        out = _normalize_order(order)
+        log.info("option spread submitted",
+                 extra={"legs": len(order_legs), "contracts": int(contracts),
+                        "net_limit": round(float(net_limit_price), 2),
+                        "id": out["id"], "status": out["status"]})
         return out
 
     def get_order(self, order_id: str) -> dict:

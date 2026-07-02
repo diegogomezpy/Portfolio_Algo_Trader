@@ -73,7 +73,9 @@ covered_calls:
   # market beta (β_p × gross equity), harvesting SPY's liquid option premium — the low-beta book's
   # single-name options are too illiquid to write. "per_name" = classic per-holding covered calls.
   overlay_mode: index
-  overwrite_coverage: 1.0        # fraction of the book's beta-exposure to overwrite with SPY calls
+  overwrite_coverage: 1.0        # fraction of the book's beta-exposure to overwrite with SPY spreads
+  wing_delta: 0.15              # long-wing delta of the SPY vertical (short=target_delta, long=this,
+                                 # same expiry) — defined-risk credit spread (Alpaca has no naked tier)
   target_delta: 0.30             # raised from 0.25 (DECISIONS D29): the delta sweep showed
                                  # 0.25 left premium on the table — 0.30 lifts the market-IV
                                  # Sharpe (1.18→1.31) with assignment a safe 22% (<30% cap).
