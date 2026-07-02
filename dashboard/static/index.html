@@ -232,7 +232,8 @@
   .ov-live { display: grid; grid-template-columns: 1.62fr 1fr; gap: 14px; align-items: stretch; }
   @media (max-width: 1100px) { .ov-live { grid-template-columns: 1fr; } }
   .ovflash { display: inline-block; border-radius: 6px; }
-  #ov-treemap svg { display: block; width: 100%; height: 100%; }
+  #ov-treemap { position: relative; }
+  #ov-treemap svg { position: absolute; inset: 9px; width: auto; height: auto; display: block; }
   .evtf { background: transparent; color: var(--muted); border: 1px solid transparent; border-radius: 6px;
           padding: 3px 9px; font: 600 10.5px 'Space Grotesk'; letter-spacing: .02em; cursor: pointer; transition: all .15s var(--ease); }
   .evtf:hover { color: var(--fg); background: var(--panel-2); }
@@ -257,18 +258,18 @@
   .intro-grid .dot.teal { background: var(--accent); }
   #introOverlay.p1 .dot { transform: scale(1); opacity: 1; }
   #introOverlay.p1 .dot.teal { box-shadow: 0 0 12px rgba(70,184,173,.55); }
-  .intro-div { width: 1px; height: 150px; background: #243352; opacity: 0; transition: opacity .55s ease; }
+  .intro-div { width: 1px; height: 96px; background: #243352; opacity: 0; transition: opacity .55s ease; }
   #introOverlay.p3 .intro-div { opacity: 1; }
-  .intro-fund { font: 500 46px 'Space Grotesk', sans-serif; letter-spacing: -.015em; color: var(--fg);
+  .intro-fund { font: 500 32px 'Space Grotesk', sans-serif; letter-spacing: -.015em; color: var(--fg);
     opacity: 0; transition: opacity .55s ease .08s; }
   #introOverlay.p3 .intro-fund { opacity: 1; }
   .intro-words { display: flex; flex-direction: column; gap: 4px; }
   .iw-row { display: flex; align-items: baseline; line-height: 1.1; }
-  .iw-in { font: 600 46px 'IBM Plex Mono', monospace; color: var(--fg); letter-spacing: .04em;
+  .iw-in { font: 600 22px 'IBM Plex Mono', monospace; color: var(--fg); letter-spacing: .04em;
     opacity: 0; transform: translateY(8px); transition: opacity .5s ease, transform .55s cubic-bezier(.2,.8,.2,1); }
   #introOverlay.p2 .iw-in { opacity: 1; transform: translateY(0); }
   .iw-tl { display: inline-block; overflow: hidden; white-space: nowrap; max-width: 400px; opacity: 0; margin-left: 2px;
-    font: 400 36px 'Space Grotesk', sans-serif; color: var(--muted); letter-spacing: .005em;
+    font: 400 18px 'Space Grotesk', sans-serif; color: var(--muted); letter-spacing: .005em;
     transition: max-width .7s cubic-bezier(.7,0,.2,1), opacity .5s ease; }
   #introOverlay.p2 .iw-tl { opacity: 1; }
   #introOverlay.p3 .iw-tl { max-width: 0; opacity: 0; }
@@ -374,7 +375,7 @@
     <div class="ov-live">
       <div class="ovpanel" style="display:flex;flex-direction:column;overflow:hidden">
         <div class="ovhead"><span class="ovhk">Holdings heatmap</span><span class="ovhs">size = weight · color = day move</span></div>
-        <div style="flex:1;min-height:300px;padding:9px" id="ov-treemap"></div>
+        <div style="flex:1;min-height:300px" id="ov-treemap"></div>
       </div>
       <div style="display:flex;flex-direction:column;gap:14px" id="ov-side">
         <div id="ov-gauge"></div>
@@ -1409,8 +1410,10 @@ function renderTreemap(s){
   const items=(s.positions||[]).filter(p=>p.symbol&&!_isOpt(p.symbol)&&p.weight)
     .map(p=>({sym:p.symbol,value:p.weight,chg:p.day_pct==null?0:p.day_pct})).sort((a,b)=>b.value-a.value);
   if(!items.length){ host.innerHTML='<div class="se-empty">no holdings yet</div>'; return; }
-  // Render at the container's actual pixel size so the viewBox is 1:1 — no stretched text.
-  const W=Math.max(320,Math.round(host.clientWidth||1003)), H=Math.max(240,Math.round(host.clientHeight||452));
+  // Render at the container's actual pixel size (minus the 9px inset the SVG sits in) so the
+  // viewBox is 1:1 — no stretched text. The SVG is absolutely positioned, so it can't feed its
+  // height back into the container (which previously made the panel slowly grow every tick).
+  const W=Math.max(320,Math.round((host.clientWidth||1021)-18)), H=Math.max(240,Math.round((host.clientHeight||470)-18));
   const tm=(arr,x,y,w,h,horiz)=>{ if(arr.length===1){ arr[0].rect={x,y,w,h}; return; }
     const tot=arr.reduce((a,b)=>a+b.value,0),half=tot/2; let c=0,best=0,bd=1e9;
     for(let k=0;k<arr.length-1;k++){ c+=arr[k].value; if(Math.abs(c-half)<bd){bd=Math.abs(c-half);best=k;} }
