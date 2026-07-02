@@ -175,9 +175,10 @@
             gap: 1px; background: var(--line); border-radius: var(--r); overflow: hidden; }
   .htile { background: var(--panel); padding: 10px 13px; min-width: 0; }
   .htile .hk { font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
-  .htile .hv { font-size: 14px; font-weight: 600; margin-top: 4px; display: flex; align-items: center;
-               gap: 7px; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .htile .hs { font-size: 10.5px; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .htile .hv { font-size: 14px; font-weight: 600; margin-top: 4px; display: flex; align-items: flex-start;
+               gap: 7px; font-family: var(--mono); font-variant-numeric: tabular-nums; line-height: 1.3; }
+  .htile .hv .hdot { margin-top: 4px; }
+  .htile .hs { font-size: 10.5px; color: var(--muted); margin-top: 3px; line-height: 1.35; }
   .hdot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
   .hdot.ok { background: var(--green); } .hdot.warn { background: var(--amber); }
   .hdot.bad { background: var(--red); } .hdot.mut { background: var(--faint); }
@@ -811,7 +812,7 @@ function sharpeStripHtml(risk){
   const arr=(risk&&risk.rolling_sharpe)||[], win=(risk&&risk.rolling_window)||10;
   const idx=[]; arr.forEach((v,i)=>{ if(v!=null) idx.push(i); });
   const body=(()=>{
-    if(idx.length<2) return `<div class="se-empty" style="height:200px;display:flex;align-items:center;justify-content:center;text-align:center">rolling Sharpe appears once a ${win}-day window accumulates (needs ≥10 days of history)</div>`;
+    if(idx.length<2) return `<div class="se-empty" style="flex:1;min-height:200px;display:flex;align-items:center;justify-content:center;text-align:center">rolling Sharpe appears once a ${win}-day window accumulates (needs ≥10 days of history)</div>`;
     const vals=idx.map(i=>arr[i]);
     const W=508,H=232,pl=34,pr=12,pt=14,pb=26,pw=W-pl-pr,ph=H-pt-pb;
     const hi=Math.max(2,...vals), lo=Math.min(0,...vals);
@@ -826,7 +827,7 @@ function sharpeStripHtml(risk){
     const cur=`<div style="display:flex;align-items:baseline;gap:8px;padding:0 2px 8px"><span style="font:500 22px var(--mono);color:var(--fg)">${vals[vals.length-1].toFixed(2)}</span><span style="font:400 10.5px 'Space Grotesk';color:var(--muted)">rolling ${win}-day · target band 1.0–1.5</span></div>`;
     return cur+g;
   })();
-  return ovPanel("Rolling Sharpe","annualized", body, "12px 14px 10px", "risk");
+  return ovPanel("Rolling Sharpe","annualized", body, "12px 14px 10px", "risk", true);
 }
 
 // Per-calendar-year returns from a daily series (chained off the prior year-end).
@@ -842,7 +843,7 @@ function annualHtml(tr){
   const sa=annualRets(tr.dates, tr.nav), spm={}; (sp?annualRets(tr.dates, sp):[]).forEach(x=>spm[x.y]=x.r);
   const A=sa.map(x=>({y:x.y, strat:x.r, spy:spm[x.y]}));
   const body=(()=>{
-    if(!A.length) return '<div class="se-empty" style="height:270px;display:flex;align-items:center;justify-content:center;text-align:center">annual returns appear once a full year of history accumulates</div>';
+    if(!A.length) return '<div class="se-empty" style="flex:1;min-height:200px;display:flex;align-items:center;justify-content:center;text-align:center">annual returns appear once a full year of history accumulates</div>';
     const W=508,H=270,pl=34,pr=10,pt=12,pb=40,pw=W-pl-pr,ph=H-pt-pb;
     const all=A.flatMap(a=>[a.strat||0,a.spy||0]); const hi=Math.max(0.05,...all), lo=Math.min(-0.05,...all);
     const Y=v=>pt+(hi-v)/(hi-lo)*ph, gw=pw/A.length, bw=Math.min(gw*0.32,40);
@@ -857,7 +858,7 @@ function annualHtml(tr){
     const leg=`<div style="display:flex;gap:16px;justify-content:center;padding-top:2px"><span style="display:inline-flex;align-items:center;gap:6px;font:400 10.5px 'Space Grotesk';color:var(--fg-dim)"><span style="width:12px;height:3px;background:#46b8ad;border-radius:2px"></span>Strategy</span><span style="display:inline-flex;align-items:center;gap:6px;font:400 10.5px 'Space Grotesk';color:#aab4c3"><span style="width:12px;height:3px;background:#5a6781;border-radius:2px"></span>SPY</span></div>`;
     return g+leg;
   })();
-  return ovPanel("Annual returns","strategy vs SPY", body, "12px 14px 12px", "benchmarks");
+  return ovPanel("Annual returns","strategy vs SPY", body, "12px 14px 12px", "benchmarks", true);
 }
 
 // 6-col ribbon (mock): Days live · Since inception · Ann return · Live Sharpe · Premium · Avg slippage.
@@ -1230,7 +1231,7 @@ function renderHealth(h){
           m.is_open ? (m.next_close?`closes ${clockHM(m.next_close)}`:"")
                     : (m.next_open?`opens ${WD[new Date(m.next_open).getDay()]} ${clockHM(m.next_open)}`:""))
       : htile("Market","mut","—","live clock offline"),
-    lr ? htile("Last rebalance", lr.gate_passed?"ok":"bad", `${mdy(lr.date)} · ${lr.trigger||"—"}`,
+    lr ? htile("Last rebalance", lr.gate_passed?"ok":"bad", `${mdy(lr.date)} · ${String(lr.trigger||"—").replace(/_/g," ")}`,
           lr.gate_passed?"risk gate ✓ passed":`gate ✗ ${lr.gate_reason||"blocked"}`)
       : htile("Last rebalance","mut","none yet","first run pending"),
     htile("Next rebalance","ok", mdy(nr.date),
@@ -1441,8 +1442,8 @@ function sparkP(arr,w,h,p){ p=p||1.5; const a=(arr||[]).filter(v=>v!=null); if(a
   return a.map((v,i)=>(i?"L":"M")+(p+i/(a.length-1)*(w-2*p)).toFixed(1)+" "+(p+(hi-v)/(hi-lo)*(h-2*p)).toFixed(1)).join(" "); }
 function hms(secs){ const s=Math.max(0,Math.floor(secs)),d=Math.floor(s/86400),h=Math.floor(s%86400/3600),
   m=Math.floor(s%3600/60),ss=s%60,p=n=>String(n).padStart(2,"0"); return (d>0?d+"d ":"")+p(h)+":"+p(m)+":"+p(ss); }
-function ovPanel(title,sub,body,pad,src){ return `<div class="ovpanel"><div class="ovhead"><span class="ovhk">${title}</span>`
-  +`<span class="ovhs">${sub}${src?srcInfo(src):''}</span></div><div style="padding:${pad||'14px 16px'}">${body}</div></div>`; }
+function ovPanel(title,sub,body,pad,src,fill){ return `<div class="ovpanel"${fill?' style="display:flex;flex-direction:column;height:100%"':''}><div class="ovhead"><span class="ovhk">${title}</span>`
+  +`<span class="ovhs">${sub}${src?srcInfo(src):''}</span></div><div style="padding:${pad||'14px 16px'}${fill?';flex:1;display:flex;flex-direction:column;justify-content:center':''}">${body}</div></div>`; }
 
 function renderSession(){
   const host=$("ov-session"); if(!host) return;
@@ -1625,7 +1626,7 @@ function renderWaterfall(s){
   const host=$("ov-waterfall"); if(!host||s.nav==null) return;
   const nav=s.nav, dayPnl=s.day_pnl||0, prior=nav-dayPnl, premium=0, costs=0, price=dayPnl-premium-costs;
   const steps=[["Prior NAV",prior,"base"],["Price",price,"d"],["Premium",premium,"d"],["Costs",costs,"d"],["Live NAV",nav,"base"]];
-  const W=980,H=210,pl=10,pr=10,pb=34,pt=12,pw=W-pl-pr,ph=H-pt-pb;
+  const W=980,H=210,pl=10,pr=10,pb=34,pt=24,pw=W-pl-pr,ph=H-pt-pb;   // pt headroom so the top bar's value label isn't clipped
   const vals=[prior,nav]; let run=prior; [price,premium,costs].forEach(v=>{ run+=v; vals.push(run); });
   let lo=Math.min(...vals),hi=Math.max(...vals); const pd=(hi-lo)*0.4||1; lo-=pd; const span=hi-lo||1;
   const Y=v=>pt+(hi-v)/span*ph, gap=pw/steps.length, bw=gap*0.5;
