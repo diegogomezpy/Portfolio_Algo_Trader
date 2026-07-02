@@ -270,7 +270,7 @@ const DATA = /*__DASHBOARD_DATA__*/null;
   }
   scrub.addEventListener("input",e=>renderSnap(+e.target.value));renderSnap(DATA.labels.length-1);
 
-  hbars("attr",[["quality","Quality"],["value","Value"],["momentum","Momentum"],["lowvol","Low-vol"]].map(([k,n])=>({name:n,v:DATA.sleeves[k]})),v=>pct(v));
+  hbars("attr",[["quality","Quality"],["value","Value"],["beta","Low Beta"],["lowvol","Low-vol"]].map(([k,n])=>({name:n,v:DATA.sleeves[k]})),v=>pct(v));
   groupedBars("years",DATA.years.map(y=>y.y),DATA.years.map(y=>y.strat),DATA.years.map(y=>y.spy),v=>(v*100).toFixed(0)+"%");
   const ctbl=(id,arr,sign)=>document.getElementById(id).innerHTML="<thead><tr><th>Symbol</th><th>Company</th><th>Contribution</th></tr></thead><tbody>"+
     arr.map(x=>`<tr><td><b style="font-weight:500">${x.sym}</b></td><td>${nm(x.sym)}</td><td class="${sign}" style="font-weight:500">${pct(x.v)}</td></tr>`).join("")+"</tbody>";
@@ -295,6 +295,6 @@ const DATA = /*__DASHBOARD_DATA__*/null;
     const tail=VRP.vrp_var==null?"":(VRP.vrp_var>=0?`positive (+${VRP.vrp_var.toFixed(3)})`:`slightly negative (${VRP.vrp_var.toFixed(3)}) — tail-dominated: a few large single-name moves spike realized variance`);
     document.getElementById("vrpnote").innerHTML=`<b style="font-weight:600">Variance risk premium:</b> sold calls at ${pp(VRP.implied_vol)} implied vol vs ${pp(VRP.realized_vol)} realized — a <b style="font-weight:600">+${(VRP.vrp_vol*100).toFixed(1)} vol-point</b> edge, implied &gt; realized in ${pp(VRP.hit_rate)} of months (IV/RV ${VRP.ratio.toFixed(2)}). The bars above show it month by month: mostly green (we sold vol richer than it realized), with red spikes where a name's realized vol blew past what we sold. In variance terms (IV²−RV²) it is ${tail}. The 0.30-delta strike caps that tail, so the with-calls book (Sharpe ${VRP.sharpe.toFixed(2)}) still beats equity-only (${E.sharpe.toFixed(2)}).`;
   }
-  document.getElementById("foot").textContent="sharpe-engine · factor equity (quality/value/momentum/low-vol, ~19 names, equal-weight, λ=0 alpha-driven) + 0.30-delta covered-call overlay · paper-trading research backtest on free IEX history from mid-2020. Not investment advice.";
+  document.getElementById("foot").textContent="sharpe-engine · factor equity (quality/value/low-beta/low-vol, ~19 names, equal-weight, λ=0 alpha-driven) + 0.30-delta covered-call overlay · paper-trading research backtest on free IEX history from mid-2020. Not investment advice.";
 })();
 </script>
