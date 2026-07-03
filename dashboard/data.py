@@ -400,6 +400,26 @@ def api_alerts(db_engine, limit: int = 50) -> list[dict]:
              "severity": alert_severity(r["message"]), "delivered": r["delivered"]} for r in rows]
 
 
+def api_premium_today(db_engine) -> float:
+    """Net option premium booked since ET midnight (+collected on writes, −paid on closes).
+
+    The waterfall's Premium bar. Reads ``options_lifecycle`` — rows only land on real fills,
+    so this is cash truth, not plan. ET day boundary (ts stored naive-UTC).
+    """
+    try:
+        from zoneinfo import ZoneInfo
+        start_et = datetime.now(ZoneInfo("America/New_York")).replace(
+            hour=0, minute=0, second=0, microsecond=0)
+        start_utc = start_et.astimezone(timezone.utc).replace(tzinfo=None)
+        with db_engine.connect() as conn:
+            v = conn.execute(
+                select(func.coalesce(func.sum(db.options_lifecycle.c.premium), 0.0))
+                .where(db.options_lifecycle.c.ts >= start_utc)).scalar()
+        return round(float(v or 0.0), 2)
+    except Exception:  # noqa: BLE001 — attribution is decoration; never break the overview
+        return 0.0
+
+
 def api_manual_actions(db_engine, limit: int = 20) -> list[dict]:
     """Most recent execution-console actions (the Activity tab's audit trail), descending.
 

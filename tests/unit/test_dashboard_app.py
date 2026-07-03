@@ -6,7 +6,7 @@ against an injected engine and exposes the documented routes (no httpx/TestClien
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import create_engine, insert
 
@@ -354,6 +354,53 @@ def test_health_route_refines_with_live_client():
     # the live clock fills the market tile; the calendar confirms the holiday-correct rebalance day
     assert h["market"]["is_open"] is True and h["market"]["next_close"]
     assert h["next_rebalance"]["source"] == "confirmed" and h["next_rebalance"]["date"] == "2026-07-01"
+
+
+def test_market_status_session_today_flags_holidays(monkeypatch):
+    # July-3rd bug: the session panel drew intraday progress on a full-holiday. The health
+    # market block now says whether today has a NYSE session at all (per-day memoized).
+    from dashboard import app as app_module
+
+    eng = create_engine("sqlite://")
+    db.create_all(eng)
+    monkeypatch.setitem(app_module._CAL_TODAY, "date", None)      # bust the per-day memo
+    h = _route(create_app(eng, client=_MarketClient([]), live=True), "/api/health")()
+    assert h["market"]["session_today"] is True                   # calendar returns sessions
+
+    class _Holiday(_MarketClient):
+        def market_calendar(self, start, end):
+            return []                                             # no session today
+
+    monkeypatch.setitem(app_module._CAL_TODAY, "date", None)
+    h = _route(create_app(eng, client=_Holiday([]), live=True), "/api/health")()
+    assert h["market"]["session_today"] is False
+
+
+def test_attribution_route_reports_todays_premium_and_fees():
+    # The waterfall's Premium/Costs bars were hardcoded 0 client-side; now they read real
+    # bookings: today's options_lifecycle premium + today's FEE activities.
+    eng = create_engine("sqlite://")
+    db.create_all(eng)
+    now = datetime.utcnow()
+    with eng.begin() as c:
+        c.execute(insert(db.options_lifecycle).values(
+            ts=now, event_type="write", underlying="SPY",
+            option_symbol="SPY260731C00764000", contracts=7, premium=1638.0))
+        c.execute(insert(db.options_lifecycle).values(
+            ts=now - timedelta(days=3), event_type="write", underlying="SPY",
+            option_symbol="SPY260703C00750000", contracts=1, premium=999.0))  # not today
+
+    class _Fees(_FakeClient):
+        def account_activities(self, activity_types, *, date=None, page_size=100):
+            return [{"activity_type": "FEE", "net_amount": -1.23, "activity_sub_type": "CAT"},
+                    {"activity_type": "FEE", "net_amount": -0.77, "activity_sub_type": "TAF"}]
+
+    out = _route(create_app(eng, client=_Fees([]), live=True), "/api/attribution")()
+    assert out["premium_today"] == 1638.0                         # today's row only
+    assert out["costs_today"] == 2.0
+    # Postgres-only degrades: premium from the DB, costs zero (no activities surface)
+    out = _route(create_app(eng, live=False), "/api/attribution")()
+    assert out["premium_today"] == 1638.0 and out["costs_today"] == 0.0
 
 
 def test_risk_route_postgres_only():

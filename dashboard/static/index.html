@@ -39,9 +39,9 @@
     <button class="tab" data-view="portfolio">Portfolio</button>
     <button class="tab" data-view="performance">Performance</button>
     <button class="tab" data-view="execute">Execute</button>
-    <button class="tab" data-view="backtest">Backtest</button>
   </nav>
   <div class="right">
+    <a class="rebal" href="/backtest" target="_blank" rel="noopener" style="text-decoration:none;display:inline-flex;align-items:center" title="backtest analytics — standalone page">Backtest ↗</a>
     <span class="etclock" id="etclock" title="New York time (US market timezone)"></span>
     <span class="se-pill neutral" id="envbadge" title="trading environment">— </span>
     <span class="upd"><span class="live-dot down" id="dot"></span><span id="upd">connecting…</span></span>
@@ -178,8 +178,7 @@
   </div>
 </div>
 
-<div id="backtest-view"><iframe id="bt" title="backtest dashboard"></iframe></div>
 
-<script src="/static/app.js?v=5" defer></script>
+<script src="/static/app.js?v=6" defer></script>
 </body>
 </html>

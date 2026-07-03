@@ -86,7 +86,7 @@ document.addEventListener("mouseover", e=>{
 document.addEventListener("mousemove", e=>{ if(tkEl) posFloat(TKP, e, 16); else if(tipEl) posTip(e); });
 
 // ---- two-level nav: top tabs + sub-tabs -----------------------------------
-const VIEWS = ["overview","portfolio","performance","execute","backtest"];
+const VIEWS = ["overview","portfolio","performance","execute"];
 const SUBS  = {portfolio:["holdings","activity"], performance:["returns","risk","attribution","execution"]};
 let activeView = "overview";
 const activeSub = {portfolio:"holdings", performance:"returns"};
@@ -95,8 +95,6 @@ document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   activeView = t.dataset.view;
   document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
   VIEWS.forEach(v => $(v+"-view").style.display = activeView === v ? "block" : "none");
-  const bt = $("bt");
-  if (activeView === "backtest" && !bt.src) bt.src = "/backtest";   // lazy-load once
   loadActive();
 });
 
@@ -700,6 +698,7 @@ function renderHealth(h){
   const gate = lr ? lr.gate_passed : null;
   // Live session timer: cache the Alpaca clock (anchored to server time), then tick it every second.
   MKT = m ? {is_open:!!m.is_open, next_open:m.next_open, next_close:m.next_close,
+             session_today: m.session_today,
              serverMs: m.timestamp?Date.parse(m.timestamp):Date.now(), fetchedAt: Date.now()} : null;
   // --- condensed global status bar (the "big important" signals, pinned on every tab) ---
   $("sbchips").innerHTML = [
@@ -951,12 +950,22 @@ function renderSession(){
   const f=Math.max(0,Math.min(1,(secs-open)/(close-open)));
   const nc=MKT.next_close?Date.parse(MKT.next_close):null, no=MKT.next_open?Date.parse(MKT.next_open):null;
   const clk=`<span style="font:500 22px var(--mono);color:var(--fg);font-variant-numeric:tabular-nums">${String(et.h).padStart(2,'0')}:${String(et.m).padStart(2,'0')}:${String(et.s).padStart(2,'0')}</span><span style="font:400 11px var(--mono);color:var(--muted)">ET</span>`;
-  let sub, pill, pillCol, barW;
+  let sub, pill, pillCol, barW, noSession=false;
   if(MKT.is_open && nc){ sub=`· ${(f*100).toFixed(0)}% through session · ${hms((nc-now)/1000)} to close`; pill="Market open"; pillCol="#5fb088"; barW=f*100; }
+  else if(MKT.session_today===false){                 // NYSE holiday / weekend: NO session today
+    const si=sessionInfo(); noSession=true; barW=0;
+    const why = (et.wd==="Sat"||et.wd==="Sun") ? "weekend" : "market holiday";
+    sub=`· no session today — ${why} · ${si.val.replace(/^Closed · /,"")}`;
+    pill="Market closed"; pillCol="#65758c";
+  }
   else { const si=sessionInfo(); sub=`· ${si.val}`; const warn=si.dot==='warn'; pill=warn?"Extended hours":"Market closed"; pillCol=warn?"#d8a84b":"#65758c"; barW=secs>=close?100:secs<open?0:f*100; }
   const head=`<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px"><div style="display:flex;align-items:baseline;gap:9px">${clk}<span style="font:400 11px var(--mono);color:var(--muted)">${sub}</span></div><span style="display:inline-flex;align-items:center;gap:6px;font:500 10px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:${pillCol}"><span style="width:7px;height:7px;border-radius:50%;background:${pillCol}"></span>${pill}</span></div>`;
-  const bar=`<div style="position:relative;height:9px;border-radius:5px;background:var(--panel-2);overflow:hidden;margin-top:11px"><div style="position:absolute;left:0;top:0;height:100%;width:${barW.toFixed(1)}%;background:linear-gradient(90deg,#2a6f63,#46b8ad)"></div><div style="position:absolute;top:-3px;width:2px;height:15px;background:var(--fg);left:${barW.toFixed(1)}%"></div></div>`;
-  const marks=`<div style="display:flex;justify-content:space-between;margin-top:6px;font:400 9.5px var(--mono);color:var(--muted)"><span>09:30 open</span><span>12:45</span><span>16:00 close</span></div>`;
+  const bar = noSession
+    ? `<div style="position:relative;height:9px;border-radius:5px;background:var(--panel-2);margin-top:11px;background-image:repeating-linear-gradient(45deg,transparent,transparent 5px,#16223a 5px,#16223a 10px)"></div>`
+    : `<div style="position:relative;height:9px;border-radius:5px;background:var(--panel-2);overflow:hidden;margin-top:11px"><div style="position:absolute;left:0;top:0;height:100%;width:${barW.toFixed(1)}%;background:linear-gradient(90deg,#2a6f63,#46b8ad)"></div><div style="position:absolute;top:-3px;width:2px;height:15px;background:var(--fg);left:${barW.toFixed(1)}%"></div></div>`;
+  const marks = noSession
+    ? `<div style="display:flex;justify-content:center;margin-top:6px;font:400 9.5px var(--mono);color:var(--muted)"><span>no NYSE session today${MKT.next_open?` · next open ${etWhen(MKT.next_open)}`:""}</span></div>`
+    : `<div style="display:flex;justify-content:space-between;margin-top:6px;font:400 9.5px var(--mono);color:var(--muted)"><span>09:30 open</span><span>12:45</span><span>16:00 close</span></div>`;
   host.innerHTML=ovPanel("Trading session","NYSE · regular hours", head+bar+marks, "14px 16px", "clock");
 }
 
@@ -978,7 +987,7 @@ function navAreaSVG(hist){
   s+=`<circle cx="${X(n-1).toFixed(1)}" cy="${Y(navs[navs.length-1]).toFixed(1)}" r="2.6" fill="${col}"/>`;
   return s+"</svg>";
 }
-let _lastNav=null, _navWin='ALL', _ovS=null;
+let _lastNav=null, _navWin='ALL', _ovS=null, _attr=null;
 const NAV_WINS=[["1W","1W"],["1M","1M"],["3M","3M"],["YTD","YTD"],["ALL","All"]];
 function navWindowed(){
   if(_navWin==='ALL'||_navBase.length<2) return _navBase;
@@ -1161,7 +1170,11 @@ function renderEventsPanel(){
 
 function renderWaterfall(s){
   const host=$("ov-waterfall"); if(!host||s.nav==null) return;
-  const nav=s.nav, dayPnl=s.day_pnl||0, prior=nav-dayPnl, premium=0, costs=0, price=dayPnl-premium-costs;
+  // Premium = option premium booked today (options_lifecycle); Costs = fees booked today
+  // (Alpaca posts them next-morning, so this usually pays for yesterday's trading).
+  // Price is the residual, so the three bars always sum to the day move.
+  const at=_attr||{}, premium=at.premium_today||0, costs=-(at.costs_today||0);
+  const nav=s.nav, dayPnl=s.day_pnl||0, prior=nav-dayPnl, price=dayPnl-premium-costs;
   const steps=[["Prior NAV",prior,"base"],["Price",price,"d"],["Premium",premium,"d"],["Costs",costs,"d"],["Live NAV",nav,"base"]];
   const W=980,H=210,pl=10,pr=10,pb=34,pt=24,pw=W-pl-pr,ph=H-pt-pb;   // pt headroom so the top bar's value label isn't clipped
   const vals=[prior,nav]; let run=prior; [price,premium,costs].forEach(v=>{ run+=v; vals.push(run); });
@@ -1342,15 +1355,18 @@ function paintOverview(s){
     () => renderGauge(s, _calls, _overlay));
   renderEventsPanel();                                   // countdowns tick every second by design
   memoPaint('waterfall',
-    [s.nav==null?null:Math.round(s.nav), s.day_pnl==null?null:Math.round(s.day_pnl)],
+    [s.nav==null?null:Math.round(s.nav), s.day_pnl==null?null:Math.round(s.day_pnl),
+     _attr && _attr.premium_today, _attr && _attr.costs_today],
     () => renderWaterfall(s));
   renderFootstrip(s);
 }
 
 // Overview — the daily glance (design-doc layout)
 async function loadOverview(){
-  const [s, hist, calls, ev, ov] = await Promise.all(
-    ["/api/state","/api/nav_history?limit=1000","/api/calls","/api/events","/api/overlay"].map(get));
+  const [s, hist, calls, ev, ov, at] = await Promise.all(
+    ["/api/state","/api/nav_history?limit=1000","/api/calls","/api/events","/api/overlay",
+     "/api/attribution"].map(get));
+  _attr = at || _attr;
   noteFresh(s);
   if(!s){ $("ov-navhero").innerHTML =
       '<div class="errbox"><div class="big">Backend unreachable</div>Postgres or the dashboard API is not responding.</div>';

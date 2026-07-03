@@ -605,11 +605,28 @@ def _benchmark_curves(symbols: list[str], start: str, strat_dates: list[str]) ->
     return out
 
 
+# Whether today (ET) has a NYSE session at all — memoized per day. This is what lets the
+# session panel say "market holiday" instead of drawing intraday progress on July 3rd.
+_CAL_TODAY: dict = {"date": None, "has_session": None}
+
+
+def _session_today(client) -> bool | None:
+    try:
+        from zoneinfo import ZoneInfo
+        d = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+        if _CAL_TODAY["date"] != d:
+            _CAL_TODAY.update(date=d, has_session=bool(client.market_calendar(d, d)))
+        return _CAL_TODAY["has_session"]
+    except Exception:  # noqa: BLE001 — calendar read failure → unknown, panel falls back
+        return None
+
+
 def _market_status(client) -> dict:
     """Live market open/closed + next session from Alpaca's clock (operational tile)."""
     c = client.market_clock()
     return {"is_open": bool(c.get("is_open")), "next_open": c.get("next_open"),
-            "next_close": c.get("next_close"), "timestamp": c.get("timestamp")}
+            "next_close": c.get("next_close"), "timestamp": c.get("timestamp"),
+            "session_today": _session_today(client)}
 
 
 def _confirm_next_rebalance(client, est_date: str) -> str | None:
@@ -866,6 +883,30 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
     @app.get("/api/manual_actions")
     def manual_actions_history(limit: int = 20) -> list:
         return data.api_manual_actions(db_engine, limit)
+
+    # Today's booked FEE activities, cached 5 min (they land next-morning; no need to hammer).
+    _ATTR_FEES = {"ts": 0.0, "total": 0.0}
+
+    @app.get("/api/attribution")
+    def attribution() -> dict:
+        """The waterfall's real inputs: option premium and fees actually booked today (ET).
+
+        Price P&L is derived client-side as the residual (day P&L − premium − costs), so the
+        three bars always sum to the day move. Fees are booked by Alpaca the morning after
+        the trade, so Costs is usually yesterday's trading being paid for.
+        """
+        premium = data.api_premium_today(db_engine)
+        if client is not None and time.time() - _ATTR_FEES["ts"] > 300:
+            try:
+                from zoneinfo import ZoneInfo
+                today_et = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+                fees = data.fees_from_activities(
+                    client.account_activities("FEE", date=today_et))
+                _ATTR_FEES.update(ts=time.time(), total=float(fees.get("total_usd") or 0.0))
+            except Exception as exc:  # noqa: BLE001 — decoration; degrade to zero
+                log.warning("attribution fees read failed", extra={"error": str(exc)})
+                _ATTR_FEES.update(ts=time.time(), total=0.0)
+        return {"premium_today": premium, "costs_today": round(_ATTR_FEES["total"], 2)}
 
     @app.get("/api/calls")
     def calls() -> list:
