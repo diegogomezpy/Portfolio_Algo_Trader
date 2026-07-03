@@ -56,16 +56,30 @@ def test_prune_equity_parquet_removes_only_old_dated_files(tmp_path):
     old = (tmp_path / "2024-01-02.parquet"); old.write_bytes(b"x")
     new = (tmp_path / "2026-06-30.parquet"); new.write_bytes(b"x")
     stray = (tmp_path / "notes.parquet"); stray.write_bytes(b"x")   # non-dated → untouched
-    removed = retention.prune_equity_parquet(tmp_path, keep_days=730, today=today)
+    removed = retention.prune_equity_parquet(tmp_path, keep_days=730, today=today,
+                                             max_prune_frac=1.0)
     assert removed == 1
     assert not old.exists() and new.exists() and stray.exists()
+
+
+def test_prune_tripwire_refuses_mass_deletion(tmp_path):
+    # The 2026-07-03 incident guard: steady-state retention deletes ~1 file/day, so a pass
+    # that would remove more than max_prune_frac of the store refuses and deletes NOTHING.
+    today = date(2026, 7, 3)
+    for stem in ("2020-01-02", "2020-01-03", "2020-01-06", "2026-06-30"):
+        (tmp_path / f"{stem}.parquet").write_bytes(b"x")
+    removed = retention.prune_equity_parquet(tmp_path, keep_days=730, today=today)  # 3/4 doomed
+    assert removed == 0
+    assert len(list(tmp_path.glob("*.parquet"))) == 4        # nothing touched
 
 
 def test_run_retention_reads_settings_and_degrades_when_absent(tmp_path):
     eng = _engine()
     _snap(eng, _NOW - timedelta(days=40), 1.0)
     _snap(eng, _NOW - timedelta(days=40, hours=-2), 2.0)     # same old day, later → kept
-    (tmp_path / "2020-01-02.parquet").write_bytes(b"x")
+    (tmp_path / "2020-01-02.parquet").write_bytes(b"x")      # 1 old …
+    for i in range(1, 21):                                   # … among 20 recent (5% < tripwire)
+        (tmp_path / f"2026-06-{i:02d}.parquet").write_bytes(b"x")
     s = SimpleNamespace(data_retention=SimpleNamespace(
         raw_equities_days=730, snapshots_intraday_days=30))
     out = retention.run_retention(eng, s, prices_dir=tmp_path)
@@ -73,3 +87,14 @@ def test_run_retention_reads_settings_and_degrades_when_absent(tmp_path):
     # No data_retention block at all → no-op, not a crash.
     assert retention.run_retention(eng, SimpleNamespace(), prices_dir=tmp_path) == {
         "snapshots_thinned": 0, "parquet_pruned": 0}
+
+
+def test_daily_job_retention_is_opt_in_only():
+    # Regression lock for the incident: daily_job must NEVER run retention unless the
+    # production entrypoint passes it explicitly — the default-on version pruned the real
+    # local store when the integration suite exercised daily_job in the repo working dir.
+    import inspect
+    from scripts import run_eod
+    assert inspect.signature(run_eod.daily_job).parameters["retention_fn"].default is None
+    src = inspect.getsource(run_eod.serve)
+    assert "retention_fn=retention.run_retention" in src     # …and production DOES opt in

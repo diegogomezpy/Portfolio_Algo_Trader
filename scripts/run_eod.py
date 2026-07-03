@@ -574,9 +574,17 @@ def daily_job(
     overlay: bool = False,
     options_check_fn: Callable[..., object] = covered_calls.options_daily_check,
     pending_work_fn: Callable[..., int] = work_pending_adjustments,
+    retention_fn: Callable[..., dict] | None = None,
     alert: Callable[[str], None] | None = None,
 ) -> DailyResult:
     """The once-a-day scheduled job: gate on the calendar, ingest, then branch.
+
+    ``retention_fn`` (the data_retention pass) is **None by default — retention only runs
+    when the production entrypoint (serve/--once) passes it explicitly**. It deletes real
+    files, and defaulting it on burned us once: the integration suite calls ``daily_job``
+    against the repo working dir, and the default-on retention pruned ~1,000 historical
+    parquet files from the local store mid-test-run (2026-07-03; restored from the VM).
+    Destructive side effects must be opt-in at the call site, like ``ingest_fn``.
 
     Runs the full rebalance cycle (:func:`run_cycle`, with the covered-call ``overlay`` when
     enabled) on the **first trading day of the month** — or, if that run was missed/blocked
@@ -645,11 +653,11 @@ def daily_job(
                          as_of=as_of, price_panel=panel, chase=opt_chase, alert=alert)
     tgt = monitor.last_target_weights(db_engine)
     mon = monitor.monitor_once(client, db_engine, target_weights=tgt)
-    try:                       # retention (audit F2) — best-effort; must never break a trading day
-        from engine import retention
-        retention.run_retention(db_engine, settings, prices_dir=PRICES_DIR)
-    except Exception as exc:   # noqa: BLE001
-        log.warning("retention pass failed (non-fatal)", extra={"error": str(exc)})
+    if retention_fn is not None:   # opt-in only (see docstring) — best-effort, never breaks a day
+        try:
+            retention_fn(db_engine, settings, prices_dir=PRICES_DIR)
+        except Exception as exc:   # noqa: BLE001
+            log.warning("retention pass failed (non-fatal)", extra={"error": str(exc)})
     log.info("daily monitor pass (no rebalance)", extra={"date": as_of.isoformat()})
     return DailyResult("monitored", monitor=mon)
 
@@ -722,11 +730,13 @@ def serve(*, env: str, settings, client, broker, db_engine, alert=None,
         log.error("live order feed failed to start; using REST fallback", extra={"error": str(exc)})
         _FEED = None
 
+    from engine import retention
     sched = BlockingScheduler(timezone=pytz.timezone("America/New_York"))
     sched.add_job(
         lambda: daily_job(client=client, broker=broker, db_engine=db_engine, settings=settings,
                           as_of=date.today(), overlay=True, alert=alert,
-                          ingest_fn=lambda d: ingest.run_daily_ingest(env=env, as_of=d)),
+                          ingest_fn=lambda d: ingest.run_daily_ingest(env=env, as_of=d),
+                          retention_fn=retention.run_retention),   # opt-in: production only
         "cron", day_of_week="mon-fri", hour=hour, minute=minute, id="eod")
     sched.add_job(lambda: continuous_monitor_job(client, db_engine),
                   "interval", seconds=60, id="monitor")

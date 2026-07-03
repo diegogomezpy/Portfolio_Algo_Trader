@@ -52,28 +52,45 @@ def thin_snapshots(db_engine, *, keep_intraday_days: int, now: datetime | None =
     return n
 
 
-def prune_equity_parquet(prices_dir, *, keep_days: int, today=None) -> int:
+def prune_equity_parquet(prices_dir, *, keep_days: int, today=None,
+                         max_prune_frac: float = 0.10) -> int:
     """Delete per-date equity Parquet files older than ``keep_days``. Returns files removed.
 
     Only files named ``YYYY-MM-DD.parquet`` are considered (the store's own naming);
     anything else is left alone.
+
+    **Tripwire:** refuses to act (returns 0, logs at ERROR) if the pass would delete more
+    than ``max_prune_frac`` of the store. Steady-state retention removes ~1 file per
+    trading day; wanting to delete a large fraction at once means either a first-run
+    backlog (run manually with a higher ``max_prune_frac`` after checking) or a
+    misconfiguration/accident — the 2026-07-03 incident, where a default-on retention
+    call inside the test suite pruned ~⅔ of the local store.
     """
     from datetime import date as _date
 
     today = today or datetime.now(timezone.utc).date()
     cutoff = today - timedelta(days=int(keep_days))
-    removed = 0
+    dated = []
     for f in sorted(Path(prices_dir).glob("*.parquet")):
         try:
-            d = _date.fromisoformat(f.stem)
+            dated.append((f, _date.fromisoformat(f.stem)))
         except ValueError:
             continue                                     # not a dated snapshot — leave it
-        if d < cutoff:
-            try:
-                f.unlink()
-                removed += 1
-            except OSError as exc:
-                log.warning("retention: could not remove %s: %s", f, exc)
+    doomed = [f for f, d in dated if d < cutoff]
+    if not doomed:
+        return 0
+    if dated and len(doomed) / len(dated) > max_prune_frac:
+        log.error("equity-parquet retention REFUSED: would delete %d/%d files (> %.0f%%) — "
+                  "first-run backlog or misconfiguration; prune manually if intended",
+                  len(doomed), len(dated), max_prune_frac * 100)
+        return 0
+    removed = 0
+    for f in doomed:
+        try:
+            f.unlink()
+            removed += 1
+        except OSError as exc:
+            log.warning("retention: could not remove %s: %s", f, exc)
     if removed:
         log.info("equity-parquet retention: pruned old files",
                  extra={"removed": removed, "cutoff": cutoff.isoformat()})
