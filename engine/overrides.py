@@ -37,6 +37,21 @@ def get(db_engine, key: str):
         return None
 
 
+def info(db_engine, key: str) -> dict | None:
+    """``{"value": …, "updated_at": …}`` for ``key``, or ``None`` — the dashboard's
+    'override active since <when>' display."""
+    if db_engine is None:
+        return None
+    try:
+        from sqlalchemy import select
+        from engine.db import overrides as t
+        with db_engine.connect() as conn:
+            row = conn.execute(select(t.c.value, t.c.updated_at).where(t.c.key == key)).first()
+        return {"value": row[0], "updated_at": str(row[1])} if row else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def set(db_engine, key: str, value) -> None:  # noqa: A001 — mirrors the store's get/set/clear
     from sqlalchemy import insert, update
     from engine.db import overrides as t

@@ -724,6 +724,18 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
                 log.warning("live orders read failed, falling back to Postgres: %s", exc)
         return data.api_orders(db_engine, limit)
 
+    def _target_leverage_now() -> float:
+        """The book's standing gross target — override-aware, read per request so a leverage
+        action from the console shows up immediately (the old startup constant lied)."""
+        fallback = float(meta.get("target_leverage", meta.get("leverage_cap", 2.0)))
+        try:
+            from engine import overrides as _ov
+            if settings is not None:
+                return float(_ov.effective_target_leverage(db_engine, settings, default=fallback))
+        except Exception:  # noqa: BLE001
+            pass
+        return fallback
+
     @app.get("/api/execution")
     def execution() -> dict:
         """Live trading-session progress for the auto-surfacing execution visualizer.
@@ -732,7 +744,7 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
         """
         if client is None:
             return {"active": False}
-        return _execution_status(client, db_engine, meta.get("leverage_cap", 2.0))
+        return _execution_status(client, db_engine, _target_leverage_now())
 
     # ------------------------------------------------------------------ #
     # Execution console (POSTs are token-gated; see _exec_gate)
@@ -747,9 +759,14 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
                "token_configured": bool(os.environ.get("SEPI_EXEC_TOKEN"))}
         try:
             from engine import overrides as _ov
-            out["leverage_override"] = _ov.get(db_engine, "target_leverage")
+            ov = _ov.info(db_engine, "target_leverage")
+            out["leverage_override"] = ov["value"] if ov else None
+            out["leverage_override_since"] = ov["updated_at"] if ov else None
+            out["settings_target_leverage"] = float(getattr(
+                getattr(settings, "portfolio", None), "target_leverage", 2.0)) if settings else None
         except Exception:  # noqa: BLE001
-            out["leverage_override"] = None
+            out["leverage_override"] = out["leverage_override_since"] = None
+            out["settings_target_leverage"] = None
         if not running and proc is not None:
             out["outcome"] = _last_outcome()
         return out

@@ -7,7 +7,7 @@
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/fonts.css?v=1">
 <link rel="stylesheet" href="/static/theme.css?v=5">
-<link rel="stylesheet" href="/static/dashboard.css?v=3">
+<link rel="stylesheet" href="/static/dashboard.css?v=4">
 </head>
 <body>
 <div id="introOverlay" title="click to skip">
@@ -38,13 +38,13 @@
     <button class="tab active" data-view="overview">Overview</button>
     <button class="tab" data-view="portfolio">Portfolio</button>
     <button class="tab" data-view="performance">Performance</button>
+    <button class="tab" data-view="execute">Execute</button>
     <button class="tab" data-view="backtest">Backtest</button>
   </nav>
   <div class="right">
     <span class="etclock" id="etclock" title="New York time (US market timezone)"></span>
     <span class="se-pill neutral" id="envbadge" title="trading environment">— </span>
     <span class="upd"><span class="live-dot down" id="dot"></span><span id="upd">connecting…</span></span>
-    <button class="rebal" id="execbtn" title="execution console — rebalance, liquidate, leverage, single-name">Execute</button>
     <button class="refresh" id="refreshbtn" title="refresh now" aria-label="refresh">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
     </button>
@@ -165,8 +165,21 @@
   </div>
 </div>
 
+<div id="execute-view" style="display:none">
+  <div class="wrap flexcol" style="gap:14px;padding-top:16px">
+    <div class="ex2-grid">
+      <div class="ovpanel" id="x-ticket"></div>
+      <div style="display:flex;flex-direction:column;gap:14px;min-width:0">
+        <div class="ovpanel" id="x-plan"></div>
+        <div class="ovpanel" id="x-status"></div>
+      </div>
+    </div>
+    <div class="ovpanel" id="x-history"></div>
+  </div>
+</div>
+
 <div id="backtest-view"><iframe id="bt" title="backtest dashboard"></iframe></div>
 
-<script src="/static/app.js?v=3" defer></script>
+<script src="/static/app.js?v=4" defer></script>
 </body>
 </html>

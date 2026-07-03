@@ -244,6 +244,22 @@ def test_exec_cancel_all_and_clear_override_are_token_gated(monkeypatch):
     assert out == {"cleared": True} and overrides.get(eng, "target_leverage") is None
 
 
+def test_execution_target_leverage_is_override_aware():
+    # The visualizer's "→ target×" must reflect a console-set sticky override immediately,
+    # not the startup constant (a leverage rebalance changes the standing parameter).
+    from engine import overrides
+
+    eng = create_engine("sqlite://")
+    db.create_all(eng)
+    exe = _route(create_app(eng, client=_FakeClient([]), live=True), "/api/execution")
+    assert exe()["target_leverage"] > 0                      # settings-derived baseline
+    overrides.set(eng, "target_leverage", 1.25)
+    assert exe()["target_leverage"] == 1.25                  # override wins, per request
+    st = _route(create_app(eng, client=_FakeClient([]), live=True), "/api/exec/status")()
+    assert st["leverage_override"] == 1.25 and st["leverage_override_since"]
+    assert st["settings_target_leverage"] is not None
+
+
 def test_manual_actions_route_empty_and_execution_carries_manual(monkeypatch):
     from dashboard import app as app_module
 
