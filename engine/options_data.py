@@ -18,7 +18,6 @@ unit-tested without hitting the API.
 from __future__ import annotations
 
 import json
-import logging
 import time
 import urllib.parse
 import urllib.request
@@ -29,7 +28,9 @@ from typing import Iterable, Mapping, Sequence
 import numpy as np
 import pandas as pd
 
-log = logging.getLogger(__name__)
+from engine.logger import get_logger
+
+log = get_logger(__name__)
 
 _API = "https://www.dolthub.com/api/v1alpha1/post-no-preference/options/master"
 _CACHE_DIR = Path("data/ref/dolthub_options")

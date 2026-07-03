@@ -16,12 +16,13 @@ from __future__ import annotations
 import csv
 import io
 import json
-import logging
 import time
 import urllib.request
 from pathlib import Path
 
-log = logging.getLogger(__name__)
+from engine.logger import get_logger
+
+log = get_logger(__name__)
 
 _CACHE = Path("data/ref/benchmarks")
 _CBOE_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/{ticker}_History.csv"

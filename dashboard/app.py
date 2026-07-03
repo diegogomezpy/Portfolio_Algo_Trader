@@ -220,9 +220,25 @@ def _correlation_map(client, db_engine) -> dict:
     return _CORR_CACHE["data"] or {"available": False, "symbols": [], "matrix": []}
 
 
+def _latest_snapshot_age_s(db_engine) -> float | None:
+    """Seconds since the newest ``snapshots`` row (any writer), or ``None`` when empty."""
+    from sqlalchemy import desc, select
+    from engine.db import snapshots
+    with db_engine.connect() as conn:
+        row = conn.execute(select(snapshots.c.ts).order_by(desc(snapshots.c.ts)).limit(1)).first()
+    ts = data._as_utc(row[0]) if row and row[0] is not None else None
+    return (datetime.now(timezone.utc) - ts).total_seconds() if ts else None
+
+
 async def _monitor_loop(client, db_engine, interval: int, price_feed=None) -> None:
     """Every ``interval`` seconds: read Alpaca → write a snapshot (the Alpaca→Postgres bridge),
     and keep the live price feed subscribed to the current held book.
+
+    The engine process (sharpe-eod) runs its own 60s monitor; when its snapshots are fresh
+    this loop skips the duplicate write (audit E5 — two writers doubled snapshot growth to
+    ~1M rows/yr) and only does the price-feed upkeep. If the engine goes down, snapshots age
+    past the gate and this loop transparently takes over — the resilience both loops existed
+    for, without the double writes.
 
     Runs the synchronous monitor in a worker thread so the event loop stays responsive; a
     failed pass is logged and the loop continues (alerting/monitoring must never crash the UI).
@@ -231,8 +247,10 @@ async def _monitor_loop(client, db_engine, interval: int, price_feed=None) -> No
     log.info("dashboard monitor loop started (every %ss)", interval)
     while True:
         try:
-            tw = await asyncio.to_thread(monitor.last_target_weights, db_engine)
-            await asyncio.to_thread(monitor.monitor_once, client, db_engine, target_weights=tw)
+            age = await asyncio.to_thread(_latest_snapshot_age_s, db_engine)
+            if age is None or age >= interval * 0.75:      # engine's monitor quiet → we write
+                tw = await asyncio.to_thread(monitor.last_target_weights, db_engine)
+                await asyncio.to_thread(monitor.monitor_once, client, db_engine, target_weights=tw)
             if price_feed is not None:
                 price_feed.set_symbols(await asyncio.to_thread(_held_equities, db_engine))
                 pos = await asyncio.to_thread(client.all_positions)

@@ -9,35 +9,23 @@ wraps them in FastAPI routes. Tested directly against in-memory sqlite — no HT
 from __future__ import annotations
 
 import math
-import re
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import desc, func, select
 
-from engine import db
+from engine import db, symbols
 from engine.alerts import severity as alert_severity
 from engine.execute import arrival_reference        # shared with the execution pricer (one truth)
 
 _TRADING_DAYS = 252.0
 
-# OCC option symbols end in YYMMDD + C/P + an 8-digit strike (e.g. AAPL260821C00215000).
-# Used to keep the leverage gauge and position count equity-only once the overlay writes
-# options into the same snapshot (a short call carries negative market value).
-_OCC_SUFFIX = re.compile(r"\d{6}[CP]\d{8}$")
-# Full OCC parse (ROOT + YYMMDD + C/P + strike×1000) for the covered-call book, so a held
-# short call renders even if its lifecycle metadata row is missing.
-_OCC_FULL = re.compile(r"^([A-Z0-9]+?)(\d{2})(\d{2})(\d{2})([CP])(\d{8})$")
-
-
 def _parse_occ(symbol: str) -> dict | None:
-    """``{underlying, type, strike, expiration}`` from an OCC symbol, or ``None`` if unparseable."""
-    m = _OCC_FULL.match(str(symbol))
-    if not m:
+    """``{underlying, type, strike, expiration(ISO str)}`` via the canonical engine.symbols
+    parser (audit: this regex used to be duplicated here)."""
+    occ = symbols.parse_occ(symbol)
+    if occ is None:
         return None
-    root, yy, mm, dd, cp, strike = m.groups()
-    return {"underlying": root, "type": "call" if cp == "C" else "put",
-            "strike": int(strike) / 1000.0,
-            "expiration": f"20{yy}-{mm}-{dd}"}
+    return {**occ, "expiration": occ["expiration"].isoformat()}
 
 # Engine-heartbeat thresholds (seconds). The monitor writes a snapshot every ~60s regardless
 # of market hours, so a growing gap means the monitor/engine process is wedged — not a quiet
@@ -48,8 +36,7 @@ _HB_STALE_S = 600
 _DRIFT_NAME_EPS = 0.005
 
 
-def _is_option(symbol: str) -> bool:
-    return bool(_OCC_SUFFIX.search(str(symbol)))
+_is_option = symbols.is_option        # canonical option test (engine.symbols)
 
 
 def _latest_snapshot(conn) -> dict | None:

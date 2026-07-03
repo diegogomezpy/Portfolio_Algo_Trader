@@ -23,7 +23,6 @@ Pure functions only here (:func:`select_strike`, :func:`contracts_for`,
 
 from __future__ import annotations
 
-import re
 import time
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
@@ -34,14 +33,13 @@ import pandas as pd
 
 from engine import factors, options, risk
 from engine.alpaca_client import AlpacaAPIError
+from engine.symbols import OCC_RE as _OCC_RE
 from engine.logger import get_logger
 
 log = get_logger(__name__)
 
 _CONTRACT_SHARES = 100                     # standard equity-option multiplier
 _TRADING_DAYS = 252
-# OCC: ROOT + YYMMDD + (C|P) + strike(×1000, 8 digits).
-_OCC_RE = re.compile(r"^([A-Z0-9]+?)(\d{6})([CP])(\d{8})$")
 # Order states from which no further fill is possible (the option fill poll stops here).
 _TERMINAL = {"filled", "canceled", "cancelled", "rejected", "expired", "done_for_day"}
 

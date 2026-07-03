@@ -153,8 +153,9 @@ def _portfolio_context(db_engine) -> str:
             return ""
         nav, cash, weights, positions, drift = snap
         weights, positions = (weights or {}), (positions or {})
-        lev = sum(float(v) for s, v in weights.items() if len(str(s)) <= 5)   # equity legs only
-        npos = sum(1 for s, q in positions.items() if q and len(str(s)) <= 5)
+        from engine.symbols import is_equity
+        lev = sum(float(v) for s, v in weights.items() if is_equity(s))   # equity legs only
+        npos = sum(1 for s, q in positions.items() if q and is_equity(s))
         lines = ["— Portfolio —",
                  f"  NAV         {_usd(nav)}",
                  f"  Leverage    {lev:.2f}x  (gross {_usd((nav or 0) * lev)})",

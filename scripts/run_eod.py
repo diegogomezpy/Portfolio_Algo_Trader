@@ -43,19 +43,21 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from engine import (  # noqa: E402
-    alerts, covariance, covered_calls, factors, ingest, monitor, optimize, reconcile, risk, sectors,
+    alerts, covariance, covered_calls, factors, ingest, monitor, optimize, reconcile, risk,
+    sectors, symbols,
 )
 from engine.alpaca_client import AlpacaAPIError  # noqa: E402
 from engine.config import load_settings  # noqa: E402
 from engine.execute import ExecReport, PlannedOrder, plan_orders, submit_and_track  # noqa: E402
 from engine.logger import get_logger  # noqa: E402
 from engine.risk import RiskCheckResult  # noqa: E402
-from scripts import backtest as bt  # safe_covariance + dir constants  # noqa: E402
 
 log = get_logger(__name__)
 
-PRICES_DIR = bt.PRICES_DIR
-FUNDAMENTALS_DIR = bt.FUNDAMENTALS_DIR
+# Canonical Parquet store locations (shared with engine.ingest — the live driver no longer
+# imports scripts.backtest for them, audit E2).
+PRICES_DIR = str(ingest.DEFAULT_PRICES_DIR)
+FUNDAMENTALS_DIR = str(ingest.DEFAULT_FUNDAMENTALS_DIR)
 
 
 @dataclass
@@ -120,9 +122,9 @@ def compute_targets(settings, as_of: date, *, db_engine=None,
         return TargetPlan(pd.Series(dtype=float), {}, universe=set(), sector_map=sector_map, panel=panel)
 
     top = composite.sort_values(ascending=False).head(settings.optimizer.preselect_top_k).index
-    sigma = bt.safe_covariance(panel[top], ff5, as_of=as_of,
-                               window=settings.covariance.estimation_window_days,
-                               min_obs=settings.covariance.min_regression_obs)
+    sigma = covariance.safe_covariance(panel[top], ff5, as_of=as_of,
+                                       window=settings.covariance.estimation_window_days,
+                                       min_obs=settings.covariance.min_regression_obs)
     prev = monitor.last_target_weights(db_engine) if db_engine is not None else None
     prev_w = pd.Series(prev, dtype=float) if prev else None
     res = optimize.optimize_portfolio(composite, sigma, sector_map, settings=settings, prev_weights=prev_w)
@@ -420,8 +422,8 @@ _CATCHUP_MIN_FILL_FRAC = 0.8
 
 
 def _equity_names(d: dict | None) -> set[str]:
-    """Nonzero **equity** legs of a {symbol: qty/weight} map (short tickers; OCC options are long)."""
-    return {str(s) for s, q in (d or {}).items() if q and len(str(s)) <= 5}
+    """Nonzero **equity** legs of a {symbol: qty/weight} map (OCC option symbols excluded)."""
+    return {str(s) for s, q in (d or {}).items() if q and symbols.is_equity(s)}
 
 
 def _latest_positions(db_engine) -> dict:
@@ -513,7 +515,7 @@ def work_pending_adjustments(client, broker, db_engine, *, settings, as_of, aler
         return 0
     target = monitor.last_target_weights(db_engine) or {}
     held = {str(p["symbol"]): float(p["qty"]) for p in client.all_positions()
-            if len(str(p["symbol"])) <= 5}                        # equities only
+            if symbols.is_equity(p["symbol"])}                    # equities only
     equity = _account_equity(client)                              # raise > silently mis-size (B5)
     nav = equity * float(getattr(settings.portfolio, "target_leverage", 1.0))
     ex = settings.execution

@@ -149,23 +149,9 @@ def sleeve_return(subscore: pd.Series, fwd: pd.Series, top_n: int) -> float:
     return float(r.mean()) if len(r) else np.nan
 
 
-def safe_covariance(price_panel, ff5, *, as_of, window, min_obs):
-    """``covariance.covariance_from_prices`` that degrades to an empty Σ instead of
-    raising when the FF5 factor data doesn't cover enough of the window.
-
-    Ken French's daily file lags publication, so a window dated near the live edge can
-    overlap too few factor days to estimate Σ. With λ=0 the optimizer doesn't use Σ
-    anyway (it falls back to the full top-K when Σ is empty — see engine.optimize), so a
-    publication gap should keep the rebalance alive, not crash it. In-sample the window
-    is fully covered, so this returns the real Σ and changes nothing.
-    """
-    try:
-        return covariance.covariance_from_prices(price_panel, ff5, as_of=as_of,
-                                                 window=window, min_obs=min_obs)
-    except ValueError as exc:
-        log.warning("covariance unavailable; proceeding without Σ",
-                    extra={"as_of": str(as_of), "error": str(exc)})
-        return pd.DataFrame()
+# Degrading-Σ estimator — now canonical in engine.covariance (audit E2); re-exported so
+# backtest_covered_calls' `eq.safe_covariance` and older callers keep working.
+safe_covariance = covariance.safe_covariance
 
 
 # ====================================================================== #

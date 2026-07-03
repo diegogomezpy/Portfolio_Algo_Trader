@@ -218,3 +218,23 @@ def covariance_from_prices(
     panel = price_panel.loc[: pd.Timestamp(as_of)].iloc[-(window + 1):]
     returns = panel.pct_change().dropna(how="all")
     return factor_covariance(returns, ff5, min_obs=min_obs, periods_per_year=periods_per_year)
+
+
+def safe_covariance(price_panel, ff5, *, as_of, window, min_obs) -> pd.DataFrame:
+    """:func:`covariance_from_prices` that degrades to an empty Σ instead of raising when
+    the FF5 factor data doesn't cover enough of the window.
+
+    Ken French's daily file lags publication, so a window dated near the live edge can
+    overlap too few factor days to estimate Σ. With λ=0 the optimizer doesn't use Σ anyway
+    (it falls back to the full top-K when Σ is empty — see engine.optimize), so a
+    publication gap should keep the rebalance alive, not crash it. In-sample the window is
+    fully covered, so this returns the real Σ and changes nothing. (Moved here from
+    scripts/backtest.py — the live driver imported a script for it, audit E2.)
+    """
+    try:
+        return covariance_from_prices(price_panel, ff5, as_of=as_of,
+                                      window=window, min_obs=min_obs)
+    except ValueError as exc:
+        log.warning("covariance unavailable; proceeding without Σ",
+                    extra={"as_of": str(as_of), "error": str(exc)})
+        return pd.DataFrame()
