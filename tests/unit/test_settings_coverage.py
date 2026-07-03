@@ -40,7 +40,8 @@ def test_every_settings_leaf_key_is_referenced_in_code():
     data = yaml.safe_load((ROOT / "config" / "settings.yaml").read_text())
     keys: set[str] = set()
     _leaf_keys(data, keys)
-    corpus = "\n".join(p.read_text() for d in SCAN_DIRS for p in (ROOT / d).rglob("*.py"))
+    corpus = "\n".join(p.read_text() for d in SCAN_DIRS for p in (ROOT / d).rglob("*.py")
+                       if not p.name.startswith("."))   # skip macOS ._AppleDouble shadows
     dead = sorted(k for k in keys if not re.search(rf"\b{re.escape(k)}\b", corpus))
     assert not dead, (
         f"settings.yaml keys never referenced in engine/scripts/dashboard: {dead} — "

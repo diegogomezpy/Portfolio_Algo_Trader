@@ -20,7 +20,9 @@ SCAN_DIRS = ("engine", "scripts", "dashboard")
 
 def _py_files():
     for d in SCAN_DIRS:
-        yield from sorted((ROOT / d).rglob("*.py"))
+        for p in sorted((ROOT / d).rglob("*.py")):
+            if not p.name.startswith("."):       # skip macOS ._AppleDouble shadows / dotfiles
+                yield p
 
 
 @pytest.mark.parametrize("path", list(_py_files()), ids=lambda p: str(p.relative_to(ROOT)))
