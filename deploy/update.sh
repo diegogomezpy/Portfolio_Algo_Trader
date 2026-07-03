@@ -3,12 +3,19 @@
 # restarts the services if that passes — otherwise it rolls back to the previous commit and
 # leaves the running services untouched. A bad push therefore cannot brick live trading.
 #
-#   bash deploy/update.sh
+#   bash deploy/update.sh                  # full update (eod + dashboard restart)
+#   bash deploy/update.sh --dashboard-only  # dashboard-only change: never touches sharpe-eod
+#
+# SAFETY: restarting sharpe-eod cancels ALL open orders (its SIGTERM contract). The full
+# update refuses to proceed while orders are working unless FORCE_EOD_RESTART=1 is set.
 #
 # Rollback is automatic on failure; to roll back manually later:
 #   git reset --hard <prev-sha> && ./.venv/bin/pip install -q -r requirements.txt \
 #     && sudo systemctl restart sharpe-eod sharpe-dashboard
 set -uo pipefail
+
+DASH_ONLY=0
+[ "${1:-}" = "--dashboard-only" ] && DASH_ONLY=1
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$APP_DIR"
@@ -37,10 +44,32 @@ $PY -m pytest tests/unit -q || rollback "unit tests failed on the new code"
 # last_equity example in DEPLOY.md; column migrations are not auto-applied.
 $PY scripts/init_db.py --env paper || rollback "init_db failed"
 
-echo "== green — restarting services =="
-sudo systemctl restart sharpe-eod sharpe-dashboard
+if [ "$DASH_ONLY" = "1" ]; then
+  echo "== green — restarting sharpe-dashboard ONLY (sharpe-eod untouched, no orders cancelled) =="
+  sudo systemctl restart sharpe-dashboard
+else
+  # Guard: an eod restart cancels ALL open orders. Refuse mid-trade unless forced.
+  OPEN=$($PY - <<'PYEOF'
+from engine import config
+try:
+    config.load_env("paper")
+    print(len(config.get_alpaca_client().get_orders(status="open", limit=50)))
+except Exception:
+    print("unknown")
+PYEOF
+)
+  if [ "$OPEN" != "0" ] && [ "${FORCE_EOD_RESTART:-0}" != "1" ]; then
+    echo "!! $OPEN open order(s) working (or Alpaca unreadable) — an eod restart would CANCEL them."
+    echo "   Re-run with FORCE_EOD_RESTART=1 to override, or use --dashboard-only. Code is updated;"
+    echo "   services were NOT restarted (old code still running)."
+    exit 1
+  fi
+  echo "== green — restarting services =="
+  sudo systemctl restart sharpe-eod sharpe-dashboard
+fi
 sleep 6
-if systemctl is-active --quiet sharpe-eod && systemctl is-active --quiet sharpe-dashboard \
+if systemctl is-active --quiet sharpe-dashboard \
+   && { [ "$DASH_ONLY" = "1" ] || systemctl is-active --quiet sharpe-eod; } \
    && curl -fsS --max-time 5 http://localhost:8000/api/state >/dev/null 2>&1; then
   echo "== UPDATE OK: now at $(git rev-parse --short HEAD) =="
 else

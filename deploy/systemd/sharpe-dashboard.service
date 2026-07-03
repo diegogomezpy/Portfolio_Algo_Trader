@@ -1,6 +1,7 @@
 [Unit]
-# sharpe-engine dashboard (FastAPI/uvicorn). Bound to localhost ONLY — the app has
-# no auth, so reach it via an IAP/SSH tunnel, never a public firewall rule.
+# sharpe-engine dashboard (FastAPI/uvicorn). Bound to localhost ONLY — the app itself has
+# no auth; public access goes through Caddy (basic auth, :8080) + Tailscale Funnel. Never
+# open a firewall rule straight to :8000.
 Description=sharpe-engine dashboard (paper)
 After=network-online.target postgresql.service
 Wants=network-online.target

@@ -5,9 +5,9 @@ Comprehensive walkthrough for an internal / leadership audience. Plain-language
 explanations of every term, prominent rendered formulas, explanatory graphics,
 and a sober, factual tone. Editable and regenerable.
 
-    <scratchpad>/deckvenv/bin/python presentation/build_deck.py
+    <scratchpad>/deckvenv/bin/python tools/deck/build_deck.py
 
-Output: presentation/Systematic-Factor-Income-Fund.pptx  (+ assets/*.png)
+Output: tools/deck/Systematic-Factor-Income-Fund.pptx  (+ assets/*.png)
 
 Benchmark figures (S&P 500, BXMD) are computed from index history over the
 Sep 2021 - Jun 2026 window; strategy figures are from the walk-forward backtest.
