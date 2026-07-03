@@ -30,3 +30,6 @@ reports/_dashboard_widget.html
 presentation/assets/
 presentation/sample.pptx
 presentation/~$*
+
+# Built deck (1.2MB artifact; regenerable via presentation/build_deck.py)
+presentation/*.pptx
