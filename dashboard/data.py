@@ -187,13 +187,31 @@ def held_symbols(db_engine) -> list[str]:
     return sorted(s for s in syms if s and not _is_option(s))
 
 
-def api_nav_history(db_engine, limit: int = 120) -> list[dict]:
-    """Recent NAV (and cash) snapshots, oldest-first, for the live equity sparkline."""
+def api_nav_history(db_engine, limit: int = 120, *, intraday_hours: int = 24) -> list[dict]:
+    """NAV (and cash) curve, oldest-first: full 60s resolution for the trailing
+    ``intraday_hours``, then **one snapshot per day** (each day's last) beyond that.
+
+    The old query returned the raw last-``limit`` rows — at the monitor's 60s cadence,
+    ``limit=1000`` is ≈17 hours, so the dashboard's 1W/1M/YTD/All range buttons could never
+    show more than a day (audit B6). Daily-sampling the past keeps years of curve inside the
+    same row budget while today stays live at full resolution. Each segment is capped at
+    ``limit`` rows, so the payload is bounded at 2×``limit``.
+    """
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=intraday_hours)
+    cols = (db.snapshots.c.ts, db.snapshots.c.nav, db.snapshots.c.cash)
     with db_engine.connect() as conn:
-        rows = conn.execute(
-            select(db.snapshots.c.ts, db.snapshots.c.nav, db.snapshots.c.cash)
+        recent = conn.execute(
+            select(*cols).where(db.snapshots.c.ts >= cutoff)
             .order_by(desc(db.snapshots.c.ts)).limit(limit)).all()
-    return [{"ts": str(ts), "nav": nav, "cash": cash} for ts, nav, cash in reversed(rows)]
+        # One row per calendar day before the cutoff: the day's final snapshot (its close).
+        daily_last = (select(func.max(db.snapshots.c.ts))
+                      .where(db.snapshots.c.ts < cutoff)
+                      .group_by(func.date(db.snapshots.c.ts))).scalar_subquery()
+        older = conn.execute(
+            select(*cols).where(db.snapshots.c.ts.in_(daily_last))
+            .order_by(desc(db.snapshots.c.ts)).limit(limit)).all()
+    rows = list(reversed(older)) + list(reversed(recent))
+    return [{"ts": str(ts), "nav": nav, "cash": cash} for ts, nav, cash in rows]
 
 
 def api_orders(db_engine, limit: int = 50) -> list[dict]:

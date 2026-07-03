@@ -119,6 +119,28 @@ def test_api_nav_history_oldest_first():
     assert hist[-1]["cash"] == 9_000.0
 
 
+def test_api_nav_history_daily_samples_the_past_full_res_today():
+    # audit B6: past days collapse to ONE row each (the day's last snapshot) so 1W/1M/YTD
+    # windows fit the row budget; the trailing 24h keeps every 60s snapshot.
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    eng = _engine()
+    now = _dt.now(_tz.utc).replace(tzinfo=None)
+    old_day = now - _td(days=10)
+    with eng.begin() as c:
+        for hour, nav in ((10, 101.0), (12, 102.0), (15, 103.0)):     # 3 intraday on one old day
+            c.execute(insert(db.snapshots).values(
+                ts=old_day.replace(hour=hour, minute=0, second=0, microsecond=0),
+                nav=nav, cash=0.0, last_equity=nav, weights={}, positions={}, drift=None))
+        for mins, nav in ((30, 201.0), (5, 202.0)):                   # 2 recent (within 24h)
+            c.execute(insert(db.snapshots).values(
+                ts=now - _td(minutes=mins), nav=nav, cash=0.0, last_equity=nav,
+                weights={}, positions={}, drift=None))
+    hist = data.api_nav_history(eng, limit=1000)
+    navs = [h["nav"] for h in hist]
+    assert navs == [103.0, 201.0, 202.0]        # old day → its close only; today → full res
+    assert 101.0 not in navs and 102.0 not in navs
+
+
 def test_api_orders_returns_recent():
     eng = _engine()
     _seed(eng)

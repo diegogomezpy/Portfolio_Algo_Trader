@@ -93,8 +93,15 @@ def compute_targets(settings, as_of: date, *, db_engine=None,
     Uses the FF5 staleness guard (``max_stale_days``) so a publication lag refreshes the
     cache rather than starving the covariance window (audit fix). Per-name execution
     inputs (price / ADV / spread) come from the ``as_of`` equities snapshot.
+
+    The close panel is capped at the longest window any consumer needs (β/vol 252d, Σ 60d,
+    overlay IV 60d — all ⊆ beta/vol + buffer). The old ``lookback=10**9`` loaded the entire
+    multi-year store (~1,500 parquet files → a ~1500×11k frame) every rebalance — the load
+    that OOM-wedged the e2-small VM (audit F1).
     """
-    panel = factors.load_close_panel(prices_dir, end=as_of, lookback=10**9)
+    fac = settings.factors
+    lookback = max(int(fac.beta_window), int(fac.vol_window)) + 5
+    panel = factors.load_close_panel(prices_dir, end=as_of, lookback=lookback)
     allf, eligible = factors.load_scored_fundamentals(fundamentals_dir, settings)
     ff5 = covariance.load_ff5_daily(max_stale_days=7)
     sector_map = sectors.load_sector_map()["sector"]
@@ -622,7 +629,14 @@ def daily_job(
     except Exception as exc:   # noqa: BLE001 — a top-up failure must not crash the daily job
         log.error("cross-day top-up failed", extra={"date": as_of.isoformat(), "error": str(exc)})
     if overlay:
-        panel = factors.load_close_panel(PRICES_DIR, end=as_of, lookback=10**9)
+        # The daily pass needs at most an IV window of closes (per-name rewrites); index mode
+        # ignores the panel entirely. The old lookback=10**9 loaded the whole multi-year store
+        # EVERY trading day for a 60-day IV estimate (audit F1).
+        if covered_calls.overlay_mode(settings) == "index":
+            panel = pd.DataFrame()
+        else:
+            lookback = int(settings.covariance.estimation_window_days) + 5
+            panel = factors.load_close_panel(PRICES_DIR, end=as_of, lookback=lookback)
         opt_chase = _option_chase(client, _market_close(client))
         options_check_fn(client, broker, db_engine, settings=settings,
                          as_of=as_of, price_panel=panel, chase=opt_chase, alert=alert)
