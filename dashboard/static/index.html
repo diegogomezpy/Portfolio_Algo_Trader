@@ -2182,23 +2182,42 @@ function playIntro(){
 playIntro();
 boot();
 
-// ---- live ticks -----------------------------------------------------------
-// Fast 1s tick: refresh the live NAV + KPIs on the Overview (one /api/state read ≈ one Alpaca
-// quote — well under the rate limit), so the headline numbers move every second. The heavier
-// panels (history, factors, health) stay on the 30s poll, which is all they change on anyway.
-setInterval(async () => {
-  if (activeView !== "overview" && activeView !== "portfolio") return;
-  const s = await get("/api/state");
-  if (!s) return;
-  noteFresh(s);
-  if (activeView === "overview") paintOverview(s);        // full live repaint (NAV flash, treemap, gauge, events, session)
-  else paintPortfolioLive(s);                              // positions + calls + tape live prices
-}, 1000);
-setInterval(() => { if (activeView === "overview") pollExec(); }, 2500);  // live execution panel while trading
-setInterval(loadActive, 30000);   // full re-read of the active view every 30s
-setInterval(tickFreshness, 1000); // tick the "checked / data age" header every second
-setInterval(tickSession, 1000);   // tick the live ET clock + session countdown every second
-setInterval(loadQuotes, 45000);   // refresh ticker hover-card quote detail
+// ---- live ticks (one governed loop — audit W1) -----------------------------
+// A single 1s master tick replaces five free-running intervals, governed by visibility and
+// session: a HIDDEN tab polls nothing (background tabs used to hammer /api/state every second
+// all night), and a fully-CLOSED market (overnight/weekends — pre/post stay live per the
+// extended-hours design) slows the state tick 1s→15s and the execution poll 2.5s→60s. While
+// you're actually watching during any session, the cadence is identical to before.
+const _CAD = { state: 1000, stateClosed: 15000, exec: 2500, execClosed: 60000,
+               active: 30000, quotes: 45000 };
+const _lastPoll = { state: 0, exec: 0, active: Date.now(), quotes: Date.now() };
+async function _governedTick(){
+  if (document.hidden) return;                       // W1: a background tab costs nothing
+  tickFreshness(); tickSession();                    // cheap local paints — only when visible
+  const closed = mktSession() === 'closed';
+  const now = Date.now();
+  if ((activeView === "overview" || activeView === "portfolio")
+      && now - _lastPoll.state >= (closed ? _CAD.stateClosed : _CAD.state)) {
+    _lastPoll.state = now;
+    const s = await get("/api/state");
+    if (s) { noteFresh(s);
+      if (activeView === "overview") paintOverview(s);   // live repaint (NAV flash, treemap, gauge…)
+      else paintPortfolioLive(s); }                      // positions + calls + tape live prices
+  }
+  if (activeView === "overview" && now - _lastPoll.exec >= (closed ? _CAD.execClosed : _CAD.exec)) {
+    _lastPoll.exec = now; pollExec();
+  }
+  if (now - _lastPoll.active >= _CAD.active) { _lastPoll.active = now; loadActive(); }
+  if (now - _lastPoll.quotes >= _CAD.quotes) { _lastPoll.quotes = now; loadQuotes(); }
+}
+setInterval(_governedTick, 1000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) {                            // instant catch-up the moment you come back
+    _lastPoll.state = _lastPoll.exec = 0;
+    _lastPoll.active = Date.now();
+    loadActive();
+  }
+});
 tickSession();                    // paint the ET clock immediately on boot
 </script>
 </body>

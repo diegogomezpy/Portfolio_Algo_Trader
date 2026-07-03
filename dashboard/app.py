@@ -278,6 +278,38 @@ def _live_orders(client, limit: int) -> list[dict]:
 _OPEN_ORDER_STATES = {"new", "accepted", "partially_filled", "pending_new",
                       "accepted_for_bidding", "pending_replace", "replaced", "held"}
 
+# Shared TTL cache for the execution panel's Alpaca order read (audit W3): the front-end polls
+# /api/execution every 2.5s per tab, and the old code hit Alpaca's REST get_orders on EVERY
+# poll, 24/7 (~35k upstream calls/day/tab with nothing working). N tabs now share one upstream
+# read per TTL; outside plausible session hours (the panel can't change) the TTL stretches to
+# a minute. Keyed on the client instance so tests / reloads never see a stale fake's orders.
+_ORDERS_TTL_S = 2.0
+_ORDERS_IDLE_TTL_S = 60.0
+_ORDERS_CACHE: dict = {"ts": 0.0, "orders": [], "client": None}
+
+
+def _likely_market_hours(now=None) -> bool:
+    """Cheap LOCAL session test (no API call): Mon–Fri, 04:00–20:10 ET — the pre→post window
+    in which orders can plausibly be working. A guess for cache-TTL purposes only."""
+    from zoneinfo import ZoneInfo
+    et = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo("America/New_York"))
+    return et.weekday() < 5 and (4, 0) <= (et.hour, et.minute) <= (20, 10)
+
+
+def _cached_orders(client) -> list[dict]:
+    """Recent Alpaca orders through the shared TTL cache; a failed read serves the stale copy."""
+    now = time.time()
+    ttl = _ORDERS_TTL_S if _likely_market_hours() else _ORDERS_IDLE_TTL_S
+    if _ORDERS_CACHE["client"] is client and now - _ORDERS_CACHE["ts"] < ttl:
+        return _ORDERS_CACHE["orders"]
+    try:
+        orders = client.get_orders(status="all", limit=200)
+    except Exception as exc:  # noqa: BLE001 — a read hiccup serves the last known list
+        log.warning("execution status: order read failed: %s", exc)
+        return _ORDERS_CACHE["orders"] if _ORDERS_CACHE["client"] is client else []
+    _ORDERS_CACHE.update(ts=now, orders=orders, client=client)
+    return orders
+
 
 def _execution_status(client, db_engine, target_leverage: float) -> dict:
     """Live trading-session progress for the auto-surfacing execution visualizer (Phase 1).
@@ -288,11 +320,7 @@ def _execution_status(client, db_engine, target_leverage: float) -> dict:
     leverage ramp, a working-order blotter, and recent fills.
     """
     state = data.api_state(db_engine)
-    try:
-        orders = client.get_orders(status="all", limit=200) if client is not None else []
-    except Exception as exc:  # noqa: BLE001 — a read hiccup just yields an idle panel
-        log.warning("execution status: order read failed: %s", exc)
-        orders = []
+    orders = _cached_orders(client) if client is not None else []
     is_opt = data._is_option
     openo = [o for o in orders if str(o.get("status") or "").lower() in _OPEN_ORDER_STATES]
     open_by_sym: dict = {}
