@@ -20,7 +20,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hmac
+import json
 import logging
+import os
 import subprocess
 import sys
 import threading
@@ -28,7 +31,7 @@ import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Header
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -40,19 +43,79 @@ _STATIC = Path(__file__).parent / "static"
 _INDEX = _STATIC / "index.html"
 _BACKTEST = Path(__file__).parent.parent / "reports" / "backtest_dashboard.html"
 
-# Manual force-rebalance (dashboard button). One child process at a time, module-wide —
+# ---------------------------------------------------------------------------- #
+# Execution console — manual actions spawned out-of-process (rebalance via run_eod,
+# everything else via scripts/manual_exec.py). ONE child at a time, module-wide — the
 # same guarantee whether the user opens one tab or five.
+# ---------------------------------------------------------------------------- #
 _ROOT = Path(__file__).resolve().parent.parent
-_REBAL_LOG = "/tmp/sepi_manual_rebalance.log"
-_REBAL: dict = {"proc": None, "started_at": None}
+_EXEC_LOG = "/tmp/sepi_manual_exec.log"
+_EXEC_ACTIONS = ("rebalance", "liquidate", "trade", "leverage")
+_MANUAL: dict = {"proc": None, "action": None, "mode": None, "params": None,
+                 "cycle_key": None, "started_at": None}
 
 
-def _spawn_rebalance(env: str) -> subprocess.Popen:
-    """Run one full engine cycle out-of-process (equivalent to Diego's manual command)."""
-    logf = open(_REBAL_LOG, "ab")  # noqa: SIM115 — handed to the child for its lifetime
-    return subprocess.Popen(
-        [sys.executable, str(_ROOT / "scripts" / "run_eod.py"), "--once", "--env", env],
-        cwd=str(_ROOT), stdout=logf, stderr=subprocess.STDOUT, start_new_session=True)
+def _exec_gate(token_header: str | None) -> dict | None:
+    """Token check for trade-placing endpoints; ``None`` = authorized.
+
+    The token lives in the service environment (``SEPI_EXEC_TOKEN`` in the git-ignored env
+    file) — never in source or YAML. Unset ⇒ the console is disabled with instructions, so
+    a fresh deploy can't expose unauthenticated trading endpoints by accident.
+    """
+    configured = os.environ.get("SEPI_EXEC_TOKEN")
+    if not configured:
+        return {"error": "execution console disabled — set SEPI_EXEC_TOKEN in the service "
+                         "env file and restart the dashboard", "disabled": True}
+    if not token_header or not hmac.compare_digest(str(token_header), configured):
+        return {"error": "bad or missing X-Exec-Token", "unauthorized": True}
+    return None
+
+
+def _market_gate(client) -> dict | None:
+    """Refuse to trade into a closed market; ``None`` = open."""
+    try:
+        clk = client.market_clock()
+    except Exception as exc:  # noqa: BLE001 — no clock, no trading
+        return {"error": f"market clock unreadable ({exc}) — refusing to trade blind"}
+    if not clk.get("is_open"):
+        return {"error": "market closed", "market_closed": True,
+                "next_open": clk.get("next_open")}
+    return None
+
+
+def _spawn_manual(action: str, mode: str, params: dict, env: str, cycle_key: str) -> subprocess.Popen:
+    if action == "rebalance":
+        cmd = [sys.executable, str(_ROOT / "scripts" / "run_eod.py"), "--once", "--env", env]
+        if mode == "express":
+            cmd.append("--express")
+    else:
+        cmd = [sys.executable, str(_ROOT / "scripts" / "manual_exec.py"), "--env", env,
+               "--action", action, "--mode", mode, "--cycle-key", cycle_key]
+        for k, v in (params or {}).items():
+            if v is not None:
+                cmd += [f"--{k}", str(v)]
+    logf = open(_EXEC_LOG, "ab")  # noqa: SIM115 — handed to the child for its lifetime
+    logf.write(f"\n===== {datetime.now(timezone.utc).isoformat()} "
+               f"{action} {mode} {params} =====\n".encode())
+    return subprocess.Popen(cmd, cwd=str(_ROOT), stdout=logf, stderr=subprocess.STDOUT,
+                            start_new_session=True)
+
+
+def _last_outcome() -> dict | None:
+    """Best-effort parse of the finished child's tail: the CLI's result JSON, or run_eod's
+    ``Cycle <date> → <status>`` line (how 'market closed — skipped' gets surfaced honestly)."""
+    try:
+        raw = Path(_EXEC_LOG).read_bytes()[-8000:].decode(errors="replace")
+    except Exception:  # noqa: BLE001
+        return None
+    for line in reversed(raw.strip().splitlines()):
+        line = line.strip()
+        if line.startswith("{") and line.endswith("}"):
+            with contextlib.suppress(Exception):
+                return json.loads(line)
+        if line.startswith("Cycle ") and "→" in line:
+            return {"summary": line}
+    return None
 
 # The SFI mark — a 3×3 dot grid with the middle column in teal — on a rounded navy tile.
 # (See the SFI Design Language: docs/DESIGN_LANGUAGE.md / design_lang/.)
@@ -345,7 +408,14 @@ def _execution_status(client, db_engine, target_leverage: float) -> dict:
     open_eq = [o for o in openo if not is_opt(o.get("symbol"))]
     open_opt = [o for o in openo if is_opt(o.get("symbol"))]
 
-    active = bool(openo)
+    # A running manual action surfaces the panel immediately (before its first order posts)
+    # and stamps the header so the visualizer narrates the right thing (console addition).
+    manual = None
+    mproc = _MANUAL["proc"]
+    if mproc is not None and mproc.poll() is None:
+        manual = {k: _MANUAL[k] for k in ("action", "mode", "params", "cycle_key", "started_at")}
+
+    active = bool(openo) or manual is not None
     phase = ("writing_calls" if open_opt and not open_eq
              else "equity_chase" if open_eq
              else "idle")
@@ -390,8 +460,10 @@ def _execution_status(client, db_engine, target_leverage: float) -> dict:
               for o in filled[:12]]
 
     # Chase board (Phase 2): the per-order limit walk for the live cycle. Only while active, so a
-    # finished cycle's telemetry doesn't linger once the panel would otherwise hide.
-    chase = data.api_chase(db_engine).get("orders", []) if active else []
+    # finished cycle's telemetry doesn't linger once the panel would otherwise hide. A manual run
+    # pins the board to its own cycle_key (it would be the latest anyway; this removes the race).
+    chase = (data.api_chase(db_engine, cycle_key=manual["cycle_key"] if manual else None)
+             .get("orders", []) if active else [])
 
     # Rotation flow (Phase 3): equity sells → cash → buys for this cycle, by filled notional — the
     # capital rotation the rebalance performs. Options (the SPY overlay) are excluded; this is the
@@ -417,7 +489,7 @@ def _execution_status(client, db_engine, target_leverage: float) -> dict:
             "n_working": len(openo), "leverage": state.get("leverage"),
             "target_leverage": target_leverage, "gross_exposure": state.get("gross_exposure"),
             "nav": state.get("nav"), "names": names, "blotter": blotter, "recent_fills": recent,
-            "chase": chase, "rotation": rotation}
+            "chase": chase, "rotation": rotation, "manual": manual}
 
 
 # Arrival-mid lookups are immutable once an order has filled, so cache them per (symbol, submit
@@ -561,6 +633,10 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
         db_engine = db.get_engine()
 
     meta = _load_meta(env, settings)
+    if settings is None:  # the exec console's preview needs the real settings object
+        with contextlib.suppress(Exception):
+            from engine import config as _config
+            settings = _config.load_settings()
     # The live layer (background monitor + live Alpaca orders) is on by default; pass live=False
     # for the original Postgres-only behaviour. A client may be injected (tests); else built.
     if live and client is None:
@@ -658,27 +734,120 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
             return {"active": False}
         return _execution_status(client, db_engine, meta.get("leverage_cap", 2.0))
 
-    @app.get("/api/rebalance")
-    def rebalance_status() -> dict:
-        proc = _REBAL["proc"]
+    # ------------------------------------------------------------------ #
+    # Execution console (POSTs are token-gated; see _exec_gate)
+    # ------------------------------------------------------------------ #
+    def _exec_status() -> dict:
+        proc = _MANUAL["proc"]
         running = proc is not None and proc.poll() is None
-        return {"running": running,
-                "returncode": None if proc is None or running else proc.returncode,
-                "started_at": _REBAL["started_at"], "log": _REBAL_LOG}
+        out = {"running": running, "action": _MANUAL["action"], "mode": _MANUAL["mode"],
+               "params": _MANUAL["params"], "cycle_key": _MANUAL["cycle_key"],
+               "started_at": _MANUAL["started_at"], "log": _EXEC_LOG,
+               "returncode": None if (proc is None or running) else proc.returncode,
+               "token_configured": bool(os.environ.get("SEPI_EXEC_TOKEN"))}
+        try:
+            from engine import overrides as _ov
+            out["leverage_override"] = _ov.get(db_engine, "target_leverage")
+        except Exception:  # noqa: BLE001
+            out["leverage_override"] = None
+        if not running and proc is not None:
+            out["outcome"] = _last_outcome()
+        return out
 
-    @app.post("/api/rebalance")
-    def rebalance_start() -> dict:
-        """Force-rebalance button. POST-only so nothing triggers it by browsing."""
+    @app.get("/api/exec/status")
+    def exec_status() -> dict:
+        return _exec_status()
+
+    @app.get("/api/exec/preview")
+    def exec_preview(action: str, pct: float | None = None, symbol: str | None = None,
+                     side: str | None = None, usd: float | None = None,
+                     target: float | None = None) -> dict:
+        """The confirm modal's order plan — computed in-process, nothing is sent."""
         if client is None:
-            return {"started": False, "reason": "dashboard is Postgres-only (no broker client)"}
-        proc = _REBAL["proc"]
+            return {"error": "dashboard is Postgres-only (no broker client)"}
+        if action == "rebalance":
+            return {"action": "rebalance", "orders": None, "warnings": [
+                "targets are computed by the engine at run time (ingest → optimize) — "
+                "no pre-trade preview; the run panel shows the plan as it executes"]}
+        if action not in _EXEC_ACTIONS:
+            return {"error": f"unknown action {action!r}"}
+        try:
+            from engine import manual_exec
+            params = {k: v for k, v in (("pct", pct), ("symbol", symbol), ("side", side),
+                                        ("usd", usd), ("target", target)) if v is not None}
+            return manual_exec.build_plan(action, client, db_engine, settings, **params)
+        except (ValueError, RuntimeError, KeyError) as exc:
+            return {"error": str(exc)}
+
+    @app.post("/api/exec/run")
+    def exec_run(action: str, mode: str = "normal", pct: float | None = None,
+                 symbol: str | None = None, side: str | None = None, usd: float | None = None,
+                 target: float | None = None,
+                 x_exec_token: str | None = Header(default=None)) -> dict:
+        """Start one manual action (or the rebalance) out-of-process. Token-gated."""
+        err = _exec_gate(x_exec_token)
+        if err:
+            return {"started": False, **err}
+        if action not in _EXEC_ACTIONS:
+            return {"started": False, "error": f"unknown action {action!r}"}
+        if mode not in ("normal", "express"):
+            return {"started": False, "error": f"unknown mode {mode!r}"}
+        if client is None:
+            return {"started": False, "error": "dashboard is Postgres-only (no broker client)"}
+        err = _market_gate(client)
+        if err:
+            return {"started": False, **err}
+        proc = _MANUAL["proc"]
         if proc is not None and proc.poll() is None:
-            return {"started": False, "reason": "already running"}
-        _REBAL["proc"] = _spawn_rebalance(env)
-        _REBAL["started_at"] = datetime.now(timezone.utc).isoformat()
-        log.warning("manual rebalance triggered from the dashboard (pid=%s, log=%s)",
-                    _REBAL["proc"].pid, _REBAL_LOG)
-        return {"started": True, "pid": _REBAL["proc"].pid}
+            return {"started": False, "error": f"a manual {_MANUAL['action']} is already running"}
+        try:  # refuse while an engine cycle is already working orders (theirs, not ours)
+            working = any(str(o.get("status") or "").lower() in _OPEN_ORDER_STATES
+                          for o in _cached_orders(client))
+        except Exception:  # noqa: BLE001
+            working = False
+        if working:
+            return {"started": False, "error": "orders are already working — wait for the "
+                                               "current cycle or cancel-all first"}
+        params = {k: v for k, v in (("pct", pct), ("symbol", symbol), ("side", side),
+                                    ("usd", usd), ("target", target)) if v is not None}
+        cycle_key = f"manual-{action}-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"
+        _MANUAL.update(proc=_spawn_manual(action, mode, params, env, cycle_key),
+                       action=action, mode=mode, params=params, cycle_key=cycle_key,
+                       started_at=datetime.now(timezone.utc).isoformat())
+        log.warning("manual %s (%s) started from the dashboard (pid=%s, params=%s)",
+                    action, mode, _MANUAL["proc"].pid, params)
+        return {"started": True, "action": action, "mode": mode, "cycle_key": cycle_key,
+                "pid": _MANUAL["proc"].pid}
+
+    @app.post("/api/exec/cancel_all")
+    def exec_cancel_all(x_exec_token: str | None = Header(default=None)) -> dict:
+        """Cancel every working order (the chase-misbehaving big red button). Token-gated."""
+        err = _exec_gate(x_exec_token)
+        if err:
+            return err
+        try:
+            from engine.broker import Broker
+            from engine.config import require_env
+            n = Broker(require_env("ALPACA_API_KEY"),
+                       require_env("ALPACA_SECRET_KEY")).cancel_all_orders()
+            log.warning("cancel-all from the dashboard: %s order(s)", n)
+            return {"cancelled": n}
+        except Exception as exc:  # noqa: BLE001
+            return {"error": str(exc)}
+
+    @app.post("/api/exec/clear_override")
+    def exec_clear_override(x_exec_token: str | None = Header(default=None)) -> dict:
+        """Clear the sticky leverage override (rebalances return to settings.yaml). Token-gated."""
+        err = _exec_gate(x_exec_token)
+        if err:
+            return err
+        from engine import overrides as _ov
+        _ov.clear(db_engine, "target_leverage")
+        return {"cleared": True}
+
+    @app.get("/api/manual_actions")
+    def manual_actions_history(limit: int = 20) -> list:
+        return data.api_manual_actions(db_engine, limit)
 
     @app.get("/api/calls")
     def calls() -> list:

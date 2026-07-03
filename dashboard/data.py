@@ -400,6 +400,23 @@ def api_alerts(db_engine, limit: int = 50) -> list[dict]:
              "severity": alert_severity(r["message"]), "delivered": r["delivered"]} for r in rows]
 
 
+def api_manual_actions(db_engine, limit: int = 20) -> list[dict]:
+    """Most recent execution-console actions (the Activity tab's audit trail), descending.
+
+    Defensive like the other telemetry reads — a missing table (fresh install) yields ``[]``.
+    """
+    try:
+        with db_engine.connect() as conn:
+            rows = conn.execute(
+                select(db.manual_actions).order_by(desc(db.manual_actions.c.ts))
+                .limit(limit)).mappings().all()
+    except Exception:  # noqa: BLE001
+        return []
+    return [{"ts": str(r["ts"]), "action": r["action"], "mode": r["mode"],
+             "params": r["params"], "status": r["status"], "cycle_key": r["cycle_key"],
+             "result": r["result"]} for r in rows]
+
+
 # ====================================================================== #
 # Operational health — the live "is it alive" panel (Phase 5.7)
 # ====================================================================== #

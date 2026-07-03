@@ -56,7 +56,8 @@ def test_create_app_exposes_expected_routes():
     assert {"/", "/backtest", "/favicon.svg", "/api/meta", "/api/state",
             "/api/nav_history", "/api/orders", "/api/calls", "/api/overlay", "/api/factors",
             "/api/alerts", "/api/health", "/api/reference", "/api/risk", "/api/execution",
-            "/api/rebalance"} <= paths
+            "/api/exec/status", "/api/exec/preview", "/api/exec/run", "/api/exec/cancel_all",
+            "/api/exec/clear_override", "/api/manual_actions"} <= paths
     # the shared theme is mounted so both tabs reference one design system
     assert any(getattr(r, "path", "") == "/static" for r in app.routes)
 
@@ -126,41 +127,142 @@ def test_execution_route_rotation_excludes_options_and_flags_active():
     assert ex["chase"] == []                                # no order_events seeded → empty, not error
 
 
-def test_rebalance_route_refuses_without_client_and_guards_double_start(monkeypatch):
+class _Proc:  # fake child: alive until the test flips _rc
+    pid = 4242
+    _rc = None
+
+    def poll(self):
+        return self._rc
+
+    @property
+    def returncode(self):            # real Popen exposes it once poll() is non-None
+        return self._rc
+
+
+def _reset_manual(monkeypatch):
+    from dashboard import app as app_module
+    for k in ("proc", "action", "mode", "params", "cycle_key", "started_at"):
+        monkeypatch.setitem(app_module._MANUAL, k, None)
+
+
+def test_exec_run_token_gate_and_market_gate(monkeypatch):
     from dashboard import app as app_module
 
     eng = create_engine("sqlite://")
     db.create_all(eng)
-    # Postgres-only → refused (never spawn the engine from a dashboard that has no broker)
-    monkeypatch.setitem(app_module._REBAL, "proc", None)
-    # both GET and POST share the path; grab the POST endpoint explicitly
-    app = create_app(eng, live=False)
-    post = next(r for r in app.routes if getattr(r, "path", None) == "/api/rebalance"
-                and "POST" in getattr(r, "methods", set())).endpoint
-    assert post()["started"] is False
+    _reset_manual(monkeypatch)
+    app = create_app(eng, client=_MarketClient([]), live=True)
+    run = _route(app, "/api/exec/run")
 
-    class _Proc:  # fake child: alive until we say otherwise
-        pid = 4242
-        _rc = None
-        def poll(self):
-            return self._rc
-        @property
-        def returncode(self):        # real Popen exposes it once poll() is non-None
-            return self._rc
+    monkeypatch.delenv("SEPI_EXEC_TOKEN", raising=False)     # unset → console disabled
+    out = run(action="liquidate", pct=10.0, mode="express", x_exec_token="whatever")
+    assert out["started"] is False and out.get("disabled") is True
 
-    monkeypatch.setattr(app_module, "_spawn_rebalance", lambda env: _Proc())
+    monkeypatch.setenv("SEPI_EXEC_TOKEN", "sekrit")          # wrong token → unauthorized
+    out = run(action="liquidate", pct=10.0, mode="express", x_exec_token="nope")
+    assert out["started"] is False and out.get("unauthorized") is True
+
+    class _Closed(_MarketClient):                            # right token, closed market
+        def market_clock(self):
+            return {"is_open": False, "next_open": "2026-07-06T09:30:00-04:00"}
+
+    run2 = _route(create_app(eng, client=_Closed([]), live=True), "/api/exec/run")
+    out = run2(action="liquidate", pct=10.0, mode="express", x_exec_token="sekrit")
+    assert out["started"] is False and out.get("market_closed") is True
+    assert "next_open" in out
+
+
+def test_exec_run_starts_guards_double_start_and_reports_status(monkeypatch):
+    from dashboard import app as app_module
+
+    eng = create_engine("sqlite://")
+    db.create_all(eng)
+    _reset_manual(monkeypatch)
+    monkeypatch.setenv("SEPI_EXEC_TOKEN", "sekrit")
+    monkeypatch.setattr(app_module, "_spawn_manual",
+                        lambda action, mode, params, env, cycle_key: _Proc())
+    app = create_app(eng, client=_MarketClient([]), live=True)
+    run, status = _route(app, "/api/exec/run"), _route(app, "/api/exec/status")
+
+    out = run(action="liquidate", pct=25.0, mode="express", x_exec_token="sekrit")
+    assert out["started"] is True and out["cycle_key"].startswith("manual-liquidate-")
+    out2 = run(action="leverage", target=1.5, mode="normal", x_exec_token="sekrit")
+    assert out2["started"] is False and "already running" in out2["error"]
+
+    st = status()
+    assert st["running"] is True and st["action"] == "liquidate" and st["mode"] == "express"
+    assert st["params"] == {"pct": 25.0} and st["token_configured"] is True
+
+    app_module._MANUAL["proc"]._rc = 0                        # child exits cleanly
+    st = status()
+    assert st["running"] is False and st["returncode"] == 0
+
+
+def test_exec_run_refuses_unknown_action_and_missing_client(monkeypatch):
+    eng = create_engine("sqlite://")
+    db.create_all(eng)
+    _reset_manual(monkeypatch)
+    monkeypatch.setenv("SEPI_EXEC_TOKEN", "sekrit")
+    run = _route(create_app(eng, client=_MarketClient([]), live=True), "/api/exec/run")
+    assert "unknown action" in run(action="yolo", x_exec_token="sekrit")["error"]
+    run_pg = _route(create_app(eng, live=False), "/api/exec/run")
+    assert "Postgres-only" in run_pg(action="liquidate", pct=10.0, x_exec_token="sekrit")["error"]
+
+
+def test_exec_preview_plans_in_process_without_trading():
+    eng = create_engine("sqlite://")
+    db.create_all(eng)
+
+    class _PosClient(_MarketClient):
+        def all_positions(self):
+            return [{"symbol": "AAPL", "qty": 400, "asset_class": "us_equity"}]
+
+        def latest_trade(self, sym):
+            return 212.0
+
+    prev = _route(create_app(eng, client=_PosClient([]), live=True), "/api/exec/preview")
+    plan = prev(action="liquidate", pct=25.0)
+    assert plan["orders"] == [{"symbol": "AAPL", "side": "sell", "qty": 100,
+                               "est_price": 212.0, "est_notional": 21200.0}]
+    assert prev(action="rebalance")["orders"] is None         # engine-computed at run time
+    assert "error" in prev(action="liquidate", pct=0)         # planner ValueError surfaced
+    assert "error" in prev(action="nope")
+
+
+def test_exec_cancel_all_and_clear_override_are_token_gated(monkeypatch):
+    eng = create_engine("sqlite://")
+    db.create_all(eng)
+    monkeypatch.delenv("SEPI_EXEC_TOKEN", raising=False)
+    app = create_app(eng, client=_MarketClient([]), live=True)
+    assert _route(app, "/api/exec/cancel_all")(x_exec_token="x").get("disabled") is True
+    assert _route(app, "/api/exec/clear_override")(x_exec_token="x").get("disabled") is True
+
+    monkeypatch.setenv("SEPI_EXEC_TOKEN", "sekrit")           # authorized clear works
+    from engine import overrides
+    overrides.set(eng, "target_leverage", 1.5)
+    out = _route(app, "/api/exec/clear_override")(x_exec_token="sekrit")
+    assert out == {"cleared": True} and overrides.get(eng, "target_leverage") is None
+
+
+def test_manual_actions_route_empty_and_execution_carries_manual(monkeypatch):
+    from dashboard import app as app_module
+
+    eng = create_engine("sqlite://")
+    db.create_all(eng)
+    _reset_manual(monkeypatch)
     app = create_app(eng, client=_FakeClient([]), live=True)
-    post = next(r for r in app.routes if getattr(r, "path", None) == "/api/rebalance"
-                and "POST" in getattr(r, "methods", set())).endpoint
-    get = next(r for r in app.routes if getattr(r, "path", None) == "/api/rebalance"
-               and "GET" in getattr(r, "methods", set())).endpoint
-    assert post() == {"started": True, "pid": 4242}
-    assert post()["reason"] == "already running"          # second click while the cycle runs
-    assert get()["running"] is True
-    app_module._REBAL["proc"]._rc = 0                     # cycle exits cleanly
-    assert get() == {"running": False, "returncode": 0,
-                     "started_at": app_module._REBAL["started_at"], "log": app_module._REBAL_LOG}
-    monkeypatch.setitem(app_module._REBAL, "proc", None)  # don't leak state into other tests
+    assert _route(app, "/api/manual_actions")() == []
+    ex = _route(app, "/api/execution")()
+    assert ex["manual"] is None and ex["active"] is False
+
+    monkeypatch.setitem(app_module._MANUAL, "proc", _Proc())   # a manual run in flight
+    monkeypatch.setitem(app_module._MANUAL, "action", "liquidate")
+    monkeypatch.setitem(app_module._MANUAL, "mode", "normal")
+    monkeypatch.setitem(app_module._MANUAL, "params", {"pct": 25.0})
+    monkeypatch.setitem(app_module._MANUAL, "cycle_key", "manual-liquidate-x")
+    ex = _route(app, "/api/execution")()
+    assert ex["active"] is True                                # panel surfaces immediately
+    assert ex["manual"]["action"] == "liquidate" and ex["manual"]["params"] == {"pct": 25.0}
 
 
 def test_price_history_route_seeds_from_bars():
