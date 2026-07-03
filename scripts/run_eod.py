@@ -226,19 +226,22 @@ def run_cycle(
     overlay: bool = False,
     close_calls_fn: Callable[..., object] = covered_calls.close_calls,
     write_calls_fn: Callable[..., object] = covered_calls.write_calls,
+    close_index_fn: Callable[..., object] = covered_calls.close_index_overwrite,
+    write_index_fn: Callable[..., object] = covered_calls.write_index_overwrite,
     alert: Callable[[str], None] | None = None,
 ) -> CycleResult:
     """Run one rebalance cycle. Returns a :class:`CycleResult`.
 
     Order: reconcile (block if Alpaca down) → holiday gate (unless ``force``) → compute
     targets → pre-trade risk gate (logged to ``rebalance_log``; blocks on failure) →
-    [overlay: close existing calls] → plan + submit + track equity orders → [overlay:
-    write fresh calls on the post-trade ≥100-share holdings] → monitor snapshot.
+    [overlay: close the existing option leg] → plan + submit + track equity orders →
+    [overlay: write the fresh option leg] → monitor snapshot.
 
-    ``overlay`` (Phase 4) turns on the covered-call legs (close-all before equity, rewrite
-    after — DECISIONS D31); the writes are coverage-safe by construction (``covered_calls``
-    only writes ``floor(shares/100)`` contracts on shares actually held). ``close_calls_fn``
-    / ``write_calls_fn`` are injectable for testing the sequencing.
+    ``overlay`` (Phase 4) turns on the option legs, dispatched by
+    :func:`covered_calls.overlay_mode`: **index** closes/writes the SPY beta-overwrite spread
+    (close = buy back the short leg FIRST, then sell the wing — order matters, Alpaca has no
+    naked tier); **per_name** is the classic covered-call close-all + rewrite (D31). All four
+    leg functions are injectable for testing the sequencing.
     """
     rec = reconcile.reconcile(client, db_engine, alert=alert)            # raises if Alpaca down
 
@@ -274,11 +277,18 @@ def run_cycle(
     # chase, and the fresh writes — so every option order crosses to the touch until it fills.
     mkt_close = _market_close(client)
     opt_chase = _option_chase(client, mkt_close)
+    index_mode = covered_calls.overlay_mode(settings) == "index"
+    beta_market = str(getattr(getattr(settings, "factors", None), "beta_market", "SPY"))
 
-    # Overlay (D31): close all existing calls BEFORE equity trades.
+    # Overlay (D31): close the existing option leg BEFORE equity trades. Index mode closes the
+    # SPY spread (short leg first, then the wing); per-name closes every open short call.
     n_closed = 0
     if overlay:
-        closed = close_calls_fn(client, broker, db_engine, as_of=as_of, chase=opt_chase, alert=alert)
+        if index_mode:
+            closed = close_index_fn(client, broker, db_engine, as_of=as_of, market=beta_market,
+                                    chase=opt_chase, alert=alert)
+        else:
+            closed = close_calls_fn(client, broker, db_engine, as_of=as_of, chase=opt_chase, alert=alert)
         n_closed = len(closed or [])
 
     # Deployable base = leverage × account equity (DECISIONS D32). Weights are fractions of
@@ -302,11 +312,11 @@ def run_cycle(
     n_written, written, skipped = 0, [], []
     if overlay:
         held = _equity_shares(client)
-        # Overlay mode (default "index"): a portfolio-level SPY call overwrite sized to the book's
-        # market beta — the low-beta book's single-name options are too illiquid to write. "per_name"
+        # Index mode: one portfolio-level SPY call-spread overwrite sized to the book's market
+        # beta — the low-beta book's single-name options are too illiquid to write. "per_name"
         # keeps the classic covered-call path.
-        if getattr(settings.covered_calls, "overlay_mode", "index") == "index":
-            written, skipped, ov = covered_calls.write_index_overwrite(
+        if index_mode:
+            written, skipped, ov = write_index_fn(
                 client, broker, db_engine, held, settings=settings, as_of=as_of,
                 price_panel=plan.panel, chase=opt_chase, alert=alert)
             log.info("index overwrite result", extra=ov)

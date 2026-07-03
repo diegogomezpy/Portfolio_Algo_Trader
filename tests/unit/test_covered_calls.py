@@ -477,6 +477,118 @@ def test_write_guard_skips_junk_bid():
 
 
 # ====================================================================== #
+# Index overlay (SPY beta-overwrite spread) — close-side + gated daily check
+# ====================================================================== #
+_SPY_SHORT = "SPY260731C00764000"
+_SPY_LONG = "SPY260731C00779000"
+
+
+def _spread_positions(short_qty=-7, long_qty=7):
+    return [
+        {"symbol": _SPY_SHORT, "qty": short_qty, "market_value": short_qty * 234.0,
+         "asset_class": "us_option"},
+        {"symbol": _SPY_LONG, "qty": long_qty, "market_value": long_qty * 96.0,
+         "asset_class": "us_option"},
+    ]
+
+
+def _index_settings(**kw):
+    s = _settings(**kw)
+    s.covered_calls.overlay_mode = "index"
+    s.covered_calls.close_before_earnings = True
+    s.factors = SimpleNamespace(beta_market="SPY")
+    return s
+
+
+def test_close_index_overwrite_buys_short_leg_before_selling_long():
+    # The load-bearing ordering: buy-to-close the short FIRST (selling the long first would
+    # leave it naked → Alpaca 40310000). Ledger: buy negative (cash out), sell positive (in).
+    eng = _engine()
+    broker = _FakeBroker()
+    client = _FakeClient(positions=_spread_positions())
+    chase = _fast_chase(touch=lambda s, side: 2.40 if side == "buy" else 0.90, max_rounds=3)
+    closed = cc.close_index_overwrite(client, broker, eng, as_of=date(2026, 7, 31),
+                                      market="SPY", chase=chase)
+    assert len(closed) == 2
+    seq = [(o["option_symbol"], o["position_intent"]) for o in broker.option_orders]
+    assert seq[0] == (_SPY_SHORT, "buy_to_close")            # short leg first
+    assert (_SPY_LONG, "sell_to_close") in seq[1:]           # wing only after
+    rows = {r["option_symbol"]: r for r in _lifecycle(eng)}
+    assert rows[_SPY_SHORT]["premium"] < 0                   # cash paid to close the short
+    assert rows[_SPY_LONG]["premium"] > 0                    # cash received selling the wing
+
+
+def test_close_index_overwrite_ignores_other_underlyings():
+    eng = _engine()
+    broker = _FakeBroker()
+    positions = _spread_positions() + [
+        {"symbol": "AAPL260821C00215000", "qty": -1, "market_value": -300.0,
+         "asset_class": "us_option"},
+        {"symbol": "AAPL", "qty": 100, "market_value": 21_000.0, "asset_class": "us_equity"},
+    ]
+    chase = _fast_chase(touch=lambda s, side: 2.40, max_rounds=3)
+    cc.close_index_overwrite(_FakeClient(positions=positions), broker, eng,
+                             as_of=date(2026, 7, 31), market="SPY", chase=chase)
+    syms = {o["option_symbol"] for o in broker.option_orders}
+    assert syms == {_SPY_SHORT, _SPY_LONG}                   # AAPL call untouched
+
+
+def test_options_daily_check_index_mode_skips_per_name_machinery():
+    # index mode + a held equity that just reported: NO earnings close, NO per-name rewrite
+    # (the audit bug: the ungated rewrite would sell single-name calls on top of the spread).
+    eng = _engine()
+    broker = _FakeBroker()
+    client = _FakeClient(positions=_spread_positions() + [
+        {"symbol": "MSFT", "qty": 200, "market_value": 90_000.0, "asset_class": "us_equity"}])
+    fetched = []
+    out = cc.options_daily_check(
+        client, broker, eng, settings=_index_settings(), as_of=date(2026, 7, 10),
+        price_panel=_panel(["MSFT"]),
+        earnings_fetch=lambda s: fetched.append(s) or [date(2026, 7, 8)],   # reported 2d ago
+        chase=_fast_chase())
+    assert out == {"expiry_closed": 0, "earnings_closed": 0, "rewritten": 0, "reentered": 0}
+    assert broker.option_orders == []                        # spread not expiring → untouched
+    assert fetched == []                                     # earnings never even fetched
+
+
+def test_options_daily_check_index_mode_force_closes_expiring_spread():
+    # Short leg at expiry → the whole spread is closed, short leg first.
+    eng = _engine()
+    broker = _FakeBroker()
+    client = _FakeClient(positions=_spread_positions())
+    chase = _fast_chase(touch=lambda s, side: 2.40 if side == "buy" else 0.90, max_rounds=3)
+    out = cc.options_daily_check(client, broker, eng, settings=_index_settings(),
+                                 as_of=date(2026, 7, 31),        # = the legs' expiration
+                                 price_panel=_panel(["MSFT"]), chase=chase)
+    assert out["expiry_closed"] == 2 and out["rewritten"] == 0
+    seq = [(o["option_symbol"], o["position_intent"]) for o in broker.option_orders]
+    assert seq[0] == (_SPY_SHORT, "buy_to_close")
+    assert (_SPY_LONG, "sell_to_close") in seq[1:]
+
+
+def test_options_daily_check_per_name_respects_close_before_earnings_off():
+    # per_name mode with close_before_earnings=False: expiring calls still force-close, but
+    # the earnings close + post-earnings rewrite are disabled (the previously-dead setting).
+    eng = _engine()
+    as_of = date(2026, 7, 1)
+    client = _FakeClient(positions=[
+        {"symbol": "AAPL260821C00215000", "qty": -1, "market_value": -300.0,
+         "asset_class": "us_option"},                        # would earnings-close if enabled
+        {"symbol": "MSFT", "qty": 100, "market_value": 20_000.0, "asset_class": "us_equity"},
+    ])
+    s = _settings()
+    s.covered_calls.overlay_mode = "per_name"
+    s.covered_calls.close_before_earnings = False
+    broker = _FakeBroker()
+    out = cc.options_daily_check(client, broker, eng, settings=s, as_of=as_of,
+                                 price_panel=_panel(["MSFT"]),
+                                 earnings_fetch=lambda sym: [date(2026, 7, 10), date(2026, 6, 28)],
+                                 chase=_fast_chase())
+    assert out["earnings_closed"] == 0 and out["rewritten"] == 0
+    assert broker.option_orders == []                        # nothing closed, nothing rewritten
+
+
+# ====================================================================== #
 # Assignment re-entry (4.6)
 # ====================================================================== #
 def test_assignment_reentry_plan_gates_on_score():

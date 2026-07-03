@@ -125,6 +125,16 @@ def contracts_for(shares: float, contract_size: int = _CONTRACT_SHARES) -> int:
     return int(shares) // int(contract_size)
 
 
+def overlay_mode(settings) -> str:
+    """The overlay mode: ``"index"`` (SPY beta-overwrite spread) or ``"per_name"`` (classic
+    covered calls). THE single source of truth for the default — config/settings.yaml sets it
+    explicitly (``index``), so the fallback here only decides for bare test fixtures, where
+    ``"per_name"`` preserves the legacy expectations. Callers must never inline their own
+    ``getattr(..., "overlay_mode", ...)`` default (the audit found two with *different* defaults).
+    """
+    return str(getattr(settings.covered_calls, "overlay_mode", "per_name"))
+
+
 def select_strike(
     calls: Sequence[Mapping],
     *,
@@ -571,6 +581,58 @@ def write_index_overwrite(client, broker, db_engine, holdings_shares: Mapping[st
     return [order], [], info
 
 
+def index_overwrite_legs(client, market: str = "SPY") -> tuple[list[dict], list[dict]]:
+    """The overlay spread's legs from live positions: ``(short_calls, long_calls)`` on ``market``.
+
+    Each leg dict carries the position plus ``underlying``/``type``/``mid`` (mid derived from the
+    position's market value, like :func:`open_call_positions`). Only calls on ``market`` count —
+    the equity book holds no other options under the index overlay.
+    """
+    shorts: list[dict] = []
+    longs: list[dict] = []
+    for p in client.all_positions():
+        sym = str(p.get("symbol", ""))
+        m = _OCC_RE.match(sym)
+        if not m or m.group(1) != market or m.group(3) != "C":
+            continue
+        qty = float(p.get("qty", 0))
+        if not qty:
+            continue
+        mv = p.get("market_value")
+        mid = abs(float(mv)) / (abs(qty) * _CONTRACT_SHARES) if mv else None
+        rec = {**p, "underlying": market, "type": "call", "mid": mid}
+        (shorts if qty < 0 else longs).append(rec)
+    return shorts, longs
+
+
+def close_index_overwrite(client, broker, db_engine, *, as_of: date | None = None,
+                          market: str = "SPY", chase: OptionChase | None = None, alert=None):
+    """Close the SPY call-spread overwrite — **buy-to-close the short leg FIRST, then
+    sell-to-close the long wing**.
+
+    The order is load-bearing: selling the long first would leave the short momentarily naked,
+    which Alpaca rejects outright (error 40310000 — no uncovered tier). The short-leg close is
+    a risk-off action (chases the ask, final market sweep); the long-leg sale is cleanup of a
+    small residual (chases the bid, also swept at market so a stale quote can't strand it).
+    Both legs log ``options_lifecycle`` rows on real fills — the buy negative (cash out), the
+    sell positive (cash in). Returns the filled orders across both legs.
+    """
+    shorts, longs = index_overwrite_legs(client, market)
+    closed = _submit_closes(broker, db_engine, build_close_plan(shorts),
+                            as_of=as_of, event="close", chase=chase, alert=alert)
+    sells = [CoveredCallOrder(
+        action="sell_to_close", option_symbol=str(p["symbol"]), underlying=market,
+        contracts=int(abs(float(p["qty"]))),
+        limit_price=round(float(p["mid"]), 2) if p.get("mid") else None)
+        for p in longs]
+    closed += _execute_option_leg(broker, db_engine, sells, side="sell",
+                                  position_intent="sell_to_close", event="close", as_of=as_of,
+                                  final_market=True, chase=chase, alert=alert)
+    log.info("index overwrite closed", extra={"market": market, "short_legs": len(shorts),
+                                              "long_legs": len(longs), "filled": len(closed)})
+    return closed
+
+
 def _submit_closes(broker, db_engine, closes, *, as_of, event, chase: OptionChase | None = None,
                    alert=None):
     """Submit buy-to-close orders under one lifecycle ``event``, tracked to fill.
@@ -594,7 +656,9 @@ def close_calls(client, broker, db_engine, *, as_of: date | None = None,
 
 
 def _log_lifecycle(db_engine, event_type: str, order: CoveredCallOrder) -> None:
-    """Append a row to ``options_lifecycle`` (premium +collected on write, −paid on close).
+    """Append a row to ``options_lifecycle``, signed by cash direction: **sell legs positive**
+    (cash collected — a write, or selling the spread's long wing), **buy legs negative** (cash
+    paid — buying a short call back).
 
     Called only from :func:`_execute_option_leg` with an order whose ``contracts``/``premium``/
     ``limit_price`` are the **actually-filled** quantity and average fill price, so the ledger
@@ -604,9 +668,9 @@ def _log_lifecycle(db_engine, event_type: str, order: CoveredCallOrder) -> None:
         return
     from sqlalchemy import insert
     from engine.db import options_lifecycle
-    if event_type == "write":
+    if str(order.action).startswith("sell"):
         premium = order.premium                          # +cash collected (real fill)
-    else:  # close — cash paid to buy the call back (real fill avg × contracts × 100)
+    else:  # buy_to_close / buy_to_open — cash paid (real fill avg × contracts × 100)
         premium = -((order.limit_price or 0.0) * order.contracts * _CONTRACT_SHARES)
     with db_engine.begin() as conn:
         conn.execute(insert(options_lifecycle).values(
@@ -692,43 +756,83 @@ def _is_equity(position: Mapping) -> bool:
 def options_daily_check(client, broker, db_engine, *, settings, as_of: date,
                         price_panel: pd.DataFrame, earnings_fetch=None,
                         chase: OptionChase | None = None, alert=None) -> dict:
-    """Daily overlay safety pass: force-close expiring calls, close calls into earnings,
-    and rewrite calls on names whose earnings just passed (DECISIONS D31).
+    """Daily overlay safety pass, dispatched by :func:`overlay_mode`.
 
-    Returns counts ``{expiry_closed, earnings_closed, rewritten}``. Non-rebalance days only;
-    the monthly rebalance handles the full close-all + rewrite. ``chase`` (when supplied) chases
-    every close/rewrite to the touch so they actually fill within the session.
+    **index** — manage only the market (SPY) spread: force-close it (short leg first) once the
+    short leg reaches expiry, and process assignments. NO earnings machinery and NO per-name
+    rewrites — an index has no earnings, and under the index overlay every equity name is
+    deliberately uncovered (the audit found the ungated per-name rewrite would have quietly
+    started selling single-name calls on top of the SPY spread after any holding's earnings).
+
+    **per_name** — the classic pass: force-close expiring calls, close calls into earnings and
+    rewrite just-reported names (both gated on ``covered_calls.close_before_earnings``), then
+    process assignments.
+
+    Returns counts ``{expiry_closed, earnings_closed, rewritten, reentered}``. Non-rebalance
+    days only; the monthly rebalance handles the full close-all + rewrite.
     """
+    if overlay_mode(settings) == "index":
+        return _index_daily_check(client, broker, db_engine, settings=settings, as_of=as_of,
+                                  chase=chase, alert=alert)
+
     open_calls = open_call_positions(client)
     held = {str(p["symbol"]): float(p["qty"]) for p in client.all_positions() if _is_equity(p)}
-    universe = sorted({c["underlying"] for c in open_calls} | set(held))
-    earnings = fetch_earnings_dates(universe, fetch=earnings_fetch)
 
     expiry = expiry_close_plan(open_calls, as_of)
     _submit_closes(broker, db_engine, expiry, as_of=as_of, event="force_close", chase=chase, alert=alert)
 
-    nxt = {u: next_earnings(earnings.get(u, []), as_of) for u in universe}
-    facing = earnings_close_plan(open_calls, nxt, as_of)
-    _submit_closes(broker, db_engine, facing, as_of=as_of, event="earnings_close", chase=chase, alert=alert)
+    # Earnings close + post-earnings rewrite are one feature (close before the print, restore
+    # the call after), gated together on close_before_earnings (default on, matching the YAML).
+    facing: list[CoveredCallOrder] = []
+    rewritten: list = []
+    if bool(getattr(settings.covered_calls, "close_before_earnings", True)):
+        universe = sorted({c["underlying"] for c in open_calls} | set(held))
+        earnings = fetch_earnings_dates(universe, fetch=earnings_fetch)
+        nxt = {u: next_earnings(earnings.get(u, []), as_of) for u in universe}
+        facing = earnings_close_plan(open_calls, nxt, as_of)
+        _submit_closes(broker, db_engine, facing, as_of=as_of, event="earnings_close",
+                       chase=chase, alert=alert)
 
-    # Rewrite names that are held (≥1 contract), now uncovered, and reported very recently.
-    closed_now = {o.underlying for o in expiry + facing}
-    covered = {c["underlying"] for c in open_calls} - closed_now
-    to_rewrite = {
-        s: q for s, q in held.items()
-        if contracts_for(q) >= 1 and s not in covered
-        and last_earnings(earnings.get(s, []), as_of) is not None
-        and (as_of - last_earnings(earnings.get(s, []), as_of)).days <= _REWRITE_AFTER_DAYS
-    }
-    rewritten = []
-    if to_rewrite:
-        rewritten, _ = write_calls(client, broker, db_engine, to_rewrite, settings=settings,
-                                   as_of=as_of, price_panel=price_panel, chase=chase, alert=alert)
+        # Rewrite names that are held (≥1 contract), now uncovered, and reported very recently.
+        closed_now = {o.underlying for o in expiry + facing}
+        covered = {c["underlying"] for c in open_calls} - closed_now
+        to_rewrite = {
+            s: q for s, q in held.items()
+            if contracts_for(q) >= 1 and s not in covered
+            and last_earnings(earnings.get(s, []), as_of) is not None
+            and (as_of - last_earnings(earnings.get(s, []), as_of)).days <= _REWRITE_AFTER_DAYS
+        }
+        if to_rewrite:
+            rewritten, _ = write_calls(client, broker, db_engine, to_rewrite, settings=settings,
+                                       as_of=as_of, price_panel=price_panel, chase=chase, alert=alert)
 
     asg = process_assignments(client, broker, db_engine, settings=settings, as_of=as_of, alert=alert)
     out = {"expiry_closed": len(expiry), "earnings_closed": len(facing),
            "rewritten": len(rewritten), "reentered": asg["reentered"]}
     log.info("options daily check", extra=out)
+    return out
+
+
+def _index_daily_check(client, broker, db_engine, *, settings, as_of: date,
+                       chase: OptionChase | None = None, alert=None) -> dict:
+    """The index-overlay daily pass: force-close the SPY spread at the short leg's expiry
+    (short first — see :func:`close_index_overwrite`), then process assignments. Same return
+    shape as the per-name pass so callers/alerts are mode-agnostic."""
+    market = str(getattr(getattr(settings, "factors", None), "beta_market", "SPY"))
+    shorts, _longs = index_overwrite_legs(client, market)
+    expiring = [p for p in shorts
+                if is_expiring(_occ_expiration(str(p["symbol"])), as_of)]
+    closed: list = []
+    if expiring:
+        closed = close_index_overwrite(client, broker, db_engine, as_of=as_of, market=market,
+                                       chase=chase, alert=alert)
+        if alert:
+            alert(f"index overlay: {market} spread force-closed at expiry "
+                  f"({len(closed)} leg(s) filled)")
+    asg = process_assignments(client, broker, db_engine, settings=settings, as_of=as_of, alert=alert)
+    out = {"expiry_closed": len(closed), "earnings_closed": 0, "rewritten": 0,
+           "reentered": asg["reentered"]}
+    log.info("options daily check (index overlay)", extra=out)
     return out
 
 

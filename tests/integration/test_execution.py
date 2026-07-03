@@ -112,6 +112,7 @@ def test_run_cycle_executes_and_persists():
 
 
 def test_run_cycle_overlay_closes_then_writes_around_equity():
+    # per_name mode: the classic close-all → equity → rewrite sequencing.
     eng = _engine()
     broker = _FakeBroker()
     # Fake client reports a held equity position post-trade (what calls will cover).
@@ -127,9 +128,11 @@ def test_run_cycle_overlay_closes_then_writes_around_equity():
         seq.append(("write", dict(holdings_shares)))
         return (["wrote-1"], [])
 
+    settings = load_settings()
+    settings.covered_calls.overlay_mode = "per_name"      # exercise the classic path explicitly
     # AAPL is already at target (held 100), so MSFT (unheld) is what actually trades.
     res = run_eod.run_cycle(
-        client=client, broker=broker, db_engine=eng, settings=load_settings(),
+        client=client, broker=broker, db_engine=eng, settings=settings,
         as_of=date(2026, 7, 1), force=True, overlay=True,
         targets_fn=_targets({"AAPL": 0.05, "MSFT": 0.04},
                             {"AAPL": "Information Technology", "MSFT": "Information Technology"},
@@ -142,6 +145,41 @@ def test_run_cycle_overlay_closes_then_writes_around_equity():
     assert seq[0] == "close" and seq[-1][0] == "write"
     assert seq[-1][1] == {"AAPL": 100.0}
     assert any(o["symbol"] == "MSFT" for o in _rows(eng, db.orders))  # equity ran in between
+
+
+def test_run_cycle_index_overlay_dispatches_spread_close_and_write():
+    # index mode (the production YAML): the SPY-spread close/write fns run — the per-name
+    # fns must NOT (the audit found the daily rewrite leaking per-name calls into index mode).
+    eng = _engine()
+    broker = _FakeBroker()
+    client = _FakeClient(positions={"AAPL": (100, 10_000.0)})
+    seq = []
+
+    def _close_index(client, broker, db_engine, *, as_of=None, market="SPY", chase=None, alert=None):
+        seq.append(("close_index", market))
+        return ["short-closed", "wing-sold"]
+
+    def _write_index(client, broker, db_engine, holdings_shares, *, settings, as_of,
+                     price_panel, chase=None, alert=None):
+        seq.append(("write_index", dict(holdings_shares)))
+        return (["spread-1"], [], {"beta_p": 0.3, "contracts": 7})
+
+    settings = load_settings()
+    assert settings.covered_calls.overlay_mode == "index"   # the YAML's production mode
+    res = run_eod.run_cycle(
+        client=client, broker=broker, db_engine=eng, settings=settings,
+        as_of=date(2026, 7, 1), force=True, overlay=True,
+        targets_fn=_targets({"AAPL": 0.05, "MSFT": 0.04},
+                            {"AAPL": "Information Technology", "MSFT": "Information Technology"},
+                            {"AAPL": 100.0, "MSFT": 200.0}),
+        close_index_fn=_close_index, write_index_fn=_write_index,
+        close_calls_fn=lambda *a, **k: pytest.fail("per-name close ran in index mode"),
+        write_calls_fn=lambda *a, **k: pytest.fail("per-name write ran in index mode"))
+
+    assert res.status == "executed"
+    assert res.calls_closed == 2 and res.calls_written == 1
+    assert seq[0] == ("close_index", "SPY")                  # spread closed before equity trades
+    assert seq[-1][0] == "write_index" and seq[-1][1] == {"AAPL": 100.0}
 
 
 def test_run_cycle_no_overlay_skips_call_legs():
