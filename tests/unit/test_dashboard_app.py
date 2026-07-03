@@ -55,7 +55,8 @@ def test_create_app_exposes_expected_routes():
     paths = {r.path for r in app.routes}
     assert {"/", "/backtest", "/favicon.svg", "/api/meta", "/api/state",
             "/api/nav_history", "/api/orders", "/api/calls", "/api/overlay", "/api/factors",
-            "/api/alerts", "/api/health", "/api/reference", "/api/risk", "/api/execution"} <= paths
+            "/api/alerts", "/api/health", "/api/reference", "/api/risk", "/api/execution",
+            "/api/rebalance"} <= paths
     # the shared theme is mounted so both tabs reference one design system
     assert any(getattr(r, "path", "") == "/static" for r in app.routes)
 
@@ -123,6 +124,43 @@ def test_execution_route_rotation_excludes_options_and_flags_active():
     assert [b["symbol"] for b in rot["buys"]] == ["AAPL"]
     assert [s["symbol"] for s in rot["sells"]] == ["XOM"]   # SPY option fill is not equity rotation
     assert ex["chase"] == []                                # no order_events seeded → empty, not error
+
+
+def test_rebalance_route_refuses_without_client_and_guards_double_start(monkeypatch):
+    from dashboard import app as app_module
+
+    eng = create_engine("sqlite://")
+    db.create_all(eng)
+    # Postgres-only → refused (never spawn the engine from a dashboard that has no broker)
+    monkeypatch.setitem(app_module._REBAL, "proc", None)
+    # both GET and POST share the path; grab the POST endpoint explicitly
+    app = create_app(eng, live=False)
+    post = next(r for r in app.routes if getattr(r, "path", None) == "/api/rebalance"
+                and "POST" in getattr(r, "methods", set())).endpoint
+    assert post()["started"] is False
+
+    class _Proc:  # fake child: alive until we say otherwise
+        pid = 4242
+        _rc = None
+        def poll(self):
+            return self._rc
+        @property
+        def returncode(self):        # real Popen exposes it once poll() is non-None
+            return self._rc
+
+    monkeypatch.setattr(app_module, "_spawn_rebalance", lambda env: _Proc())
+    app = create_app(eng, client=_FakeClient([]), live=True)
+    post = next(r for r in app.routes if getattr(r, "path", None) == "/api/rebalance"
+                and "POST" in getattr(r, "methods", set())).endpoint
+    get = next(r for r in app.routes if getattr(r, "path", None) == "/api/rebalance"
+               and "GET" in getattr(r, "methods", set())).endpoint
+    assert post() == {"started": True, "pid": 4242}
+    assert post()["reason"] == "already running"          # second click while the cycle runs
+    assert get()["running"] is True
+    app_module._REBAL["proc"]._rc = 0                     # cycle exits cleanly
+    assert get() == {"running": False, "returncode": 0,
+                     "started_at": app_module._REBAL["started_at"], "log": app_module._REBAL_LOG}
+    monkeypatch.setitem(app_module._REBAL, "proc", None)  # don't leak state into other tests
 
 
 def test_price_history_route_seeds_from_bars():

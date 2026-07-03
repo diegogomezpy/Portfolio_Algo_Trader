@@ -134,6 +134,11 @@
              white-space: nowrap; letter-spacing: .02em; }
   .etclock b { color: var(--fg-dim); font-weight: 600; }
   @media (max-width: 1120px) { .etclock { display: none; } }
+  .rebal { background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
+           border-radius: 8px; height: 30px; padding: 0 12px; cursor: pointer; font: 600 11px var(--mono);
+           text-transform: uppercase; letter-spacing: .06em; transition: all .15s var(--ease); }
+  .rebal:hover:not(:disabled) { color: var(--fg); border-color: var(--accent); }
+  .rebal:disabled { color: var(--accent); cursor: default; }
   .refresh { background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
              border-radius: 8px; width: 30px; height: 30px; cursor: pointer; display: grid;
              place-items: center; transition: all .15s var(--ease); }

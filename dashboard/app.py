@@ -21,6 +21,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import subprocess
+import sys
 import threading
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -37,6 +39,20 @@ log = logging.getLogger("dashboard")
 _STATIC = Path(__file__).parent / "static"
 _INDEX = _STATIC / "index.html"
 _BACKTEST = Path(__file__).parent.parent / "reports" / "backtest_dashboard.html"
+
+# Manual force-rebalance (dashboard button). One child process at a time, module-wide —
+# same guarantee whether the user opens one tab or five.
+_ROOT = Path(__file__).resolve().parent.parent
+_REBAL_LOG = "/tmp/sepi_manual_rebalance.log"
+_REBAL: dict = {"proc": None, "started_at": None}
+
+
+def _spawn_rebalance(env: str) -> subprocess.Popen:
+    """Run one full engine cycle out-of-process (equivalent to Diego's manual command)."""
+    logf = open(_REBAL_LOG, "ab")  # noqa: SIM115 — handed to the child for its lifetime
+    return subprocess.Popen(
+        [sys.executable, str(_ROOT / "scripts" / "run_eod.py"), "--once", "--env", env],
+        cwd=str(_ROOT), stdout=logf, stderr=subprocess.STDOUT, start_new_session=True)
 
 # The SFI mark — a 3×3 dot grid with the middle column in teal — on a rounded navy tile.
 # (See the SFI Design Language: docs/DESIGN_LANGUAGE.md / design_lang/.)
@@ -641,6 +657,28 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
         if client is None:
             return {"active": False}
         return _execution_status(client, db_engine, meta.get("leverage_cap", 2.0))
+
+    @app.get("/api/rebalance")
+    def rebalance_status() -> dict:
+        proc = _REBAL["proc"]
+        running = proc is not None and proc.poll() is None
+        return {"running": running,
+                "returncode": None if proc is None or running else proc.returncode,
+                "started_at": _REBAL["started_at"], "log": _REBAL_LOG}
+
+    @app.post("/api/rebalance")
+    def rebalance_start() -> dict:
+        """Force-rebalance button. POST-only so nothing triggers it by browsing."""
+        if client is None:
+            return {"started": False, "reason": "dashboard is Postgres-only (no broker client)"}
+        proc = _REBAL["proc"]
+        if proc is not None and proc.poll() is None:
+            return {"started": False, "reason": "already running"}
+        _REBAL["proc"] = _spawn_rebalance(env)
+        _REBAL["started_at"] = datetime.now(timezone.utc).isoformat()
+        log.warning("manual rebalance triggered from the dashboard (pid=%s, log=%s)",
+                    _REBAL["proc"].pid, _REBAL_LOG)
+        return {"started": True, "pid": _REBAL["proc"].pid}
 
     @app.get("/api/calls")
     def calls() -> list:

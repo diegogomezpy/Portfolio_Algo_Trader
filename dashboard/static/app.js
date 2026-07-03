@@ -1696,6 +1696,20 @@ async function boot(){
   loadActive();
 }
 $("refreshbtn").onclick = () => { $("refreshbtn").classList.add("spin"); setTimeout(()=>$("refreshbtn").classList.remove("spin"),700); loadActive(); };
+// ---- force-rebalance button: confirm → POST → poll status until the cycle exits ----
+$("rebalbtn").onclick = async () => {
+  const b = $("rebalbtn"); if (b.disabled) return;
+  if (!confirm("Force a rebalance now? The engine runs one full cycle and may place orders.")) return;
+  b.disabled = true; b.textContent = "starting…";
+  let r = null; try { r = await (await fetch("/api/rebalance", { method: "POST" })).json(); } catch {}
+  const reset = (msg, ms) => { b.textContent = msg; setTimeout(() => { b.textContent = "Rebalance"; b.disabled = false; }, ms); };
+  if (!r || !r.started) { reset(r && r.reason === "already running" ? "already running" : "failed to start", 4000); return; }
+  b.textContent = "rebalancing…";
+  const t = setInterval(async () => {
+    let s = null; try { s = await (await fetch("/api/rebalance")).json(); } catch {}
+    if (s && !s.running) { clearInterval(t); reset(s.returncode === 0 ? "done ✓" : "failed — see log", 8000); loadActive(); }
+  }, 10000);
+};
 // ---- logo intro: dot grid scales in → wordmark → contracts to SFI → reveals dashboard ----
 function playIntro(){
   const ov=$("introOverlay"); if(!ov) return;
