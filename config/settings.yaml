@@ -177,9 +177,13 @@ ingest:
   request_sleep_s: 0.2           # rate-limit pause between batched requests
   retry_backoff_s: [30, 60, 120] # exponential backoff on API failure
 
+# Applied daily by run_eod.daily_job via engine.retention (was documentation-only pre-audit).
+# Fundamentals are never pruned: tiny, and point-in-time history is irreplaceable.
 data_retention:
-  raw_equities_days: 730         # 2-year rolling
-  fundamentals: forever
+  raw_equities_days: 730         # prune data/raw/equities/*.parquet older than this (2y rolling;
+                                 # the factor pipeline itself needs only ~257 files)
+  snapshots_intraday_days: 30    # beyond this, thin the 60s snapshots to one row per day (the
+                                 # day's close) — caps the ~1,440 rows/day growth
 
 alerts:
   smtp_host: smtp.gmail.com   # Gmail SMTP relay (STARTTLS on 587). M365 was abandoned for the

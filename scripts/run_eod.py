@@ -645,6 +645,11 @@ def daily_job(
                          as_of=as_of, price_panel=panel, chase=opt_chase, alert=alert)
     tgt = monitor.last_target_weights(db_engine)
     mon = monitor.monitor_once(client, db_engine, target_weights=tgt)
+    try:                       # retention (audit F2) — best-effort; must never break a trading day
+        from engine import retention
+        retention.run_retention(db_engine, settings, prices_dir=PRICES_DIR)
+    except Exception as exc:   # noqa: BLE001
+        log.warning("retention pass failed (non-fatal)", extra={"error": str(exc)})
     log.info("daily monitor pass (no rebalance)", extra={"date": as_of.isoformat()})
     return DailyResult("monitored", monitor=mon)
 
