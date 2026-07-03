@@ -139,6 +139,61 @@
            text-transform: uppercase; letter-spacing: .06em; transition: all .15s var(--ease); }
   .rebal:hover:not(:disabled) { color: var(--fg); border-color: var(--accent); }
   .rebal:disabled { color: var(--accent); cursor: default; }
+
+  /* ---- execution console (ticket modal) ---- */
+  .exm-back { position: fixed; inset: 0; background: rgba(5, 10, 20, .72); backdrop-filter: blur(3px);
+              z-index: 90; display: flex; align-items: flex-start; justify-content: center; padding: 8vh 16px 16px; }
+  .exm-panel { width: 620px; max-width: 100%; max-height: 84vh; overflow-y: auto; background: var(--panel);
+               border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 24px 70px rgba(0,0,0,.5); }
+  .exm-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line-soft); }
+  .exm-title { font: 600 13px 'Space Grotesk'; letter-spacing: .04em; text-transform: uppercase; color: var(--fg); flex: 1; }
+  .exm-x { background: none; border: none; color: var(--muted); font-size: 14px; cursor: pointer; }
+  .exm-x:hover { color: var(--fg); }
+  .exm-tabs { display: flex; gap: 4px; padding: 10px 18px 0; border-bottom: 1px solid var(--line-soft); }
+  .exm-tab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted);
+             font: 500 12px 'Space Grotesk'; padding: 8px 10px; cursor: pointer; }
+  .exm-tab.on { color: var(--fg); border-bottom-color: var(--accent); }
+  .exm-body { padding: 14px 18px; display: flex; flex-direction: column; gap: 12px; }
+  .exm-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .exm-lbl { font: 400 12px 'Space Grotesk'; color: var(--fg-dim); }
+  .exm-in { background: var(--bg); border: 1px solid var(--line); border-radius: 7px; color: var(--fg);
+            font: 500 13px var(--mono); padding: 6px 9px; width: 76px; }
+  .exm-in.wide { width: 120px; }
+  .exm-chip { background: var(--panel-2); border: 1px solid var(--line); border-radius: 7px; color: var(--muted);
+              font: 500 11px var(--mono); padding: 5px 10px; cursor: pointer; transition: all .12s var(--ease); }
+  .exm-chip:hover { color: var(--fg); border-color: var(--accent); }
+  .exm-chip.on { color: var(--fg); border-color: var(--accent); background: rgba(70,184,173,.12); }
+  .exm-modes { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .exm-note { font: 400 11.5px 'Space Grotesk'; color: var(--muted); line-height: 1.55; }
+  .exm-note.dim { padding: 10px 0; }
+  .exm-note b { color: var(--fg-dim); }
+  .exm-preview { border-top: 1px solid var(--line-soft); padding-top: 10px; }
+  .exm-phead { display: flex; justify-content: space-between; font: 600 10px 'Space Grotesk';
+               letter-spacing: .05em; text-transform: uppercase; color: var(--muted); padding: 2px 0 8px; }
+  .exm-plist { max-height: 220px; overflow-y: auto; border: 1px solid var(--line-soft); border-radius: 8px; }
+  .exm-prow { display: grid; grid-template-columns: 1.2fr .7fr .7fr .8fr 1fr; gap: 10px; padding: 6px 12px;
+              border-bottom: 1px solid var(--line-soft); font-size: 12px; align-items: center; }
+  .exm-prow:last-child { border-bottom: none; }
+  .exm-prow .sym { font-weight: 600; color: var(--fg); }
+  .exm-prow .side { font: 600 10px 'Space Grotesk'; letter-spacing: .05em; }
+  .exm-prow .side.buy { color: var(--green); }
+  .exm-prow .side.sell { color: var(--red); }
+  .exm-warn { font: 500 11.5px 'Space Grotesk'; color: var(--amber); padding: 6px 2px 0; }
+  .exm-err { font: 500 12px 'Space Grotesk'; color: var(--red); padding: 8px 2px; }
+  .exm-foot { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-top: 1px solid var(--line-soft); }
+  .exm-msg { flex: 1; font: 400 11.5px var(--mono); color: var(--muted); min-width: 0;
+             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .exm-btn { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; color: var(--fg-dim);
+             font: 600 11px var(--mono); text-transform: uppercase; letter-spacing: .05em; padding: 8px 14px; cursor: pointer; }
+  .exm-btn:hover:not(:disabled) { color: var(--fg); border-color: var(--accent); }
+  .exm-btn.go { background: rgba(70,184,173,.14); border-color: var(--accent); color: var(--accent); }
+  .exm-btn.go:hover:not(:disabled) { color: #eafffb; }
+  .exm-btn:disabled { opacity: .45; cursor: default; }
+  .mini-trade { width: 22px; height: 20px; border-radius: 5px; border: 1px solid var(--line); background: var(--panel-2);
+                font: 600 9.5px var(--mono); cursor: pointer; padding: 0; transition: all .12s var(--ease); }
+  .mini-trade.buy { color: var(--green); }
+  .mini-trade.sell { color: var(--red); }
+  .mini-trade:hover { border-color: var(--accent); background: var(--panel); }
   .refresh { background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
              border-radius: 8px; width: 30px; height: 30px; cursor: pointer; display: grid;
              place-items: center; transition: all .15s var(--ease); }

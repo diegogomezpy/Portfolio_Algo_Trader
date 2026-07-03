@@ -1273,8 +1273,16 @@ function renderExec(ex){
   const closeLbl = idxOv ? "Close spread" : "Close calls";
   const phaseName={equity_chase:"Equity chase",writing_calls:idxOv?"Writing SPY spread":"Writing calls",idle:"Settling"}[ex.phase]||"Trading";
   const curIdx = ex.phase==="equity_chase"?1 : ex.phase==="writing_calls"?2 : 3;
-  const strip=[[closeLbl,0],["Equity chase",1],[writeLbl,2],["Snapshot",3]].map(([l,i])=>{
-    const done=i<curIdx, cur=i===curIdx, mark=done?"✓":cur?"●":"○";
+  // Manual console runs get their own phase strip + header (the rebalance strip would lie).
+  const man = ex.manual, mp = (man && man.params) || {};
+  const manSteps = man && ({liquidate:[["Trim spread",0],["Equity sells",1],["Settle",2]],
+                            leverage:[["Overlay",0],["Equity scale",1],["Settle",2]],
+                            trade:[["Order",0],["Settle",1]]})[man.action];
+  const stripSrc = (man && man.action!=="rebalance" && manSteps)
+    ? manSteps.map(([l,i])=>[l,i,i < (ex.n_working?1:2), i === (ex.n_working?1:2)])
+    : [[closeLbl,0],["Equity chase",1],[writeLbl,2],["Snapshot",3]].map(([l,i])=>[l,i,i<curIdx,i===curIdx]);
+  const strip=stripSrc.map(([l,,done,cur])=>{
+    const mark=done?"✓":cur?"●":"○";
     const c=done?"var(--green)":cur?"var(--fg)":"var(--muted)";
     return `<span style="color:${c};font:500 11px 'Space Grotesk'">${mark} ${l}</span>`; }).join("");
   const pct = ex.n_target ? Math.round(ex.n_filled/ex.n_target*100) : 0;
@@ -1295,7 +1303,11 @@ function renderExec(ex){
     +chaseBoard(ex)
     +rotationFlow(ex)
     +fillsTape(ex);
-  const title=`<span style="display:inline-flex;align-items:center;gap:7px"><span style="width:8px;height:8px;border-radius:50%;background:#5fb088;box-shadow:0 0 0 3px rgba(95,176,136,.18)"></span>Live rebalance</span>`;
+  const manLbl = man && ({rebalance:`Manual rebalance`,
+                          liquidate:`Liquidation ${mp.pct!=null?(+mp.pct)+"%":""}`,
+                          leverage:`Leverage → ${mp.target!=null?(+mp.target).toFixed(2)+"×":""}`,
+                          trade:`Manual ${(mp.side||"trade").toUpperCase()} ${mp.symbol||""}`}[man.action] || "Manual action");
+  const title=`<span style="display:inline-flex;align-items:center;gap:7px"><span style="width:8px;height:8px;border-radius:50%;background:${man?"#d9a441":"#5fb088"};box-shadow:0 0 0 3px ${man?"rgba(217,164,65,.18)":"rgba(95,176,136,.18)"}"></span>${man?manLbl:"Live rebalance"}${man?` <span style="font:600 9px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:2px 6px">${man.mode}</span>`:""}</span>`;
   host.innerHTML=ovPanel(title, phaseName, body, "0", "orders");
 }
 async function pollExec(){ try{ renderExec(await get("/api/execution")); }catch(e){} }
@@ -1370,9 +1382,9 @@ function renderPSector(s){
 
 function renderPPositions(s){
   const rows=(s.positions||[]).filter(p=>p.symbol&&!_isOpt(p.symbol)&&p.qty);
-  const G="display:grid;grid-template-columns:1.8fr .75fr .72fr .95fr 1fr 1.35fr .8fr;gap:10px;align-items:center";
+  const G="display:grid;grid-template-columns:1.8fr .75fr .72fr .95fr 1fr 1.35fr .8fr .62fr;gap:10px;align-items:center";
   const maxW=Math.max(0.01,...rows.map(p=>p.weight||0),...rows.map(p=>p.target_weight||0));
-  const head=`<div style="${G};padding:8px 16px;font:600 9.5px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Instrument</span><span style="text-align:right">Last</span><span style="text-align:right">Day</span><span>20-tick</span><span style="text-align:right">Mkt value</span><span>Allocation vs target</span><span style="text-align:right">Δ vs tgt</span></div>`;
+  const head=`<div style="${G};padding:8px 16px;font:600 9.5px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Instrument</span><span style="text-align:right">Last</span><span style="text-align:right">Day</span><span>20-tick</span><span style="text-align:right">Mkt value</span><span>Allocation vs target</span><span style="text-align:right">Δ vs tgt</span><span style="text-align:right">Trade</span></div>`;
   const body=rows.map(p=>{ const chg=p.day_pct,c=chg==null?'var(--muted)':chg>=0?'var(--green)':'var(--red)';
     const px=p.last_price!=null?p.last_price:(p.qty?p.market_value/p.qty:null),r=REF[p.symbol.toUpperCase()]||{};
     const spk=sparkP((_px[p.symbol]||[]).slice(-16),92,22,2),d=(p.weight!=null&&p.target_weight!=null)?p.weight-p.target_weight:null;
@@ -1384,8 +1396,9 @@ function renderPPositions(s){
       <span>${spk?`<svg width="92" height="22" viewBox="0 0 92 22" preserveAspectRatio="none" style="display:block"><path d="${spk}" fill="none" stroke="${c}" stroke-width="1.4" stroke-linejoin="round"/></svg>`:'<span style="color:var(--muted)">–</span>'}</span>
       <span class="pmono" style="text-align:right;font-size:12px;color:var(--fg)">${usd(p.market_value)}</span>
       <span style="display:flex;align-items:center;gap:9px"><span style="position:relative;flex:1;height:5px;border-radius:2px;background:var(--panel-2)"><span style="position:absolute;left:0;top:0;height:100%;border-radius:2px;background:var(--accent);width:${fillW.toFixed(1)}%"></span><span style="position:absolute;top:-2px;width:2px;height:9px;background:var(--fg-dim);left:${tickW.toFixed(1)}%"></span></span><span class="pmono" style="font-size:11px;color:var(--fg-dim);min-width:42px;text-align:right">${pct(p.weight)}</span></span>
-      <span class="pmono" style="text-align:right;font-size:12px;font-weight:500;color:${scol(d)}">${d==null?'–':spct(d,1)}</span></div>`; }).join("");
-  fillPanel("p-positions","Positions vs target",`${rows.length} equity positions · bar = weight, tick = target`,head+body,"live");
+      <span class="pmono" style="text-align:right;font-size:12px;font-weight:500;color:${scol(d)}">${d==null?'–':spct(d,1)}</span>
+      <span style="display:flex;gap:4px;justify-content:flex-end"><button class="mini-trade buy" title="buy ${p.symbol}" onclick="openTicket('trade',{symbol:'${p.symbol}',side:'buy'})">B</button><button class="mini-trade sell" title="sell ${p.symbol}" onclick="openTicket('trade',{symbol:'${p.symbol}',side:'sell'})">S</button></span></div>`; }).join("");
+  fillPanel("p-positions","Positions vs target",`${rows.length} equity positions · bar = weight, tick = target · B/S opens the ticket`,head+body,"live");
 }
 
 function renderPFactorTilt(s,factors){
@@ -1484,8 +1497,9 @@ function paintPortfolioLive(s){ pushPx(s); renderTape(s); renderPPositions(s); r
 
 // Portfolio — Holdings (design-doc layout) + Activity (orders/alerts)
 async function loadPortfolio(){
-  const [s, orders, calls, factors, alerts, ov] = await Promise.all(
-    ["/api/state","/api/orders","/api/calls","/api/factors","/api/alerts","/api/overlay"].map(get));
+  const [s, orders, calls, factors, alerts, ov, manual] = await Promise.all(
+    ["/api/state","/api/orders","/api/calls","/api/factors","/api/alerts","/api/overlay",
+     "/api/manual_actions"].map(get));
   noteFresh(s);
   if(!s){ $("p-positions").innerHTML =
       '<div class="errbox"><div class="big">Backend unreachable</div>Postgres or the dashboard API is not responding.</div>';
@@ -1493,6 +1507,21 @@ async function loadPortfolio(){
   _calls = calls || []; _pFactors = factors || []; _overlay = ov || null; pushPx(s); renderTape(s);
   renderPSector(s); renderPPositions(s); renderPFactorTilt(s,_pFactors); renderPRadar(s,_pFactors);
   renderPCalls(s,_calls,_overlay); renderPFactors(_pFactors); renderOrders(orders); renderAlerts(alerts);
+  renderManualActions(manual);
+}
+
+function renderManualActions(rows){
+  const G="display:grid;grid-template-columns:150px 110px 70px 1fr 90px 1.2fr;gap:12px;align-items:center";
+  const head=`<div style="${G};padding:8px 16px;font:600 9.5px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Time (UTC)</span><span>Action</span><span>Mode</span><span>Params</span><span>Status</span><span>Result</span></div>`;
+  let body;
+  if(!(rows&&rows.length)) body='<div style="padding:16px;font:400 11.5px var(--mono);color:var(--muted)">No manual actions yet — the Execute button\'s audit trail lands here.</div>';
+  else body=`<div class="sf-scroll" style="max-height:320px;overflow-y:auto">${rows.map(a=>{
+    const sc=a.status==="done"?"var(--green)":a.status==="failed"?"var(--red)":"var(--amber)";
+    const ps=Object.entries(a.params||{}).map(([k,v])=>`${k}=${v}`).join(" ")||"–";
+    const r=a.result||{}; const rs=a.status==="failed"?(r.error||"–")
+      : r.filled!=null?`${r.filled}/${r.submitted} filled${r.overlay_closed?` · spread ×${r.overlay_closed}`:""}`:"–";
+    return `<div class="prow" style="${G};padding:9px 16px"><span class="pmono" style="font-size:11px;color:var(--muted)">${(a.ts||'').replace('T',' ').slice(0,19)}</span><span style="font:600 10.5px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:var(--fg-dim)">${a.action}</span><span class="pmono" style="font-size:10.5px;color:${a.mode==="express"?"var(--amber)":"var(--muted)"}">${a.mode||'–'}</span><span class="pmono" style="font-size:11px;color:var(--fg-dim)">${esc(ps)}</span><span style="font:600 10px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:${sc}">${a.status}</span><span class="pmono" style="font-size:11px;color:var(--fg-dim);overflow:hidden;text-overflow:ellipsis" title="${esc(String(rs))}">${esc(String(rs))}</span></div>`; }).join('')}</div>`;
+  fillPanel("a-manual","Manual actions","execution console audit trail",head+body,"orders");
 }
 
 // Solid sector colour for ribbons/swatches (brighter than the chip background).
@@ -1696,20 +1725,220 @@ async function boot(){
   loadActive();
 }
 $("refreshbtn").onclick = () => { $("refreshbtn").classList.add("spin"); setTimeout(()=>$("refreshbtn").classList.remove("spin"),700); loadActive(); };
-// ---- force-rebalance button: confirm → POST → poll status until the cycle exits ----
-$("rebalbtn").onclick = async () => {
-  const b = $("rebalbtn"); if (b.disabled) return;
-  if (!confirm("Force a rebalance now? The engine runs one full cycle and may place orders.")) return;
-  b.disabled = true; b.textContent = "starting…";
-  let r = null; try { r = await (await fetch("/api/rebalance", { method: "POST" })).json(); } catch {}
-  const reset = (msg, ms) => { b.textContent = msg; setTimeout(() => { b.textContent = "Rebalance"; b.disabled = false; }, ms); };
-  if (!r || !r.started) { reset(r && r.reason === "already running" ? "already running" : "failed to start", 4000); return; }
-  b.textContent = "rebalancing…";
-  const t = setInterval(async () => {
-    let s = null; try { s = await (await fetch("/api/rebalance")).json(); } catch {}
-    if (s && !s.running) { clearInterval(t); reset(s.returncode === 0 ? "done ✓" : "failed — see log", 8000); loadActive(); }
-  }, 10000);
-};
+// ===================== Execution console (ticket modal) =====================
+// One modal, four actions (rebalance / liquidate / leverage / single name), two modes
+// (normal = the tiered chase, express = market orders). Flow: pick → PREVIEW (the exact
+// order list, computed server-side, nothing sent) → EXECUTE (token-gated POST) → live
+// status until the run exits. The execution visualizer surfaces on its own via ex.manual.
+const EXEC = { tab: "rebalance", mode: "normal", side: "sell", plan: null, prefill: null, statusPoll: null };
+
+function execToken(force){
+  let t = localStorage.getItem("sepi_exec_token") || "";
+  if (!t || force){
+    t = (prompt("Execution token (the SEPI_EXEC_TOKEN value from the VM's env file):", "") || "").trim();
+    if (t) localStorage.setItem("sepi_exec_token", t);
+  }
+  return t;
+}
+async function postExec(path, tok){
+  try { const r = await fetch(path, { method: "POST", headers: tok ? { "X-Exec-Token": tok } : {} });
+        return r.ok ? await r.json() : null; } catch { return null; }
+}
+function execParams(){
+  const p = {};
+  if (EXEC.tab === "liquidate") p.pct = parseFloat(($("exPct")||{}).value);
+  if (EXEC.tab === "leverage") p.target = parseFloat(($("exTarget")||{}).value);
+  if (EXEC.tab === "trade"){
+    p.symbol = (($("exSym")||{}).value || "").trim().toUpperCase();
+    p.side = EXEC.side;
+    if (EXEC.side === "buy") p.usd = parseFloat(($("exUsd")||{}).value);
+    else p.pct = parseFloat(($("exSellPct")||{}).value);
+  }
+  return p;
+}
+function execQS(extra){
+  const p = { action: EXEC.tab, ...execParams(), ...(extra||{}) };
+  return Object.entries(p).filter(([,v]) => v!=null && v!=="" && !(typeof v==="number" && isNaN(v)))
+    .map(([k,v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+}
+
+function openTicket(tab, prefill){
+  EXEC.tab = tab || "rebalance"; EXEC.plan = null; EXEC.prefill = prefill || null;
+  if (prefill && prefill.side) EXEC.side = prefill.side;
+  let host = $("execModal");
+  if (!host){ host = document.createElement("div"); host.id = "execModal"; document.body.appendChild(host); }
+  host.innerHTML = `<div class="exm-back" onclick="if(event.target===this)closeTicket()">
+    <div class="exm-panel">
+      <div class="exm-head"><span class="exm-title">Execution console</span>
+        <span class="se-pill ${ (META.env||"paper")==="live" ? "bad" : "warn" }">${(META.env||"paper").toUpperCase()}</span>
+        <button class="exm-x" onclick="closeTicket()" aria-label="close">✕</button></div>
+      <div class="exm-tabs">${[["rebalance","Rebalance"],["liquidate","Liquidate"],["leverage","Leverage"],["trade","Single name"]]
+        .map(([k,l]) => `<button class="exm-tab${EXEC.tab===k?" on":""}" onclick="setTicketTab('${k}')">${l}</button>`).join("")}</div>
+      <div class="exm-body">
+        <div id="exForm"></div>
+        <div class="exm-modes" id="exModes"></div>
+        <div class="exm-preview" id="exPreview"></div>
+      </div>
+      <div class="exm-foot">
+        <button class="exm-btn" id="exCancelAll" title="cancel every working order">Cancel all orders</button>
+        <span class="exm-msg" id="exMsg"></span>
+        <button class="exm-btn" id="exPreviewBtn">Preview</button>
+        <button class="exm-btn go" id="exGoBtn" disabled>Execute</button>
+      </div>
+    </div></div>`;
+  $("exPreviewBtn").onclick = ticketPreview;
+  $("exGoBtn").onclick = ticketExecute;
+  $("exCancelAll").onclick = ticketCancelAll;
+  drawTicketForm();
+  refreshTicketStatus();
+}
+function closeTicket(){ const h = $("execModal"); if (h) h.innerHTML = ""; if (EXEC.statusPoll){ clearInterval(EXEC.statusPoll); EXEC.statusPoll = null; } }
+function setTicketTab(t){ EXEC.tab = t; EXEC.plan = null; drawTicketForm(); }
+function setTicketMode(m){ EXEC.mode = m; drawTicketForm(true); }
+function setTicketSide(s){ EXEC.side = s; EXEC.plan = null; drawTicketForm(); }
+function _chip(v, cur, fn, lbl){ return `<button class="exm-chip${v===cur?" on":""}" onclick="${fn}">${lbl}</button>`; }
+
+function drawTicketForm(keepPreview){
+  const held = (_ovS && _ovS.positions || []).filter(p => p.symbol && !_isOpt(p.symbol) && p.qty);
+  const pre = EXEC.prefill || {};
+  const F = $("exForm"); if (!F) return;
+  document.querySelectorAll(".exm-tab").forEach(b => b.classList.toggle("on", b.textContent === ({rebalance:"Rebalance",liquidate:"Liquidate",leverage:"Leverage",trade:"Single name"})[EXEC.tab]));
+  if (EXEC.tab === "rebalance"){
+    F.innerHTML = `<div class="exm-note">Runs one full engine cycle — reconcile → targets → risk gate →
+      close spread → equity trades → write spread. Targets are computed at run time, so there is no
+      pre-trade preview; the run panel narrates the plan as it executes.</div>`;
+  } else if (EXEC.tab === "liquidate"){
+    const cur = ($("exPct")||{}).value || pre.pct || 25;
+    F.innerHTML = `<div class="exm-row"><span class="exm-lbl">Liquidate</span>
+      ${[10,25,50,100].map(v => `<button class="exm-chip${+cur===v?" on":""}" onclick="$('exPct').value=${v};EXEC.plan=null;drawTicketForm()">${v}%</button>`).join("")}
+      <input id="exPct" class="exm-in" type="number" min="1" max="100" step="1" value="${cur}"> <span class="exm-lbl">% of every position</span></div>
+      <div class="exm-note">Pro-rata across the book; the SPY spread is trimmed by the same fraction
+      (100% closes it). Proceeds sit in cash — the next monthly rebalance re-invests unless you act first.</div>`;
+  } else if (EXEC.tab === "leverage"){
+    const cur = ($("exTarget")||{}).value || pre.target || (META.target_leverage || 2.0);
+    F.innerHTML = `<div class="exm-row"><span class="exm-lbl">Target gross</span>
+      <input id="exTarget" class="exm-in" type="number" min="0.1" max="${META.leverage_cap||2}" step="0.05" value="${cur}">
+      <span class="exm-lbl">× equity (cap ${(META.leverage_cap||2).toFixed(2)}×)</span></div>
+      <div class="exm-note"><b>Sticky:</b> the target persists as an override — every future rebalance
+      sizes to it until cleared. Lever-down trims the SPY spread proportionally; lever-up leaves the
+      spread for the next overlay pass.</div>
+      <div class="exm-note" id="exOvNote"></div>`;
+  } else {
+    const sym = ($("exSym")||{}).value || pre.symbol || "";
+    F.innerHTML = `<div class="exm-row"><span class="exm-lbl">Symbol</span>
+      <input id="exSym" class="exm-in wide" list="exHeld" value="${sym}" placeholder="AAPL" oninput="EXEC.plan=null">
+      <datalist id="exHeld">${held.map(p => `<option value="${p.symbol}">`).join("")}</datalist>
+      ${_chip("buy", EXEC.side, "setTicketSide('buy')", "Buy")}${_chip("sell", EXEC.side, "setTicketSide('sell')", "Sell")}</div>
+      ${EXEC.side === "buy"
+        ? `<div class="exm-row"><span class="exm-lbl">Notional</span><span class="exm-lbl">$</span>
+           <input id="exUsd" class="exm-in wide" type="number" min="1" step="100" value="${($("exUsd")||{}).value||pre.usd||5000}" oninput="EXEC.plan=null"></div>`
+        : `<div class="exm-row"><span class="exm-lbl">Sell</span>
+           ${[25,50,100].map(v => `<button class="exm-chip" onclick="$('exSellPct').value=${v};EXEC.plan=null;drawTicketForm()">${v}%</button>`).join("")}
+           <input id="exSellPct" class="exm-in" type="number" min="1" max="100" step="1" value="${($("exSellPct")||{}).value||pre.pct||100}" oninput="EXEC.plan=null"> <span class="exm-lbl">% of the position</span></div>`}
+      <div class="exm-note">Buys are sized in dollars at the last price; sells as % of the position.
+      Off-model buys are flagged in the preview — the next rebalance will likely unwind them.</div>`;
+  }
+  $("exModes").innerHTML = `<span class="exm-lbl">Mode</span>
+    ${_chip("normal", EXEC.mode, "setTicketMode('normal')", "Normal — patient limit chase")}
+    ${_chip("express", EXEC.mode, "setTicketMode('express')", "Express — market orders")}`;
+  if (!keepPreview){
+    $("exPreview").innerHTML = `<div class="exm-note dim">${EXEC.tab === "rebalance"
+      ? "No pre-trade preview for the rebalance — Execute arms directly."
+      : "Preview computes the exact orders before anything is sent."}</div>`;
+    $("exGoBtn").disabled = EXEC.tab !== "rebalance";
+    $("exMsg").textContent = "";
+  }
+}
+
+async function ticketPreview(){
+  if (EXEC.tab === "rebalance"){ $("exMsg").textContent = "rebalance has no preview — Execute runs the engine"; return; }
+  $("exMsg").textContent = "planning…"; EXEC.plan = null; $("exGoBtn").disabled = true;
+  const plan = await get(`/api/exec/preview?${execQS()}`);
+  const P = $("exPreview");
+  if (!plan){ $("exMsg").textContent = "preview failed — backend unreachable"; return; }
+  if (plan.error){ P.innerHTML = `<div class="exm-err">${esc(plan.error)}</div>`; $("exMsg").textContent = ""; return; }
+  EXEC.plan = plan; $("exMsg").textContent = "";
+  const rows = (plan.orders||[]).map(o => `<div class="exm-prow">
+      <span class="pmono sym">${o.symbol}</span>
+      <span class="side ${o.side}">${o.side.toUpperCase()}</span>
+      <span class="pmono" style="text-align:right">${fmt(o.qty)}</span>
+      <span class="pmono" style="text-align:right">${o.est_price==null?"–":usd2(o.est_price)}</span>
+      <span class="pmono" style="text-align:right">${o.est_notional==null?"–":usd(o.est_notional)}</span></div>`).join("");
+  const ov = plan.overlay || {};
+  const ovRow = ov.close_contracts ? `<div class="exm-prow"><span class="pmono sym">${ov.market} spread</span>
+      <span class="side sell">CLOSE</span><span class="pmono" style="text-align:right">${ov.close_contracts}/${ov.contracts}</span>
+      <span></span><span class="pmono" style="text-align:right">both legs</span></div>` : "";
+  const t = plan.totals || {};
+  const tot = [t.sell_notional ? `raise ~${usd(t.sell_notional)}` : null,
+               t.buy_notional ? `deploy ~${usd(t.buy_notional)}` : null,
+               t.current_leverage != null ? `${t.current_leverage.toFixed(2)}× → ${(+t.target_leverage).toFixed(2)}×` : null]
+              .filter(Boolean).join(" · ");
+  const warns = (plan.warnings||[]).map(w => `<div class="exm-warn">▲ ${esc(w)}</div>`).join("");
+  const skips = (plan.skipped||[]).length ? `<div class="exm-note dim">${plan.skipped.length} name(s) skipped (too small)</div>` : "";
+  P.innerHTML = `<div class="exm-phead"><span>${(plan.orders||[]).length} order(s)${ovRow?" + spread":""}</span><span>${tot}</span></div>
+    <div class="exm-plist">${ovRow}${rows || '<div class="exm-note dim">no equity orders</div>'}</div>${warns}${skips}`;
+  $("exGoBtn").disabled = !((plan.orders||[]).length || ov.close_contracts);
+}
+
+async function ticketExecute(){
+  const btn = $("exGoBtn"); if (btn.disabled) return;
+  if (EXEC.tab !== "rebalance" && !EXEC.plan){ $("exMsg").textContent = "preview first"; return; }
+  const tok = execToken(); if (!tok){ $("exMsg").textContent = "no token — execution cancelled"; return; }
+  btn.disabled = true; $("exMsg").textContent = "starting…";
+  let r = await postExec(`/api/exec/run?${execQS({ mode: EXEC.mode })}`, tok);
+  if (r && r.unauthorized){                       // stale token → reprompt once
+    const t2 = execToken(true);
+    if (t2) r = await postExec(`/api/exec/run?${execQS({ mode: EXEC.mode })}`, t2);
+  }
+  if (!r){ $("exMsg").textContent = "failed — backend unreachable"; btn.disabled = false; return; }
+  if (!r.started){
+    $("exMsg").textContent = r.market_closed
+      ? `market closed — next open ${(r.next_open||"").replace("T"," ").slice(0,16)} ET`
+      : (r.error || "refused");
+    btn.disabled = false; return;
+  }
+  $("exMsg").textContent = `running (${r.cycle_key})…`;
+  if (EXEC.statusPoll) clearInterval(EXEC.statusPoll);
+  EXEC.statusPoll = setInterval(async () => {
+    const st = await get("/api/exec/status");
+    if (!st || st.running) return;
+    clearInterval(EXEC.statusPoll); EXEC.statusPoll = null;
+    const oc = st.outcome || {};
+    $("exMsg").textContent = st.returncode === 0
+      ? (oc.summary ? oc.summary : `done — ${oc.filled!=null ? `${oc.filled}/${oc.submitted} filled` : "complete"}${oc.overlay_closed ? `, spread ×${oc.overlay_closed}` : ""}`)
+      : `failed — ${oc.error || "see " + (st.log||"log")}`;
+    btn.disabled = false; EXEC.plan = null;
+    loadActive();
+  }, 3000);
+  loadActive();
+}
+
+async function ticketCancelAll(){
+  if (!confirm("Cancel ALL working orders?")) return;
+  const tok = execToken(); if (!tok) return;
+  const r = await postExec("/api/exec/cancel_all", tok);
+  $("exMsg").textContent = r ? (r.error || `cancelled ${r.cancelled} order(s)`) : "cancel failed";
+  loadActive();
+}
+
+async function clearLevOverride(){
+  const tok = execToken(); if (!tok) return;
+  const r = await postExec("/api/exec/clear_override", tok);
+  $("exMsg").textContent = r && r.cleared ? "override cleared — rebalances return to settings.yaml" : (r && r.error || "failed");
+  refreshTicketStatus();
+}
+
+async function refreshTicketStatus(){
+  const st = await get("/api/exec/status"); if (!st || !$("exMsg")) return;
+  if (!st.token_configured) $("exMsg").textContent = "console disabled — SEPI_EXEC_TOKEN not set on the server";
+  else if (st.running) $("exMsg").textContent = `a manual ${st.action} is running…`;
+  const n = $("exOvNote");
+  if (n) n.innerHTML = st.leverage_override != null
+    ? `Override active: <b>${(+st.leverage_override).toFixed(2)}×</b> <button class="exm-chip" onclick="clearLevOverride()">clear</button>`
+    : "No leverage override active — rebalances use settings.yaml.";
+}
+
+$("execbtn").onclick = () => openTicket(EXEC.tab);
 // ---- logo intro: dot grid scales in → wordmark → contracts to SFI → reveals dashboard ----
 function playIntro(){
   const ov=$("introOverlay"); if(!ov) return;
