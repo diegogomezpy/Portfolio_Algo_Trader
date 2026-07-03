@@ -582,6 +582,11 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
                 price_feed.stop()
 
     app = FastAPI(title="SEPI · Systematic Equity Premium Income", lifespan=lifespan)
+    # Compress responses ≥1KB (audit W4): the index page alone shipped 185KB raw — the app
+    # served no compression and neither did Caddy (now it does too; belt and braces for
+    # tunnel/local access that bypasses Caddy).
+    from fastapi.middleware.gzip import GZipMiddleware
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
     if _STATIC.exists():
         app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
 

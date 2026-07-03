@@ -6,8 +6,14 @@
 # Replace __BCRYPT_HASH__ with the output of:  caddy hash-password --plaintext '<password>'
 # (deploy/setup_funnel.sh does this for you.) Viewers log in as user "viewer".
 :8080 {
+	# Compress everything ≥ ~1KB (audit W4): the dashboard shipped 185KB of raw HTML per load
+	# before this. zstd preferred, gzip fallback.
+	encode zstd gzip
 	basic_auth {
 		viewer __BCRYPT_HASH__
 	}
+	# Static assets are cache-busted with ?v=N query params, so long client caching is safe.
+	@static path /static/*
+	header @static Cache-Control "public, max-age=604800"
 	reverse_proxy localhost:8000
 }
