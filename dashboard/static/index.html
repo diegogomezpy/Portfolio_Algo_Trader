@@ -1796,10 +1796,37 @@ function renderExec(ex){
 }
 async function pollExec(){ try{ renderExec(await get("/api/execution")); }catch(e){} }
 
+// Repaint memo (audit W2): the 1s tick used to rebuild every panel's innerHTML — including
+// the multi-hundred-node treemap SVG — even when NOTHING changed (identical for ~17h after
+// hours). Each heavy painter now runs only when its input signature changes: after-hours
+// everything below is skipped; in-session a panel repaints exactly when a price it shows
+// actually moved. The tape/hero/ribbon keep their unconditional 1s feel (cheap or in-place).
+const _paintMemo = {};
+function memoPaint(key, sig, fn){
+  const j = JSON.stringify(sig);
+  if (_paintMemo[key] === j) return;
+  _paintMemo[key] = j;
+  fn();
+}
+
 function paintOverview(s){
   _ovS=s; pushPx(s); renderTape(s);
   renderSession(); renderNavHero(s); renderKpiRibbon(s);
-  renderTreemap(s); renderGauge(s, _calls, _overlay); renderEventsPanel(); renderWaterfall(s);
+  memoPaint('treemap',
+    (s.positions||[]).map(p=>[p.symbol, p.market_value,
+                              p.day_pct==null?null:+p.day_pct.toFixed(4)]),
+    () => renderTreemap(s));
+  memoPaint('gauge',
+    (_overlay && _overlay.mode !== "per_name")
+      ? ['idx', _overlay.short_symbol, _overlay.contracts, _overlay.beta_overwritten,
+         _overlay.net_credit, _overlay.expiration]
+      : ['pn', (_calls||[]).map(c=>[c.option_symbol,c.contracts]),
+         (s.positions||[]).map(p=>[p.symbol, p.qty, p.market_value==null?null:Math.round(p.market_value)])],
+    () => renderGauge(s, _calls, _overlay));
+  renderEventsPanel();                                   // countdowns tick every second by design
+  memoPaint('waterfall',
+    [s.nav==null?null:Math.round(s.nav), s.day_pnl==null?null:Math.round(s.day_pnl)],
+    () => renderWaterfall(s));
   renderFootstrip(s);
 }
 
