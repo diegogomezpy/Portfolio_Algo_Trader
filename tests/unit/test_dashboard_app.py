@@ -64,10 +64,13 @@ def test_index_route_serves_html():
     eng = create_engine("sqlite://")
     db.create_all(eng)
     app = create_app(eng, live=False)
-    # call the index route handler directly (no server): it returns the self-contained page
+    # call the index route handler directly (no server): since the W5 split it is a thin
+    # shell — markup + links to the cacheable static bundle (app.js / css / fonts).
     html = _route(app, "/")()
-    assert "SFI" in html and "/api/state" in html          # SFI brand lockup
-    assert "/static/theme.css" in html        # links the shared dark design system
+    assert "SEPI" in html                                   # brand lockup markup
+    assert "/static/theme.css" in html                      # shared dark design system
+    assert "/static/dashboard.css" in html and "/static/app.js" in html
+    assert "/static/fonts.css" in html and "googleapis" not in html   # fonts self-hosted (W6)
 
 
 def test_meta_route_is_config_driven():
