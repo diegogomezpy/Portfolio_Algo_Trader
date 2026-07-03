@@ -271,6 +271,7 @@ def submit_and_track(
     market_close: datetime | None = None,
     order_state: Callable[[str], dict] | None = None,
     alert: Callable[[str], None] | None = None,
+    cancel_leftover: bool = True,
 ) -> ExecReport:
     """Submit ``orders``, poll fills, persist to DB, and return a per-symbol :class:`ExecReport`.
 
@@ -292,6 +293,10 @@ def submit_and_track(
     (:class:`engine.order_feed.LiveOrderFeed`) when available (instant, no REST/rate-limit), else
     it defaults to ``broker.get_order`` (the pre-feed behaviour). Submits/cancels always go
     through ``broker``.
+
+    ``cancel_leftover=False`` (single-pass only) leaves unfilled orders **working** instead of
+    cancelling them at poll end — the console's express mode off-hours: market orders queue and
+    fill at the next open, reported as ``queued`` rather than rolled to ``pending_adjustments``.
     """
     pending = list(pending or [])
     read = order_state or broker.get_order
@@ -304,7 +309,8 @@ def submit_and_track(
                        sleep=sleep, alert=alert)
     return _single_pass(orders, broker=broker, db_engine=db_engine, cycle_key=cycle_key,
                         pending=pending, out=out, poll_attempts=poll_attempts,
-                        poll_interval_s=poll_interval_s, sleep=sleep, read=read, alert=alert)
+                        poll_interval_s=poll_interval_s, sleep=sleep, read=read, alert=alert,
+                        cancel_leftover=cancel_leftover)
 
 
 def _finalize(out, orders, *, submitted, rejected, pending, db_engine, cycle_key) -> ExecReport:
@@ -314,7 +320,7 @@ def _finalize(out, orders, *, submitted, rejected, pending, db_engine, cycle_key
     by_qty = {o.symbol: int(o.qty) for o in orders}
     filled = partial = 0
     for sym, d in out.items():
-        if d["status"] in ("rejected", "auction"):    # terminal states set by the caller; keep them
+        if d["status"] in ("rejected", "auction", "queued"):   # terminal states set by the caller
             continue
         q, f = by_qty.get(sym, 0), d["filled"]
         if f >= q and f > 0:
@@ -516,7 +522,8 @@ def _sp_tier(o: PlannedOrder) -> str:
 
 
 def _single_pass(orders, *, broker, db_engine, cycle_key, pending, out,
-                 poll_attempts, poll_interval_s, sleep, read, alert) -> ExecReport:
+                 poll_attempts, poll_interval_s, sleep, read, alert,
+                 cancel_leftover: bool = True) -> ExecReport:
     already = _existing_client_ids(db_engine, cycle_key)
     live: list[tuple[str, PlannedOrder]] = []   # (order_id, planned)
     rejected = 0
@@ -581,10 +588,11 @@ def _single_pass(orders, *, broker, db_engine, cycle_key, pending, out,
     for oid, o in live:
         if oid not in open_ids:
             continue
-        try:
-            broker.cancel_order(oid)
-        except AlpacaAPIError as exc:
-            log.warning("cancel failed at session end", extra={"id": oid, "error": str(exc)})
+        if cancel_leftover:
+            try:
+                broker.cancel_order(oid)
+            except AlpacaAPIError as exc:
+                log.warning("cancel failed at session end", extra={"id": oid, "error": str(exc)})
         try:
             st = read(oid)
         except AlpacaAPIError as exc:   # can't read final state — leave it; reconcile corrects from Alpaca
@@ -603,8 +611,12 @@ def _single_pass(orders, *, broker, db_engine, cycle_key, pending, out,
                           target_qty=o.qty, status=st.get("status"), order_id=oid)
         residual = o.qty - filled_qty
         if residual > 0:
-            pending.append({"symbol": o.symbol, "side": o.side, "delta_usd": None,
-                            "qty": residual, "reason": "unfilled at session end"})
+            if cancel_leftover:
+                pending.append({"symbol": o.symbol, "side": o.side, "delta_usd": None,
+                                "qty": residual, "reason": "unfilled at session end"})
+            else:               # express off-hours: the order STAYS working for the next open
+                out[o.symbol].update(status="queued",
+                                     reason="left working; fills at the next session")
 
     for oid, o in live:
         try:

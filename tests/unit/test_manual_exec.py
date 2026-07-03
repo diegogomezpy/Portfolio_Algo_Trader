@@ -202,13 +202,46 @@ def test_run_action_express_places_market_orders_and_journals():
     assert audit["result"]["filled"] == 2
 
 
-def test_run_action_refuses_when_market_closed():
+def test_run_action_normal_refuses_when_market_closed_express_trades_anyway():
     eng = _eng()
     with pytest.raises(RuntimeError, match="market closed"):
-        manual_exec.run_action("liquidate", mode="express", client=_Client(is_open=False),
+        manual_exec.run_action("liquidate", mode="normal", client=_Client(is_open=False),
                                broker=_Broker(), db_engine=eng, settings=_Settings, pct=10)
     with eng.connect() as c:                     # refused before planning → no audit row
         assert c.execute(select(db.manual_actions)).all() == []
+    # Express ignores the clock entirely — same closed market, orders go out.
+    res = manual_exec.run_action("liquidate", mode="express", client=_Client(is_open=False),
+                                 broker=_Broker(), db_engine=eng, settings=_Settings, pct=10)
+    assert res["submitted"] == 2
+
+
+def test_single_pass_leave_open_keeps_orders_working():
+    # cancel_leftover=False (express off-hours): unfilled market orders are NOT cancelled at
+    # poll end — they stay queued for the next open, reported as "queued", no pending rows.
+    from engine.execute import PlannedOrder, submit_and_track
+
+    class _SleepyBroker(_Broker):
+        """Orders never fill (market closed); records any cancel attempts."""
+
+        def __init__(self):
+            super().__init__()
+            self.cancelled = []
+
+        def submit_order(self, symbol, qty, side, **kw):
+            od = super().submit_order(symbol, qty, side, **kw)
+            od.update(status="new", filled_qty=0, filled_avg_price=None)
+            return od
+
+        def cancel_order(self, order_id):
+            self.cancelled.append(order_id)
+
+    eng, broker = _eng(), _SleepyBroker()
+    rep = submit_and_track([PlannedOrder("AAPL", "sell", 100, "market", None, 21200.0)],
+                           broker=broker, db_engine=eng, cycle_key="manual-x",
+                           poll_attempts=2, sleep=lambda s: None, cancel_leftover=False)
+    assert broker.cancelled == []                            # left working, not cancelled
+    (line,) = rep.lines
+    assert line["status"] == "queued" and rep.deferred == 0  # no pending_adjustments rolled
 
 
 def test_run_action_records_failure():

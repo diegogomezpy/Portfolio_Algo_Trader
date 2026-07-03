@@ -291,10 +291,12 @@ def execute_plan(plan: dict, mode: str, *, client, broker, db_engine, settings,
         quote_fn = None
         if mode == "normal" and hasattr(client, "latest_nbbo"):
             quote_fn = lambda s: _equity_quote(client, s)   # noqa: E731
+        # Express never cancels its leftover: off-hours market orders stay queued and fill
+        # at the next open — that's the whole point of "express regardless of the clock".
         report = submit_and_track(planned, broker=broker, db_engine=db_engine,
                                   cycle_key=cycle_key, quote=quote_fn, adv={},
                                   ex=settings.execution, market_close=_market_close(client),
-                                  alert=alert)
+                                  alert=alert, cancel_leftover=(mode != "express"))
     return {
         "cycle_key": cycle_key, "mode": mode, "overlay_closed": overlay_closed,
         "submitted": report.submitted if report else 0,
@@ -340,17 +342,20 @@ def run_action(action: str, *, mode: str, client, broker, db_engine, settings,
                **params) -> dict:
     """Plan → journal → execute one manual action; returns the result summary.
 
-    Refuses when the market is closed (unless ``force`` — there is deliberately no UI for
-    that). The leverage action persists its sticky override *before* trading, so even a
-    partially-filled lever-move is honored by the next rebalance.
+    **Normal** mode refuses when the market is closed (the chase needs live quotes).
+    **Express** trades regardless of the clock: market orders are submitted immediately
+    and, off-hours, left queued for the next open (never cancelled — see
+    ``cancel_leftover``). The leverage action persists its sticky override *before*
+    trading, so even a partially-filled lever-move is honored by the next rebalance.
     """
-    if not force:
+    if not force and mode != "express":
         try:
             clk = client.market_clock()
         except Exception as exc:  # noqa: BLE001 — can't read the clock → don't trade blind
             raise RuntimeError(f"market clock unreadable ({exc}) — refusing to trade blind") from exc
         if not clk.get("is_open"):
-            raise RuntimeError(f"market closed — next open {clk.get('next_open')}")
+            raise RuntimeError(f"market closed — next open {clk.get('next_open')} "
+                               f"(express mode trades any time)")
 
     cycle_key = cycle_key or f"manual-{action}-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"
     plan = build_plan(action, client, db_engine, settings, **params)

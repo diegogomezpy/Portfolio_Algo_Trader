@@ -1265,7 +1265,7 @@ function fillsTape(ex){
 
 // ---- Live execution visualizer (Phase 1: run-progress + blotter; auto-surfaces during trading) ----
 function renderExec(ex){
-  const host=$("ov-exec"); if(!host) return;
+  const host=$("x-exec"); if(!host) return;
   if(!ex || !ex.active){ host.style.display="none"; host.innerHTML=""; return; }
   host.style.display="block";
   // Label the option leg by the active overlay: SPY spread overwrite (index) vs per-name calls.
@@ -1357,7 +1357,6 @@ async function loadOverview(){
     return; }
   _navBase = hist || []; _calls = calls || []; _eventsData = (ev && ev.events) || []; _overlay = ov || null;
   paintOverview(s);
-  pollExec();                                            // auto-surface the live execution panel
 }
 
 // ===================== Portfolio — design-doc layout =====================
@@ -1775,6 +1774,7 @@ async function loadExecute(){
   if (!_ovS){ const s = await get("/api/state"); if (s) _ovS = s; }   // held names for the datalist
   renderTicketPanel();
   refreshExecStatus();
+  pollExec();                                  // the live run panel lives on this tab now
   renderManualActions(await get("/api/manual_actions"), "x-history");
   schedulePlan(0);
 }
@@ -1785,11 +1785,19 @@ function setExecSide(s){ EXEC.side = s; EXEC.plan = null; EXEC.planQS = ""; rend
 function setChipVal(id, v){ const el = $(id); if (el){ el.value = v; } EXEC.plan = null; EXEC.planQS = ""; renderTicketPanel(); schedulePlan(0); }
 
 const _XACTIONS = [
-  ["rebalance", "Rebalance", "full engine cycle — targets, spread, equities"],
-  ["liquidate", "Liquidate", "sell a % of every position, trim the spread"],
-  ["leverage", "Leverage", "scale the book to a target gross — sticky"],
-  ["trade", "Single name", "buy $ or sell % of one stock"],
+  ["rebalance", "Rebalance", "full engine cycle — targets, spread, equities",
+   "Runs one full engine cycle: reconcile → fresh targets (ingest + optimizer) → risk gate → close spread → equity trades → write spread → snapshot. Targets are computed at run time, so there is no pre-trade plan — the run panel above narrates as it executes."],
+  ["liquidate", "Liquidate", "sell a % of every position, trim the spread",
+   "Sells the chosen % of every equity position pro-rata and trims the SPY spread by the same fraction (100% closes it, short leg first). Proceeds sit in cash until the next rebalance re-invests."],
+  ["leverage", "Leverage", "scale the book to a target gross — sticky",
+   "Scales every position so gross exposure = target × equity (capped at max_leverage). STICKY: the target becomes the standing leverage parameter for every future rebalance until cleared in Console status. Lever-down also trims the SPY spread proportionally; lever-up leaves the spread for the next overlay pass."],
+  ["trade", "Single name", "buy $ or sell % of one stock",
+   "Buy a dollar amount (sized at the last price) or sell a % of the position (100% exits). A buy outside the current book is flagged off-model in the plan — the next rebalance will likely unwind it."],
 ];
+const _MODE_TIP = "NORMAL: the engine's execution algos — patient limit ladders walking from mid "
+  + "toward the touch, live quotes required, so it only runs during market hours. EXPRESS: market "
+  + "orders sent immediately, any time — off-hours orders queue at the broker and fill at the next "
+  + "open (they are left working, never cancelled).";
 
 function renderTicketPanel(){
   const host = $("x-ticket"); if (!host) return;
@@ -1800,23 +1808,18 @@ function renderTicketPanel(){
                 sym: ($("xSym")||{}).value || pre.symbol || "",
                 usd: ($("xUsd")||{}).value || pre.usd || 5000,
                 spct: ($("xSellPct")||{}).value || pre.pct || 100 };
-  const acts = _XACTIONS.map(([k, l, d]) => `<button class="xact${EXEC.tab===k?" on":""}" onclick="setExecAction('${k}')">
+  const acts = _XACTIONS.map(([k, l, d, tip]) => `<button class="xact${EXEC.tab===k?" on":""}" onclick="setExecAction('${k}')" data-tip="${esc(tip)}">
       <span class="xact-l">${l}</span><span class="xact-d">${d}</span></button>`).join("");
   let form = "";
   if (EXEC.tab === "liquidate"){
     form = `<div class="exm-row"><span class="exm-lbl">Sell</span>
       ${[10,25,50,100].map(v => `<button class="exm-chip${+cur.pct===v?" on":""}" onclick="setChipVal('xPct',${v})">${v}%</button>`).join("")}
       <input id="xPct" class="exm-in" type="number" min="1" max="100" step="1" value="${cur.pct}" oninput="EXEC.plan=null;schedulePlan()">
-      <span class="exm-lbl">% of every position</span></div>
-      <div class="exm-note">Pro-rata across the book; the SPY spread is trimmed by the same fraction
-      (100% closes it). Proceeds sit in cash until the next rebalance re-invests.</div>`;
+      <span class="exm-lbl">% of every position <span class="srcinfo" data-tip="Pro-rata: each position sells the same %. The SPY spread is trimmed by the same fraction, both legs (100% closes it, short leg first). Proceeds sit in cash until the next rebalance re-invests.">ⓘ</span></span></div>`;
   } else if (EXEC.tab === "leverage"){
     form = `<div class="exm-row"><span class="exm-lbl">Target gross</span>
       <input id="xTarget" class="exm-in" type="number" min="0.1" max="${META.leverage_cap||2}" step="0.05" value="${cur.target}" oninput="EXEC.plan=null;schedulePlan()">
-      <span class="exm-lbl">× equity · cap ${(META.leverage_cap||2).toFixed(2)}×</span></div>
-      <div class="exm-note"><b>Sticky:</b> this becomes the standing leverage parameter — every future
-      rebalance sizes to it until you clear the override (see Console status). Lever-down also trims
-      the SPY spread proportionally; lever-up leaves the spread for the next overlay pass.</div>`;
+      <span class="exm-lbl">× equity · cap ${(META.leverage_cap||2).toFixed(2)}× <span class="srcinfo" data-tip="STICKY: this target persists as the standing leverage parameter — every future rebalance sizes to it until you clear the override in Console status. Lever-down trims the SPY spread proportionally; lever-up leaves it for the next overlay pass.">ⓘ</span></span></div>`;
   } else if (EXEC.tab === "trade"){
     form = `<div class="exm-row">
       <span class="xseg">${["buy","sell"].map(s => `<button class="xseg-b${EXEC.side===s?" on":""}" onclick="setExecSide('${s}')">${s.toUpperCase()}</button>`).join("")}</span>
@@ -1825,24 +1828,16 @@ function renderTicketPanel(){
       ${EXEC.side === "buy"
         ? `<div class="exm-row"><span class="exm-lbl">Buy</span><span class="exm-lbl">$</span>
            <input id="xUsd" class="exm-in wide" type="number" min="1" step="500" value="${cur.usd}" oninput="EXEC.plan=null;schedulePlan()">
-           <span class="exm-lbl">notional, sized at the last price</span></div>`
+           <span class="srcinfo" data-tip="Dollar notional, converted to whole shares at the last price. A name outside the current book is flagged off-model in the plan — the next rebalance will likely unwind it.">ⓘ</span></div>`
         : `<div class="exm-row"><span class="exm-lbl">Sell</span>
            ${[25,50,100].map(v => `<button class="exm-chip${+cur.spct===v?" on":""}" onclick="setChipVal('xSellPct',${v})">${v}%</button>`).join("")}
            <input id="xSellPct" class="exm-in" type="number" min="1" max="100" step="1" value="${cur.spct}" oninput="EXEC.plan=null;schedulePlan()">
-           <span class="exm-lbl">% of the position</span></div>`}
-      <div class="exm-note">${EXEC.side === "buy"
-        ? "Buys are dollar-sized. A name outside the book is flagged off-model in the plan — the next rebalance will likely unwind it."
-        : "Sells are % of the current position (100% exits the name)."}</div>`;
-  } else {
-    form = `<div class="exm-note">Runs one full engine cycle — reconcile → targets → risk gate →
-      close spread → equity trades → write spread → snapshot. Targets are computed by the engine at
-      run time, so the plan panel can't show them in advance; the live panel on Overview narrates
-      the run as it executes.</div>`;
+           <span class="exm-lbl">% of the position <span class="srcinfo" data-tip="Percent of the shares currently held — 100% exits the name entirely.">ⓘ</span></span></div>`}`;
   }
   const modes = `<div class="exm-row" style="margin-top:2px"><span class="exm-lbl">Mode</span>
     <span class="xseg">${[["normal","NORMAL"],["express","EXPRESS"]].map(([m,l]) =>
       `<button class="xseg-b${EXEC.mode===m?" on":""}" onclick="setExecMode('${m}')">${l}</button>`).join("")}</span>
-    <span class="exm-lbl">${EXEC.mode === "normal" ? "patient limit chase (the engine's execution algos)" : "market orders — fills now, pays the spread"}</span></div>`;
+    <span class="srcinfo" data-tip="${esc(_MODE_TIP)}">ⓘ</span></div>`;
   host.innerHTML = `<div class="ovhead"><span class="ovhk">Ticket</span><span class="ovhs">choose an action · the plan updates live</span></div>
     <div style="padding:14px 16px;display:flex;flex-direction:column;gap:12px">
       <div class="xacts">${acts}</div>${form}${modes}
@@ -1876,8 +1871,8 @@ async function execPlanNow(){
     <div style="padding:12px 16px">${inner}</div>`; };
   if (EXEC.tab === "rebalance"){
     paint(`<div class="exm-note">No pre-trade plan for the rebalance — the engine computes targets when
-      it runs (fresh ingest → optimizer). Execute is armed directly; watch the live panel for the plan
-      as it unfolds.${EXEC.mode === "express" ? "<br><span class='exm-warn'>▲ express: every equity leg goes out as a market order</span>" : ""}</div>`);
+      it runs (fresh ingest → optimizer). Execute is armed directly; the run panel above narrates the
+      plan as it executes.${EXEC.mode === "express" ? "<br><span class='exm-warn'>▲ express: every equity leg goes out as a market order</span>" : ""}</div>`);
     EXEC.plan = null; armGo(); return;
   }
   const qs = execQS();
@@ -1928,11 +1923,11 @@ async function execRun(){
   if (!r){ $("xMsg").textContent = "failed — backend unreachable"; armGo(); return; }
   if (!r.started){
     $("xMsg").textContent = r.market_closed
-      ? `market closed — next open ${(r.next_open||"").replace("T"," ").slice(0,16)} ET`
+      ? `market closed — next open ${(r.next_open||"").replace("T"," ").slice(0,16)} ET (EXPRESS trades any time)`
       : (r.error || "refused");
     armGo(); return;
   }
-  $("xMsg").textContent = `running (${r.cycle_key}) — watch the live panel on Overview…`;
+  $("xMsg").textContent = `running (${r.cycle_key}) — the run panel above narrates it…`;
   if (EXEC.statusPoll) clearInterval(EXEC.statusPoll);
   EXEC.statusPoll = setInterval(async () => {
     const st = await get("/api/exec/status");
@@ -2026,7 +2021,7 @@ async function _governedTick(){
       if (activeView === "overview") paintOverview(s);   // live repaint (NAV flash, treemap, gauge…)
       else paintPortfolioLive(s); }                      // positions + calls + tape live prices
   }
-  if (activeView === "overview" && now - _lastPoll.exec >= (closed ? _CAD.execClosed : _CAD.exec)) {
+  if (activeView === "execute" && now - _lastPoll.exec >= (closed ? _CAD.execClosed : _CAD.exec)) {
     _lastPoll.exec = now; pollExec();
   }
   if (now - _lastPoll.active >= _CAD.active) { _lastPoll.active = now; loadActive(); }

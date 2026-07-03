@@ -166,10 +166,16 @@ def test_exec_run_token_gate_and_market_gate(monkeypatch):
         def market_clock(self):
             return {"is_open": False, "next_open": "2026-07-06T09:30:00-04:00"}
 
+    # NORMAL needs live quotes → refused when closed; EXPRESS trades any time (orders queue)
     run2 = _route(create_app(eng, client=_Closed([]), live=True), "/api/exec/run")
-    out = run2(action="liquidate", pct=10.0, mode="express", x_exec_token="sekrit")
+    out = run2(action="liquidate", pct=10.0, mode="normal", x_exec_token="sekrit")
     assert out["started"] is False and out.get("market_closed") is True
     assert "next_open" in out
+    monkeypatch.setattr(app_module, "_spawn_manual",
+                        lambda action, mode, params, env, cycle_key: _Proc())
+    out = run2(action="liquidate", pct=10.0, mode="express", x_exec_token="sekrit")
+    assert out["started"] is True                            # express ignores the clock
+    monkeypatch.setitem(app_module._MANUAL, "proc", None)    # don't leak into other tests
 
 
 def test_exec_run_starts_guards_double_start_and_reports_status(monkeypatch):

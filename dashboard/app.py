@@ -811,9 +811,10 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
             return {"started": False, "error": f"unknown mode {mode!r}"}
         if client is None:
             return {"started": False, "error": "dashboard is Postgres-only (no broker client)"}
-        err = _market_gate(client)
-        if err:
-            return {"started": False, **err}
+        if mode == "normal":                # express trades regardless — off-hours orders queue
+            err = _market_gate(client)
+            if err:
+                return {"started": False, **err}
         proc = _MANUAL["proc"]
         if proc is not None and proc.poll() is None:
             return {"started": False, "error": f"a manual {_MANUAL['action']} is already running"}
