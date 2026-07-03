@@ -666,14 +666,22 @@ class AlpacaClient:
             "timeframe": self._enum_str(getattr(history, "timeframe", None)),
         }
 
-    def account_activities(self, activity_types: list[str] | None = None,
-                           date: str | None = None) -> list[dict]:
-        """Return account activities (e.g. ``["OPASN"]`` for option assignments).
+    def account_activities(self, activity_types: list[str] | str | None = None, *,
+                           date: str | None = None, page_size: int = 100) -> list[dict]:
+        """Return account activities — ``["OPASN"]`` for assignments, ``"FEE"`` for fees, etc.
 
         The installed alpaca-py has no account-activities surface, so this calls the REST
-        endpoint ``/v2/account/activities`` directly with the API-key headers. Each activity
-        is lightly normalized to ``{id, activity_type, symbol, qty, side, price, date, raw}``
-        (schemas vary by type, so ``raw`` keeps the full record). ``date`` filters to one day.
+        endpoint ``/v2/account/activities`` directly with the API-key headers. Each record is
+        the **raw Alpaca activity dict** (schemas vary by type — fees carry ``net_amount`` /
+        ``activity_sub_type``) overlaid with the normalized common fields ``{id, activity_type,
+        symbol, qty (float), side, price, date, raw}``, so both raw-shape and normalized
+        consumers read one return type. ``date`` filters to one day; ``page_size`` caps the
+        page (Alpaca max 100).
+
+        NOTE: this class must define ``account_activities`` exactly ONCE — a second ``def``
+        silently shadows the first (Python keeps the last), which is precisely the bug that
+        broke assignment detection (audit 2026-07-02). Guarded by the AST no-duplicate-methods
+        test in tests/unit/test_no_duplicate_methods.py.
 
         Raises:
             AlpacaAPIError: If the request fails.
@@ -682,14 +690,13 @@ class AlpacaClient:
         import urllib.parse
         import urllib.request
 
-        params = {}
+        params = {"page_size": str(min(int(page_size), 100))}   # Alpaca caps page_size at 100
         if activity_types:
-            params["activity_types"] = ",".join(activity_types)
+            types = [activity_types] if isinstance(activity_types, str) else list(activity_types)
+            params["activity_types"] = ",".join(str(t) for t in types)
         if date:
             params["date"] = str(date)
-        url = f"{self._base_url}/v2/account/activities"
-        if params:
-            url += "?" + urllib.parse.urlencode(params)
+        url = f"{self._base_url}/v2/account/activities?" + urllib.parse.urlencode(params)
         req = urllib.request.Request(url, headers={
             "APCA-API-KEY-ID": self._api_key, "APCA-API-SECRET-KEY": self._secret_key})
         try:
@@ -697,7 +704,7 @@ class AlpacaClient:
                 data = json.loads(resp.read())
         except Exception as exc:  # noqa: BLE001 — network / HTTP error
             raise AlpacaAPIError(_NO_SYMBOL, "account_activities", str(exc)) from exc
-        return [self._parse_activity(a) for a in (data or [])]
+        return [{**a, **self._parse_activity(a)} for a in (data or [])]
 
     @staticmethod
     def _parse_activity(a: dict) -> dict:
@@ -825,36 +832,6 @@ class AlpacaClient:
         except APIError as exc:
             raise AlpacaAPIError(_NO_SYMBOL, "get_orders", str(exc)) from exc
         return [self._parse_order(order) for order in orders]
-
-    def account_activities(self, activity_type: str | None = None,
-                           page_size: int = 100) -> list[dict]:
-        """Return account activities (read-only): fills, fees, journals, etc.
-
-        alpaca-py (0.43) doesn't expose this endpoint, so call ``/v2/account/activities`` directly
-        with the stored credentials. ``activity_type`` filters server-side (e.g. ``"FILL"`` or
-        ``"FEE"``); ``None`` returns all recent activity. Returns the most recent ``page_size``
-        items as raw Alpaca activity dicts (each fee carries ``activity_sub_type`` CAT/TAF/REG and a
-        negative ``net_amount``). One page only — enough for the dashboard's recent-cost view.
-
-        Raises:
-            AlpacaAPIError: If the request fails.
-        """
-        import json
-        import urllib.error
-        import urllib.parse
-        import urllib.request
-
-        params = {"page_size": str(min(page_size, 100))}   # Alpaca caps activities page_size at 100
-        if activity_type:
-            params["activity_types"] = activity_type
-        url = f"{self._base_url}/v2/account/activities?{urllib.parse.urlencode(params)}"
-        req = urllib.request.Request(url, headers={
-            "APCA-API-KEY-ID": self._api_key, "APCA-API-SECRET-KEY": self._secret_key})
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                return json.load(resp)
-        except (urllib.error.URLError, ValueError) as exc:
-            raise AlpacaAPIError(_NO_SYMBOL, "account_activities", str(exc)) from exc
 
     def market_clock(self) -> dict:
         """Return Alpaca's market clock.

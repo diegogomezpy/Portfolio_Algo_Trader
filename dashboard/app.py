@@ -433,8 +433,7 @@ def _live_slippage(client, limit: int = 200) -> dict:
 def _live_fees(client, page_size: int = 100) -> dict:
     """Regulatory / broker fees (CAT, TAF, SEC, …) from live Alpaca activities. 100 = Alpaca's
     per-page max; the recent window is plenty for the dashboard's cost view."""
-    return data.fees_from_activities(client.account_activities(activity_type="FEE",
-                                                               page_size=page_size))
+    return data.fees_from_activities(client.account_activities("FEE", page_size=page_size))
 
 
 def _align(closes: dict, dates: list[str]) -> list[float]:
