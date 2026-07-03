@@ -202,15 +202,6 @@
   .heat-yr { font-weight: 600; border-color: var(--line-2, var(--line)); }
   .heat-prov { color: var(--muted); margin-left: 1px; }
 
-  /* covered-call overlay indicator */
-  .ovl { padding: 12px 14px 4px; }
-  .ovl-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
-  .ovl-cov { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: var(--fg); }
-  .ovl-track { height: 7px; border-radius: 4px; background: var(--panel-2); overflow: hidden; border: 1px solid var(--line); }
-  .ovl-track i { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width .4s var(--ease); }
-  .ovl-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 11px; }
-  .ovl-s .ovl-k { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
-  .ovl-s .ovl-v { font-size: 15px; font-weight: 600; margin-top: 2px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
   /* P&L attribution bars */
   .attr-row { display: grid; grid-template-columns: 230px 1fr 150px; align-items: center; gap: 12px; padding: 4px 0; }
@@ -2098,112 +2089,11 @@ function renderFactorTilt(positions, factors){
   $("ftilt").innerHTML = `<div class="ft-wrap">${head}${rows}${foot}</div>`;
 }
 
-function renderGate(s){
-  const g = s.risk_gate_passed, gb = $("gatebar");
-  // A pass is already shown in the status bar — only surface the banner when BLOCKED (it matters).
-  if(g==null || g===true){ gb.style.display="none"; return; }
-  gb.style.display="flex"; gb.className = "gatebar bad";
-  gb.innerHTML = `<span>●</span> Risk gate BLOCKED <span class="reason">${s.risk_gate_reason||""}</span>`;
-}
-
-function renderPositions(s){
-  const rows = s.positions || [];
-  const maxW = Math.max(0.0001, ...rows.map(r=>r.weight||0));
-  $("possub").textContent = s.gross_exposure!=null ? `gross ${usd(s.gross_exposure)}` : "";
-  $("positions").innerHTML = table(rows, [
-    {h:"Symbol", cls:()=>"sym", f:r=>symCell(r.symbol, "stock")},
-    {h:"Qty", tip:"Shares held.", f:r=>fmt(r.qty)},
-    {h:"Last", tip:"Live last trade price (updates every second).", f:r=>r.last_price!=null?usd2(r.last_price):"–"},
-    {h:"Day %", tip:"Change vs the prior day's close (live).",
-      cls:r=>r.day_pct==null?"mut":sgn(r.day_pct), f:r=>r.day_pct==null?"–":spct(r.day_pct)},
-    {h:"Trend", tip:"Recent price path — ~7 sessions of hourly bars, extended live.", f:r=>miniSpark(_px[r.symbol])},
-    {h:"Mkt value", tip:"Position market value = qty × live price.", f:r=>usd(r.market_value)},
-    {h:"Allocation", tip:"Current weight (bar) vs target (tick). Weight = market value ÷ NAV.",
-      f:r=>allocBar(r.weight, r.target_weight, maxW)},
-    {h:"Δ vs tgt", tip:"Current weight minus target. Green = overweight, red = underweight.",
-      cls:r=>sgn((r.weight||0)-(r.target_weight||0)), f:r=>spct((r.weight||0)-(r.target_weight||0))},
-  ]);
-}
-
 // OCC option symbols end in a 6-digit expiry + C/P + 8-digit strike (e.g. AAPL260717C00210000).
 function _isOpt(sym){ return /\d{6}[CP]\d{8}$/.test(String(sym||"")); }
 
-// Covered-call overlay indicator: a status strip above the calls table showing how much of the
-// coverable book (holdings of ≥100 shares) is actually written, by notional, plus premium and the
-// nearest expiry. Overlay state is inferred from the data — no separate config flag exists.
-function overlayIndicator(s, calls){
-  const px = {};
-  (s.positions||[]).forEach(r => { px[r.symbol] = r.last_price!=null ? r.last_price : (r.qty ? r.market_value/r.qty : null); });
-  const held = {}; (s.positions||[]).forEach(r => { if(!_isOpt(r.symbol)) held[r.symbol]=r.qty||0; });
-  const coverableNames = Object.keys(held).filter(sym => held[sym] >= 100);
-  let eligNotional = 0; coverableNames.forEach(sym => { eligNotional += held[sym]*(px[sym]||0); });
-  const covUnders = new Set();
-  let covNotional = 0;
-  (calls||[]).forEach(c => { const u=c.underlying; covUnders.add(u);
-    const shares = Math.min((c.contracts||0)*100, held[u]||(c.contracts||0)*100);
-    covNotional += shares*(px[u]||0); });
-  const cov = eligNotional ? Math.min(1, covNotional/eligNotional) : null;
-  const nCov = covUnders.size, nCoverable = coverableNames.length;
-  const dtes = (calls||[]).map(c=>dte(c.expiration)).filter(d=>d!=null);
-  const nearest = dtes.length ? Math.min(...dtes) : null;
-  const deltas = (calls||[]).map(c=>c.delta).filter(d=>d!=null);
-  const avgDelta = deltas.length ? deltas.reduce((a,b)=>a+b,0)/deltas.length : null;
-  // status: active (calls written) / idle (coverable names but nothing written) / n/a (nothing ≥100sh)
-  const state = (calls&&calls.length) ? {cls:"ok",txt:"Active"} : nCoverable ? {cls:"warn",txt:"Idle — no calls written"} : {cls:"mut",txt:"n/a — no ≥100-share holdings"};
-  const covPct = cov==null ? "–" : pct(cov);
-  const stat = (label,val,cls)=>`<div class="ovl-s"><div class="ovl-k">${label}</div><div class="ovl-v ${cls||''}">${val}</div></div>`;
-  return `<div class="ovl">
-    <div class="ovl-head">
-      <span class="se-pill ${state.cls==='ok'?'ok':state.cls==='warn'?'warn':'neutral'}" style="font-size:10.5px">Overlay · ${state.txt}</span>
-      <span class="ovl-cov" data-tip="Covered notional ÷ coverable notional. Coverable = holdings of ≥100 shares; covered = the share-equivalent of written calls, at live prices.">${covPct} covered</span>
-    </div>
-    <div class="ovl-track" data-tip="Share of the coverable book (by notional) currently written."><i style="width:${cov==null?0:(cov*100).toFixed(0)}%"></i></div>
-    <div class="ovl-row">
-      ${stat("Names written", `${nCov} / ${nCoverable}`)}
-      ${stat("Premium collected", usd(s.premium_collected), "pos")}
-      ${stat("Nearest expiry", nearest==null?"–":nearest+"d", nearest!=null&&nearest<=7?"warn":"")}
-      ${stat("Avg delta", avgDelta==null?"–":avgDelta.toFixed(2))}
-    </div>
-  </div>`;
-}
-
-function renderCalls(s, calls){
-  const totShares = (s.positions||[]).reduce((a,r)=>a+(r.qty||0),0);
-  const coveredShares = (calls||[]).reduce((a,r)=>a+(r.contracts||0)*100,0);
-  const coverable = (s.positions||[]).filter(r=>(r.qty||0)>=100).length;
-  $("callssub").innerHTML = (calls&&calls.length)
-    ? `${calls.length} open · ${fmt(coveredShares)} sh covered${totShares?` (${pct(coveredShares/totShares)})`:""}`
-    : (coverable?`0 open · ${coverable} names coverable`:"");
-  $("overlayind").innerHTML = overlayIndicator(s, calls);
-  const px = {};
-  (s.positions||[]).forEach(r => { px[r.symbol] = r.last_price!=null ? r.last_price : (r.qty ? r.market_value/r.qty : null); });
-  $("calls").innerHTML = table(calls, [
-    {h:"Under.", cls:()=>"sym", f:r=>symCell(r.underlying, "call")},
-    {h:"Under. px", tip:"Live price of the underlying (updates every second). Watch it vs the strike.",
-      f:r=>usd2(px[r.underlying])},
-    {h:"Trend", tip:"Recent price path of the underlying — ~7 sessions of hourly bars, extended live.", f:r=>miniSpark(_px[r.underlying])},
-    {h:"Contr.", tip:"Contracts written. Each contract = 100 shares of coverage.", f:r=>fmt(r.contracts)},
-    {h:"Strike", tip:"Strike price — shares can be called away above this.", f:r=>usd2(r.strike)},
-    {h:"Expiry", tip:"Option expiration date.", f:r=>r.expiration||"–"},
-    {h:"DTE", tip:"Days to expiration (amber ≤ 7 days).",
-      cls:r=>{const d=dte(r.expiration); return d!=null&&d<=7?"warn":"";}, f:r=>{const d=dte(r.expiration); return d==null?"–":d+"d";}},
-    {h:"Δ / P(assign)", tip:"Option delta ≈ probability of finishing in-the-money (assignment). Target 0.30.",
-      f:r=>r.delta==null?"–":r.delta.toFixed(2)},
-    {h:"Premium", tip:"Premium collected for writing the call.", cls:()=>"pos", f:r=>usd(r.premium)},
-  ]);
-}
-
-function renderFactors(factors){
-  $("factors").innerHTML = table(factors, [
-    {h:"Symbol", cls:()=>"sym", f:r=>symCell(r.symbol)},
-    {h:"Composite", tip:"Blended factor score — equal-weight Quality/Value/Low-Beta/Low-Vol. Higher = more attractive.",
-      cls:r=>sgn(r.composite), f:r=>r.composite==null?"–":r.composite.toFixed(2)},
-    {h:"Qual", tip:"Quality factor z-score (profitability, balance-sheet strength).", cls:r=>sgn(r.quality), f:r=>r.quality==null?"–":r.quality.toFixed(2)},
-    {h:"Val", tip:"Value factor z-score (cheapness on fundamentals).", cls:r=>sgn(r.value), f:r=>r.value==null?"–":r.value.toFixed(2)},
-    {h:"Beta", tip:"Low-Beta factor z-score (trailing-252d β vs SPY; lower beta scores higher).", cls:r=>sgn(r.beta), f:r=>r.beta==null?"–":r.beta.toFixed(2)},
-    {h:"LowVol", tip:"Low-volatility factor z-score (lower realized vol scores higher).", cls:r=>sgn(r.lowvol), f:r=>r.lowvol==null?"–":r.lowvol.toFixed(2)},
-  ]);
-}
+// (renderGate/renderPositions/overlayIndicator/renderCalls/renderFactors removed in the
+// 2026-07 audit — dead since the Overview/Portfolio overhaul replaced their panels.)
 
 function renderOrders(orders){
   const G="display:grid;grid-template-columns:2fr .7fr .7fr 1fr .9fr;gap:10px;align-items:center";

@@ -264,14 +264,11 @@ def submit_and_track(
     poll_attempts: int = 30,
     poll_interval_s: float = 2.0,
     sleep: Callable[[float], None] = time.sleep,
-    touch: Callable[[str, str], float] | None = None,
     quote: Callable[[str], tuple] | None = None,
     adv: Mapping[str, float] | None = None,
     ex=None,
     now: Callable[[], datetime] | None = None,
     market_close: datetime | None = None,
-    close_buffer_s: float = 300.0,
-    max_rounds: int = 40,
     order_state: Callable[[str], dict] | None = None,
     alert: Callable[[str], None] | None = None,
 ) -> ExecReport:
@@ -279,15 +276,14 @@ def submit_and_track(
 
     Two modes:
 
-    * **Single pass** (``touch is None``) — submit once (idempotent ``client_order_id =
+    * **Tiered** (``quote`` provided — the production path, docs/EXECUTION.md §5–§8): each
+      round prices every still-unfilled name by its liquidity tier and walks the patient
+      ladder; residual at the close → auction or cross-day.
+    * **Single pass** (``quote is None``) — submit once (idempotent ``client_order_id =
       "{cycle}:{symbol}:{side}"``), poll up to ``poll_attempts``, cancel any leftover, roll the
-      unfilled residual to ``pending_adjustments``. (Unchanged legacy behaviour.)
-    * **Chase** (``touch`` provided) — each round re-prices every still-unfilled name to the
-      **touch** (``touch(symbol, side)`` → ask for a buy / bid for a sell) and re-submits the
-      residual, polling each round, repeating until the names fill or the session comes within
-      ``close_buffer_s`` of ``market_close``; then one final **market** order guarantees the
-      residual. Anything still unfilled (e.g. a halt) rolls to ``pending_adjustments`` for the
-      cross-day retry. Each round uses a fresh ``client_order_id`` ``…:{side}:r{n}`` (final ``…:final``).
+      unfilled residual to ``pending_adjustments``. The no-quote fallback (a client without an
+      NBBO surface). The old touch-chase middle mode was removed in the 2026-07 audit (no
+      production caller since the tiered redesign).
 
     ``pending`` carries the planner's sub-min-trade deltas, persisted alongside. ``sleep`` is
     injectable so tests run instantly. ``ExecReport.lines`` lists each name's outcome.
@@ -306,15 +302,9 @@ def submit_and_track(
                        pending=pending, out=out, quote=quote, adv=adv or {}, ex=ex, read=read,
                        now=now or (lambda: datetime.now(timezone.utc)), market_close=market_close,
                        sleep=sleep, alert=alert)
-    if touch is None:
-        return _single_pass(orders, broker=broker, db_engine=db_engine, cycle_key=cycle_key,
-                            pending=pending, out=out, poll_attempts=poll_attempts,
-                            poll_interval_s=poll_interval_s, sleep=sleep, read=read, alert=alert)
-    return _chase(orders, broker=broker, db_engine=db_engine, cycle_key=cycle_key,
-                  pending=pending, out=out, poll_attempts=poll_attempts,
-                  poll_interval_s=poll_interval_s, sleep=sleep, touch=touch,
-                  now=now or (lambda: datetime.now(timezone.utc)), market_close=market_close,
-                  close_buffer_s=close_buffer_s, max_rounds=max_rounds, read=read, alert=alert)
+    return _single_pass(orders, broker=broker, db_engine=db_engine, cycle_key=cycle_key,
+                        pending=pending, out=out, poll_attempts=poll_attempts,
+                        poll_interval_s=poll_interval_s, sleep=sleep, read=read, alert=alert)
 
 
 def _finalize(out, orders, *, submitted, rejected, pending, db_engine, cycle_key) -> ExecReport:
@@ -606,104 +596,6 @@ def _single_pass(orders, *, broker, db_engine, cycle_key, pending, out,
     return _finalize(out, orders, submitted=len(live), rejected=rejected, pending=pending,
                      db_engine=db_engine, cycle_key=cycle_key)
 
-
-def _chase(orders, *, broker, db_engine, cycle_key, pending, out, poll_attempts,
-           poll_interval_s, sleep, touch, now, market_close, close_buffer_s, max_rounds,
-           read, alert) -> ExecReport:
-    by_sym = {o.symbol: o for o in orders}
-    active = {o.symbol for o in orders}
-    submitted_n = 0
-    rejected = 0
-
-    def _round(tag: str, *, force_market: bool) -> None:
-        nonlocal submitted_n, rejected
-        live: list[tuple[str, str]] = []
-        for sym in list(active):
-            o = by_sym[sym]
-            residual = o.qty - out[sym]["filled"]
-            if residual <= 0:
-                active.discard(sym); continue
-            if force_market or o.order_type == "market":
-                otype, lp = "market", None
-            else:
-                try:
-                    lp, otype = round(float(touch(sym, o.side)), 2), "limit"
-                except AlpacaAPIError as exc:           # can't quote → take it market this round
-                    log.warning("touch quote failed; using market", extra={"symbol": sym, "error": str(exc)})
-                    otype, lp = "market", None
-            coid = f"{cycle_key}:{sym}:{o.side}:{tag}"
-            try:
-                resp = broker.submit_order(sym, residual, o.side, order_type=otype,
-                                           limit_price=lp, client_order_id=coid)
-            except AlpacaAPIError as exc:
-                rejected += 1
-                out[sym].update(status="rejected", reason=f"rejected: {exc}")
-                pending.append({"symbol": sym, "side": o.side, "delta_usd": None,
-                                "qty": residual, "reason": f"rejected: {exc}"})
-                log.error("order rejected; deferring", extra={"symbol": sym, "error": str(exc)})
-                if alert:
-                    alert(f"order rejected {sym} {o.side} {residual}: {exc}")
-                active.discard(sym); continue
-            submitted_n += 1
-            _upsert_order(db_engine, cycle_key, resp)
-            live.append((resp["id"], sym))
-
-        open_ids = {oid for oid, _ in live}
-        for _ in range(poll_attempts):
-            if not open_ids:
-                break
-            sleep(poll_interval_s)
-            for oid, sym in live:
-                if oid not in open_ids:
-                    continue
-                try:
-                    st = read(oid)
-                except AlpacaAPIError as exc:
-                    log.warning("poll read failed; will retry next pass", extra={"id": oid, "error": str(exc)})
-                    continue
-                if st is None:
-                    continue
-                _upsert_order(db_engine, cycle_key, st)
-                if st["status"] in _TERMINAL:
-                    open_ids.discard(oid)
-
-        for oid, sym in live:
-            if oid in open_ids:
-                try:
-                    broker.cancel_order(oid)
-                except AlpacaAPIError as exc:
-                    log.warning("cancel failed", extra={"id": oid, "error": str(exc)})
-            try:
-                st = read(oid)
-            except AlpacaAPIError as exc:
-                log.warning("round-end read failed; leaving to reconcile", extra={"id": oid, "error": str(exc)})
-                continue
-            if st is None:
-                continue
-            _upsert_order(db_engine, cycle_key, st)
-            fq = int(st.get("filled_qty") or 0)
-            if fq > 0:
-                _record_fill(db_engine, st)
-                out[sym]["filled"] += fq
-            if out[sym]["filled"] >= by_sym[sym].qty:
-                active.discard(sym)
-
-    rnd = 0
-    while active and rnd < max_rounds:
-        if market_close is not None and now() >= market_close - timedelta(seconds=close_buffer_s):
-            break
-        rnd += 1
-        _round(f"r{rnd}", force_market=False)
-    if active:                                          # final market order guarantees the residual
-        _round("final", force_market=True)
-
-    for sym in active:
-        residual = by_sym[sym].qty - out[sym]["filled"]
-        if residual > 0:
-            pending.append({"symbol": sym, "side": by_sym[sym].side, "delta_usd": None,
-                            "qty": residual, "reason": "unfilled after chase + market order"})
-    return _finalize(out, orders, submitted=submitted_n, rejected=rejected, pending=pending,
-                     db_engine=db_engine, cycle_key=cycle_key)
 
 
 # --- DB helpers (lazy sqlalchemy import, like factors.write_factor_scores) ----------- #

@@ -138,12 +138,6 @@ def compute_targets(settings, as_of: date, *, db_engine=None,
 # ====================================================================== #
 # Orchestrator
 # ====================================================================== #
-def _touch_price(client, sym: str, side: str) -> float:
-    """The touch for a chase order: lift the ask on a buy, hit the bid on a sell."""
-    bid, ask = client.latest_nbbo(sym)
-    return ask if side == "buy" else bid
-
-
 def _equity_quote(client, sym: str):
     """``(bid, ask, trade)`` for the tiered executor's pricing — tolerant of a missing side or a
     read hiccup (returns ``None`` for whatever it can't fetch; the pricer degrades gracefully)."""
@@ -160,7 +154,7 @@ def _equity_quote(client, sym: str):
 
 def _option_touch(client, option_symbol: str, side: str):
     """The touch for chasing an option order: hit the bid to sell-to-open, lift the ask to
-    buy-to-close (mirrors :func:`_touch_price` on the option NBBO)."""
+    buy-to-close (the option-NBBO touch)."""
     bid, ask = client.latest_option_quote(option_symbol)
     return ask if side == "buy" else bid
 

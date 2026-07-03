@@ -19,10 +19,10 @@ hit rate, mean IC and its t-stat, and the per-quintile return ladder (which shou
 roughly monotonic top-to-bottom).
 
 Date range is bounded to the free IEX history floor (~2020-07-27, DECISIONS D21); with
-a 252-day momentum/vol burn-in the first scorable month is ~mid-2021. The price panel
+a 252-day beta/vol burn-in the first scorable month is ~mid-2021. The price panel
 and the fundamentals frame are loaded once and reused across every month.
 
-Look-ahead safety: momentum/vol use only prices up to the scoring date, and
+Look-ahead safety: beta/vol use only prices up to the scoring date, and
 fundamentals are lagged ``settings.factors.report_lag_days`` past quarter-end
 (``engine.factors.point_in_time_fundamentals``). Forward returns are strictly
 out-of-sample relative to the scores that rank on them.

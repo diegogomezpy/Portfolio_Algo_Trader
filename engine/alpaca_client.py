@@ -22,19 +22,19 @@ The book runs on Alpaca **paper** through go-live (BUILD_ORDER Phase 7).
 Paper vs live follows ``ALPACA_BASE_URL`` via ``engine.config.is_paper_env`` —
 an unset env defaults to paper, the safe side.
 
-It owns four SDK clients, each constructed once: a ``TradingClient``
+It owns three SDK clients, each constructed once: a ``TradingClient``
 (account/asset/order reads), a ``StockHistoricalDataClient``
-(quotes/trades/bars/snapshots), a ``CorporateActionsClient``
-(dividends/splits, and the earnings-date sourcing behind the D16 close-
-before-earnings policy), and an ``OptionHistoricalDataClient`` (option
-chains/quotes for the D3/D4 covered call overlay). No retry logic — one
+(quotes/trades/bars), and an ``OptionHistoricalDataClient`` (option
+chains/quotes for the covered-call overlay). Unused research surfaces
+(portfolio history, corporate actions, snapshots, ETB, per-asset info) were
+removed in the 2026-07 audit — restore from git history if a phase needs one. No retry logic — one
 attempt per call; the scheduler retries at the stage level (3x exponential
 backoff per ARCHITECTURE).
 
 Normalization is tiered: hot-path data (quotes, trades, bars, positions,
-account, snapshot) is fully typed; research/discovery endpoints (orders,
-asset lists, calendar, portfolio history, corporate actions, option chains)
-are validated at the top level and returned as lightly-normalized structures.
+account) is fully typed; discovery endpoints (orders, asset lists, calendar,
+option chains) are validated at the top level and returned as
+lightly-normalized structures.
 """
 
 from __future__ import annotations
@@ -46,18 +46,14 @@ from typing import Any, Iterable
 from alpaca.common.exceptions import APIError
 from alpaca.data.enums import DataFeed
 from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.historical.corporate_actions import CorporateActionsClient
 from alpaca.data.historical.option import OptionHistoricalDataClient
 from alpaca.data.requests import (
-    CorporateActionsRequest,
     OptionChainRequest,
     OptionLatestQuoteRequest,
     StockBarsRequest,
-    StockLatestBarRequest,
     StockLatestQuoteRequest,
     StockLatestTradeRequest,
     StockQuotesRequest,
-    StockSnapshotRequest,
     StockTradesRequest,
 )
 from alpaca.data.timeframe import TimeFrame
@@ -67,7 +63,6 @@ from alpaca.trading.requests import (
     GetAssetsRequest,
     GetCalendarRequest,
     GetOrdersRequest,
-    GetPortfolioHistoryRequest,
 )
 
 
@@ -157,9 +152,8 @@ class AlpacaClient:
     """Read client for the Alpaca **paper** trading and market-data APIs.
 
     Owns one :class:`TradingClient`, one :class:`StockHistoricalDataClient`,
-    one :class:`CorporateActionsClient`, and one
-    :class:`OptionHistoricalDataClient`, all created at construction time and
-    reused for every call. Every response is validated before any field is
+    and one :class:`OptionHistoricalDataClient`, all created at construction
+    time and reused for every call. Every response is validated before any field is
     accessed.
     """
 
@@ -197,7 +191,6 @@ class AlpacaClient:
         from engine.config import is_paper_env
         self._trading = TradingClient(api_key, secret_key, paper=is_paper_env())
         self._data = StockHistoricalDataClient(api_key, secret_key)
-        self._corp = CorporateActionsClient(api_key, secret_key)
         # Option chain/quote reads for the D3/D4 covered call overlay.
         self._option_data = OptionHistoricalDataClient(api_key, secret_key)
         # Kept for the direct-REST account-activities read (the SDK 0.43 has no
@@ -305,106 +298,8 @@ class AlpacaClient:
             )
         return float(price)
 
-    def latest_bar(self, symbol: str) -> dict:
-        """Return the most recent bar for ``symbol``.
 
-        Normalised to ``{time, open, high, low, close, volume}``.
 
-        Raises:
-            AlpacaAPIError: If the request fails.
-            AlpacaResponseError: If the response is missing the symbol or a
-                bar field.
-        """
-        request = StockLatestBarRequest(symbol_or_symbols=symbol, feed=self.feed)
-        try:
-            result = self._data.get_stock_latest_bar(request)
-        except APIError as exc:
-            raise AlpacaAPIError(symbol, "latest_bar", str(exc)) from exc
-        return self._parse_bar(self._extract(result, symbol, "latest_bar"), symbol)
-
-    def snapshot(self, symbol: str) -> dict:
-        """Return a one-call market snapshot for ``symbol``.
-
-        Combines latest trade, latest quote, and minute/daily/prev-daily
-        bars. Normalised to::
-
-            {
-                "symbol": str,
-                "latest_trade_px": float | None,
-                "ask_px": float | None,
-                "bid_px": float | None,
-                "minute_bar": dict | None,
-                "daily_bar": dict | None,
-                "prev_daily_bar": dict | None,
-            }
-
-        Sub-fields are ``None`` when the venue omits them (common off-hours).
-
-        Raises:
-            AlpacaAPIError: If the request fails.
-            AlpacaResponseError: If the response is missing the symbol.
-        """
-        request = StockSnapshotRequest(symbol_or_symbols=symbol, feed=self.feed)
-        try:
-            result = self._data.get_stock_snapshot(request)
-        except APIError as exc:
-            raise AlpacaAPIError(symbol, "snapshot", str(exc)) from exc
-
-        snap = self._extract(result, symbol, "snapshot")
-        trade = getattr(snap, "latest_trade", None)
-        quote = getattr(snap, "latest_quote", None)
-        return {
-            "symbol": symbol,
-            "latest_trade_px": self._opt_float(getattr(trade, "price", None)) if trade else None,
-            "ask_px": self._opt_float(getattr(quote, "ask_price", None)) if quote else None,
-            "bid_px": self._opt_float(getattr(quote, "bid_price", None)) if quote else None,
-            "minute_bar": self._opt_bar(getattr(snap, "minute_bar", None)),
-            "daily_bar": self._opt_bar(getattr(snap, "daily_bar", None)),
-            "prev_daily_bar": self._opt_bar(getattr(snap, "previous_daily_bar", None)),
-        }
-
-    def snapshots(self, symbols: list[str]) -> dict[str, dict]:
-        """Return market snapshots for many ``symbols`` in one request.
-
-        The batched sibling of :meth:`snapshot` — the SDK fetches every
-        symbol's latest trade and quote in a single call, which is the
-        efficient way to read prices/spreads for a whole candidate set (e.g.
-        universe screening, or the monitor reading many position quotes).
-
-        Returns a dict keyed by symbol; each value is::
-
-            {"symbol": str, "latest_trade_px": float | None,
-             "ask_px": float | None, "bid_px": float | None}
-
-        Symbols the venue returns no data for are simply absent from the
-        result. An empty ``symbols`` list returns ``{}`` without a request.
-
-        Raises:
-            AlpacaAPIError: If the request fails.
-        """
-        if not symbols:
-            return {}
-        label = ",".join(symbols)
-        request = StockSnapshotRequest(symbol_or_symbols=list(symbols), feed=self.feed)
-        try:
-            result = self._data.get_stock_snapshot(request)
-        except APIError as exc:
-            raise AlpacaAPIError(label, "snapshots", str(exc)) from exc
-
-        items = result.items() if isinstance(result, dict) else []
-        out: dict[str, dict] = {}
-        for symbol, snap in items:
-            if snap is None:
-                continue
-            trade = getattr(snap, "latest_trade", None)
-            quote = getattr(snap, "latest_quote", None)
-            out[str(symbol)] = {
-                "symbol": str(symbol),
-                "latest_trade_px": self._opt_float(getattr(trade, "price", None)) if trade else None,
-                "ask_px": self._opt_float(getattr(quote, "ask_price", None)) if quote else None,
-                "bid_px": self._opt_float(getattr(quote, "bid_price", None)) if quote else None,
-            }
-        return out
 
     def bars(
         self,
@@ -597,28 +492,6 @@ class AlpacaClient:
             "account_blocked": bool(getattr(acct, "account_blocked", False)),
         }
 
-    def get_open_position(self, symbol: str) -> dict | None:
-        """Return the current open position for ``symbol``, or ``None``.
-
-        ``None`` (not an error) when no position exists. Normalised to::
-
-            {"symbol": str, "qty": float, "avg_entry_px": float,
-             "market_value": float, "unrealized_pl": float, "asset_class": str | None}
-
-        ``qty`` is signed: positive for long, negative for short. ``asset_class`` (e.g.
-        ``"us_equity"`` / ``"us_option"``) lets callers split equity vs option positions.
-
-        Raises:
-            AlpacaAPIError: On any error other than "no position".
-            AlpacaResponseError: If the position is missing an expected field.
-        """
-        try:
-            position = self._trading.get_open_position(symbol)
-        except APIError as exc:
-            if self._is_not_found(exc):
-                return None
-            raise AlpacaAPIError(symbol, "get_open_position", str(exc)) from exc
-        return self._parse_position(position, symbol)
 
     def all_positions(self) -> list[dict]:
         """Return every open position on the account.
@@ -638,31 +511,6 @@ class AlpacaClient:
             for p in positions
         ]
 
-    def portfolio_history(self, period: str = "1M", timeframe: str | None = None) -> dict:
-        """Return the account equity curve from Alpaca's books.
-
-        ``period`` e.g. ``"1D"``, ``"1M"``, ``"1A"``. Normalised to parallel
-        lists plus ``base_value`` and ``timeframe``. This is the broker's
-        view, useful for reconciliation against the strategy's own ledger.
-
-        Raises:
-            AlpacaAPIError: If the request fails.
-            AlpacaResponseError: If core series are absent.
-        """
-        request = GetPortfolioHistoryRequest(period=period, timeframe=timeframe)
-        try:
-            history = self._trading.get_portfolio_history(request)
-        except APIError as exc:
-            raise AlpacaAPIError(_NO_SYMBOL, "portfolio_history", str(exc)) from exc
-        self._require_attrs(history, ("timestamp", "equity"), _NO_SYMBOL, "portfolio_history")
-        return {
-            "timestamp": list(getattr(history, "timestamp", []) or []),
-            "equity": [self._opt_float(v) for v in (getattr(history, "equity", []) or [])],
-            "profit_loss": [self._opt_float(v) for v in (getattr(history, "profit_loss", []) or [])],
-            "profit_loss_pct": [self._opt_float(v) for v in (getattr(history, "profit_loss_pct", []) or [])],
-            "base_value": self._opt_float(getattr(history, "base_value", None)),
-            "timeframe": self._enum_str(getattr(history, "timeframe", None)),
-        }
 
     def account_activities(self, activity_types: list[str] | str | None = None, *,
                            date: str | None = None, page_size: int = 100) -> list[dict]:
@@ -721,48 +569,7 @@ class AlpacaClient:
     # ================================================================== #
     # Asset / order / calendar / corporate-action reads (research)
     # ================================================================== #
-    def is_etb(self, symbol: str) -> bool:
-        """Return whether ``symbol`` is easy-to-borrow on Alpaca.
 
-        Not used by the long-only strategy (it never borrows); kept for
-        asset diligence and parity with the asset surface. A non-existent
-        symbol raises rather than returning ``False``.
-
-        Raises:
-            AlpacaAPIError: If the asset does not exist or the request fails.
-            AlpacaResponseError: If the asset is missing the ETB flag.
-        """
-        asset = self._get_asset(symbol, "is_etb")
-        etb = getattr(asset, "easy_to_borrow", None)
-        if etb is None:
-            raise AlpacaResponseError(
-                symbol, "is_etb", ("easy_to_borrow",), self._obj_fields(asset)
-            )
-        return bool(etb)
-
-    def asset_info(self, symbol: str) -> dict:
-        """Return basic asset information for ``symbol``.
-
-        Normalised to::
-
-            {"symbol": str, "name": str, "tradable": bool,
-             "shortable": bool, "easy_to_borrow": bool,
-             "marginable": bool, "fractionable": bool}
-
-        Used for universe research and diligence; not called on the hot path.
-
-        Raises:
-            AlpacaAPIError: If the asset does not exist or the request fails.
-            AlpacaResponseError: If the asset is missing an expected field.
-        """
-        asset = self._get_asset(symbol, "asset_info")
-        self._require_attrs(
-            asset,
-            ("symbol", "tradable", "shortable", "easy_to_borrow", "marginable", "fractionable"),
-            symbol,
-            "asset_info",
-        )
-        return self._parse_asset(asset)
 
     def list_assets(
         self,
@@ -881,51 +688,6 @@ class AlpacaClient:
             for day in calendar
         ]
 
-    def corporate_actions(
-        self,
-        symbols: list[str],
-        start: str,
-        end: str,
-        types: list[str] | None = None,
-    ) -> dict:
-        """Return corporate actions (dividends, splits, ...) for ``symbols``.
-
-        Price pulls already use ``adjustment='all'``, so this is for explicit
-        dividend/split awareness and audit, and for sourcing earnings dates
-        behind the D16 close-before-earnings policy. ISO date strings in;
-        returns the venue's structure keyed by action type (e.g.
-        ``cash_dividends``, ``forward_splits``).
-
-        Raises:
-            AlpacaAPIError: If the request fails.
-            AlpacaResponseError: If the response is not a mapping.
-            ValueError: If ``start``/``end`` are not ISO dates.
-        """
-        label = ",".join(symbols) if symbols else _NO_SYMBOL
-        request = CorporateActionsRequest(
-            symbols=symbols,
-            start=self._parse_date(start),
-            end=self._parse_date(end),
-            types=types,
-        )
-        try:
-            result = self._corp.get_corporate_actions(request)
-        except APIError as exc:
-            raise AlpacaAPIError(label, "corporate_actions", str(exc)) from exc
-        data = getattr(result, "data", result)
-        if not isinstance(data, dict):
-            raise AlpacaResponseError(
-                label, "corporate_actions", ("<mapping>",), (type(data).__name__,)
-            )
-        # Flatten SDK record objects to plain dicts so nothing SDK-shaped
-        # leaks past this layer (records have different schemas per action
-        # type, so this is structural rather than field-by-field).
-        return {
-            str(action_type): [self._to_plain(record) for record in records]
-            if isinstance(records, list)
-            else records
-            for action_type, records in data.items()
-        }
 
     def option_chain(
         self,
@@ -1000,12 +762,6 @@ class AlpacaClient:
     # ================================================================== #
     # Internal helpers
     # ================================================================== #
-    def _get_asset(self, symbol: str, method: str) -> Any:
-        """Fetch an asset, converting Alpaca errors to :class:`AlpacaAPIError`."""
-        try:
-            return self._trading.get_asset(symbol)
-        except APIError as exc:
-            raise AlpacaAPIError(symbol, method, str(exc)) from exc
 
     def _parse_position(self, position: Any, symbol: str) -> dict:
         """Normalise one position object to the documented dict shape."""
@@ -1058,9 +814,6 @@ class AlpacaClient:
         )
         return self._bar_to_dict(bar)
 
-    def _opt_bar(self, bar: Any) -> dict | None:
-        """Normalise a possibly-absent bar (snapshot sub-fields)."""
-        return None if bar is None else self._bar_to_dict(bar)
 
     def _bar_to_dict(self, bar: Any) -> dict:
         """Normalise a bar object without validation (None-safe fields)."""
