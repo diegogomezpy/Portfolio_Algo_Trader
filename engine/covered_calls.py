@@ -613,8 +613,23 @@ def index_overwrite_legs(client, market: str = "SPY") -> tuple[list[dict], list[
     return shorts, longs
 
 
+def _scale_legs(legs: list[dict], fraction: float) -> list[dict]:
+    """Scale each leg position's contract count to ``round(|qty| × fraction)``, sign preserved.
+
+    Equal-sized legs stay balanced under the same rounding (7 short / 7 long at 0.25 → 2 / 2),
+    so a partial close can't leave the spread lopsided. Legs that round to zero are dropped.
+    """
+    out = []
+    for p in legs:
+        n = int(round(abs(float(p.get("qty", 0))) * fraction))
+        if n >= 1:
+            out.append({**p, "qty": (-n if float(p["qty"]) < 0 else n)})
+    return out
+
+
 def close_index_overwrite(client, broker, db_engine, *, as_of: date | None = None,
-                          market: str = "SPY", chase: OptionChase | None = None, alert=None):
+                          market: str = "SPY", chase: OptionChase | None = None, alert=None,
+                          fraction: float = 1.0):
     """Close the SPY call-spread overwrite — **buy-to-close the short leg FIRST, then
     sell-to-close the long wing**.
 
@@ -624,8 +639,13 @@ def close_index_overwrite(client, broker, db_engine, *, as_of: date | None = Non
     small residual (chases the bid, also swept at market so a stale quote can't strand it).
     Both legs log ``options_lifecycle`` rows on real fills — the buy negative (cash out), the
     sell positive (cash in). Returns the filled orders across both legs.
+
+    ``fraction`` < 1 closes that proportion of each leg (rounded, both legs identically) — the
+    execution console's partial liquidation / lever-down trim. Default 1.0 = close everything.
     """
     shorts, longs = index_overwrite_legs(client, market)
+    if fraction < 1.0:
+        shorts, longs = _scale_legs(shorts, fraction), _scale_legs(longs, fraction)
     closed = _submit_closes(broker, db_engine, build_close_plan(shorts),
                             as_of=as_of, event="close", chase=chase, alert=alert)
     sells = [CoveredCallOrder(

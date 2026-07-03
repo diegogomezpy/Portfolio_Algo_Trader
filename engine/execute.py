@@ -510,6 +510,11 @@ def _auction_or_defer(active, by_sym, out, pending, *, quote, ex, broker, db_eng
                         "qty": residual, "reason": "unfilled at close; deferred to cross-day"})
 
 
+def _sp_tier(o: PlannedOrder) -> str:
+    """Single-pass tactic label for the chase board: express market sweep vs one passive limit."""
+    return "express" if o.order_type == "market" else "single"
+
+
 def _single_pass(orders, *, broker, db_engine, cycle_key, pending, out,
                  poll_attempts, poll_interval_s, sleep, read, alert) -> ExecReport:
     already = _existing_client_ids(db_engine, cycle_key)
@@ -531,10 +536,18 @@ def _single_pass(orders, *, broker, db_engine, cycle_key, pending, out,
                             "reason": f"rejected: {exc}"})
             out[o.symbol].update(status="rejected", reason=f"rejected: {exc}")
             log.error("order rejected; deferring", extra={"symbol": o.symbol, "error": str(exc)})
+            _emit_chase_event(db_engine, cycle_key=cycle_key, rnd="r1", symbol=o.symbol,
+                              side=o.side, event="reject", tier=_sp_tier(o),
+                              limit_price=o.limit_price, qty=o.qty, filled_qty=0, target_qty=o.qty)
             if alert:
                 alert(f"order rejected {o.symbol} {o.side} {o.qty}: {exc}")
             continue
         _upsert_order(db_engine, cycle_key, resp)
+        # Telemetry so single-pass runs (express market orders, no-quote fallback) show on the
+        # chase board too — tier doubles as the board's tactic label.
+        _emit_chase_event(db_engine, cycle_key=cycle_key, rnd="r1", symbol=o.symbol, side=o.side,
+                          event="post", tier=_sp_tier(o), limit_price=o.limit_price,
+                          qty=o.qty, filled_qty=0, target_qty=o.qty, order_id=resp["id"])
         live.append((resp["id"], o))
 
     open_ids = {oid for oid, _ in live}
@@ -559,6 +572,11 @@ def _single_pass(orders, *, broker, db_engine, cycle_key, pending, out,
                 open_ids.discard(oid)
                 if (st.get("filled_qty") or 0) > 0 and oid not in recorded_fill:
                     _record_fill(db_engine, st); recorded_fill.add(oid)
+                _emit_chase_event(db_engine, cycle_key=cycle_key, rnd="r1", symbol=_o.symbol,
+                                  side=_o.side, event="settle", tier=_sp_tier(_o),
+                                  limit_price=st.get("limit_price"),
+                                  filled_qty=st.get("filled_qty"), target_qty=_o.qty,
+                                  status=st.get("status"), order_id=oid)
 
     for oid, o in live:
         if oid not in open_ids:
@@ -579,6 +597,10 @@ def _single_pass(orders, *, broker, db_engine, cycle_key, pending, out,
         filled_qty = int(st.get("filled_qty") or 0)
         if filled_qty > 0 and oid not in recorded_fill:
             _record_fill(db_engine, st); recorded_fill.add(oid)
+        _emit_chase_event(db_engine, cycle_key=cycle_key, rnd="r1", symbol=o.symbol,
+                          side=o.side, event="settle", tier=_sp_tier(o),
+                          limit_price=st.get("limit_price"), filled_qty=filled_qty,
+                          target_qty=o.qty, status=st.get("status"), order_id=oid)
         residual = o.qty - filled_qty
         if residual > 0:
             pending.append({"symbol": o.symbol, "side": o.side, "delta_usd": None,

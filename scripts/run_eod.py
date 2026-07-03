@@ -43,8 +43,8 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from engine import (  # noqa: E402
-    alerts, covariance, covered_calls, factors, ingest, monitor, optimize, reconcile, risk,
-    sectors, symbols,
+    alerts, covariance, covered_calls, factors, ingest, monitor, optimize, overrides,
+    reconcile, risk, sectors, symbols,
 )
 from engine.alpaca_client import AlpacaAPIError  # noqa: E402
 from engine.config import load_settings  # noqa: E402
@@ -238,6 +238,7 @@ def run_cycle(
     write_calls_fn: Callable[..., object] = covered_calls.write_calls,
     close_index_fn: Callable[..., object] = covered_calls.close_index_overwrite,
     write_index_fn: Callable[..., object] = covered_calls.write_index_overwrite,
+    express: bool = False,
     alert: Callable[[str], None] | None = None,
 ) -> CycleResult:
     """Run one rebalance cycle. Returns a :class:`CycleResult`.
@@ -252,6 +253,10 @@ def run_cycle(
     (close = buy back the short leg FIRST, then sell the wing — order matters, Alpaca has no
     naked tier); **per_name** is the classic covered-call close-all + rewrite (D31). All four
     leg functions are injectable for testing the sequencing.
+
+    ``express`` (the console's impatient mode) sends the equity legs as **market orders**
+    through the single-pass path instead of the tiered chase; option closes still sweep at
+    market via ``final_market`` and writes fall back to one passive pass at the mid.
     """
     rec = reconcile.reconcile(client, db_engine, alert=alert)            # raises if Alpaca down
 
@@ -265,7 +270,8 @@ def run_cycle(
         log.warning("no target weights produced; nothing to do")
         return CycleResult("no_targets")
 
-    leverage = float(getattr(settings.portfolio, "target_leverage", 1.0))
+    # Sticky dashboard override first (clamped to max_leverage), else settings.yaml.
+    leverage = overrides.effective_target_leverage(db_engine, settings)
     rc = risk.check_pretrade(weights, settings=settings, sector_map=plan.sector_map,
                              universe=plan.universe, equity_positions=rec.live_positions,
                              as_of=as_of, leverage=leverage)
@@ -286,7 +292,7 @@ def run_cycle(
     # Session close + the option chaser, built once and reused for the close-all, the equity
     # chase, and the fresh writes — so every option order crosses to the touch until it fills.
     mkt_close = _market_close(client)
-    opt_chase = _option_chase(client, mkt_close, settings)
+    opt_chase = None if express else _option_chase(client, mkt_close, settings)
     index_mode = covered_calls.overlay_mode(settings) == "index"
     beta_market = str(getattr(getattr(settings, "factors", None), "beta_market", "SPY"))
 
@@ -313,7 +319,12 @@ def run_cycle(
     # Tiered execution (docs/EXECUTION.md §5–§8): each name priced by liquidity tier — deep = fill
     # now, moderate/thin = patient mid→touch ladder, pathological spread = post-and-defer, thin =
     # sliced; residual at the close → closing auction or cross-day. Fills read from the live feed.
-    quote_fn = (lambda s: _equity_quote(client, s)) if hasattr(client, "latest_nbbo") else None
+    if express:                     # console express mode: market sweeps, no ladder
+        orders = [PlannedOrder(o.symbol, o.side, o.qty, "market", None, o.notional)
+                  for o in orders]
+        quote_fn = None
+    else:
+        quote_fn = (lambda s: _equity_quote(client, s)) if hasattr(client, "latest_nbbo") else None
     report = submit_and_track(orders, broker=broker, db_engine=db_engine,
                               cycle_key=as_of.isoformat(), pending=pending,
                               quote=quote_fn, adv=plan.adv, ex=settings.execution,
@@ -517,7 +528,7 @@ def work_pending_adjustments(client, broker, db_engine, *, settings, as_of, aler
     held = {str(p["symbol"]): float(p["qty"]) for p in client.all_positions()
             if symbols.is_equity(p["symbol"])}                    # equities only
     equity = _account_equity(client)                              # raise > silently mis-size (B5)
-    nav = equity * float(getattr(settings.portfolio, "target_leverage", 1.0))
+    nav = equity * overrides.effective_target_leverage(db_engine, settings)
     ex = settings.execution
 
     ids_by_sym: dict[str, list] = {}
@@ -778,6 +789,8 @@ def main() -> None:
     ap.add_argument("--force", action="store_true", help="run even if not a trading day (--once)")
     ap.add_argument("--skip-ingest", action="store_true", help="reuse existing snapshot data (--once)")
     ap.add_argument("--no-overlay", action="store_true", help="equity only; skip the covered-call legs")
+    ap.add_argument("--express", action="store_true",
+                    help="market orders instead of the tiered chase (--once; console express mode)")
     args = ap.parse_args()
 
     config.load_env(args.env)
@@ -802,7 +815,7 @@ def main() -> None:
 
     result = run_cycle(client=client, broker=broker, db_engine=db_engine,
                        settings=settings, as_of=args.date, force=args.force,
-                       overlay=not args.no_overlay, alert=alerter)
+                       overlay=not args.no_overlay, express=args.express, alert=alerter)
     print(f"\nCycle {args.date} → {result.status}")
     if result.exec_report:
         r = result.exec_report

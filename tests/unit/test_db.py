@@ -22,6 +22,8 @@ EXPECTED_TABLES = {
     "options_lifecycle",
     "factor_scores",
     "order_events",
+    "manual_actions",
+    "overrides",
 }
 
 

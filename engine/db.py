@@ -178,6 +178,32 @@ order_events = Table(
     Column("created_at", DateTime, server_default=func.now()),
 )
 
+# Manual actions fired from the dashboard's execution console (audit trail). One row per
+# button press that reached the engine: what was asked, how it ran, and how it ended.
+manual_actions = Table(
+    "manual_actions",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("ts", DateTime, nullable=False, index=True),
+    Column("action", String, nullable=False, index=True),  # rebalance|liquidate|trade|leverage|cancel_all
+    Column("mode", String),                                # normal | express
+    Column("params", JSON),                                # {"pct":25} / {"symbol","side","usd","pct"} / {"target":1.5}
+    Column("status", String, index=True),                  # started | done | failed
+    Column("cycle_key", String, index=True),               # == orders.rebalance_cycle / order_events.cycle_key
+    Column("result", JSON),                                # summary written on completion (fills, notional, error)
+    Column("created_at", DateTime, server_default=func.now()),
+)
+
+# Operator overrides — a tiny key/value store the engine consults before settings.yaml.
+# Currently: "target_leverage" (the dashboard's sticky leverage rebalance).
+overrides = Table(
+    "overrides",
+    metadata,
+    Column("key", String, primary_key=True),
+    Column("value", JSON),
+    Column("updated_at", DateTime),
+)
+
 # Daily composite + sub-scores per ticker (dashboard + audit trail).
 factor_scores = Table(
     "factor_scores",
