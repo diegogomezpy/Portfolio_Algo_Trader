@@ -884,18 +884,28 @@ def _assignments_from_activities(activities: Sequence[Mapping]) -> list[dict]:
 
 
 def process_assignments(client, broker, db_engine, *, settings, as_of: date, alert=None) -> dict:
-    """Detect option assignments (Alpaca OPASN) and conditionally re-buy the called-away stock.
+    """Detect option assignments (Alpaca OPASN), re-buy scored called-away stock, and flatten
+    any short stock an assignment created.
 
-    For each assigned name still scoring above ``covered_calls.reentry_threshold``, buy back
-    the called-away shares at market (idempotent per name/day via ``client_order_id``); logs
-    ``assignment`` + ``reentry`` events. Resilient: an activities-read failure is logged and
-    skipped (assignment is rare under the monthly close-before-expiry cadence).
+    Two distinct aftermaths:
+
+    * **Covered call assigned** (per-name mode) — the held shares were called away. For each
+      assigned name still scoring above ``covered_calls.reentry_threshold``, buy the shares
+      back at market (idempotent per name/day via ``client_order_id``).
+    * **Uncovered-by-stock short call assigned** (the index overlay's SPY short leg) — there
+      are no shares behind it, so assignment leaves **short stock** in the account. That is
+      never the strategy (long-only book): flatten it at market immediately rather than carry
+      short-index exposure until the next rebalance notices.
+
+    Logs ``assignment`` / ``reentry`` / ``short_flatten`` lifecycle events. Resilient: an
+    activities-read failure is logged and skipped (assignment is rare under the monthly
+    close-before-expiry cadence).
     """
     try:
         activities = client.account_activities(["OPASN"], date=as_of.isoformat())
     except Exception as exc:  # noqa: BLE001
         log.warning("assignment check skipped; activities read failed", extra={"error": str(exc)})
-        return {"assignments": 0, "reentered": 0}
+        return {"assignments": 0, "reentered": 0, "flattened": 0}
 
     assignments = _assignments_from_activities(activities)
     for a in assignments:
@@ -917,10 +927,39 @@ def process_assignments(client, broker, db_engine, *, settings, as_of: date, ale
             continue
         _log_simple(db_engine, "reentry", p["symbol"])
         reentered += 1
+
+    # Flatten short stock left by assigning a short call with no shares behind it (B4, audit).
+    flattened = 0
+    assigned_unders = {a["underlying"] for a in assignments}
+    if assigned_unders:
+        try:
+            shorts = {str(p["symbol"]): float(p["qty"]) for p in client.all_positions()
+                      if str(p.get("symbol")) in assigned_unders and float(p.get("qty") or 0) < 0}
+        except Exception as exc:  # noqa: BLE001 — can't read positions → reconcile/next pass catches it
+            log.warning("short-flatten check skipped; positions read failed", extra={"error": str(exc)})
+            shorts = {}
+        for sym, q in shorts.items():
+            coid = f"flatten:{as_of.isoformat()}:{sym}"
+            try:
+                broker.submit_order(sym, int(abs(q)), "buy", order_type="market",
+                                    client_order_id=coid)
+            except AlpacaAPIError as exc:
+                log.error("short flatten rejected", extra={"symbol": sym, "error": str(exc)})
+                if alert:
+                    alert(f"assignment left SHORT stock {sym} ({q:+.0f}) and the flatten was "
+                          f"rejected: {exc} — flatten manually")
+                continue
+            _log_simple(db_engine, "short_flatten", sym)
+            flattened += 1
+            if alert:
+                alert(f"assignment left short stock {sym} ({q:+.0f} sh); bought back to flat")
+
     if assignments and alert:
-        alert(f"assignment: {len(assignments)} name(s) called away, {reentered} re-entered")
-    log.info("assignment check", extra={"assignments": len(assignments), "reentered": reentered})
-    return {"assignments": len(assignments), "reentered": reentered}
+        alert(f"assignment: {len(assignments)} name(s) assigned, {reentered} re-entered, "
+              f"{flattened} short position(s) flattened")
+    log.info("assignment check", extra={"assignments": len(assignments), "reentered": reentered,
+                                        "flattened": flattened})
+    return {"assignments": len(assignments), "reentered": reentered, "flattened": flattened}
 
 
 def _log_simple(db_engine, event_type: str, underlying: str, *, contracts=None,

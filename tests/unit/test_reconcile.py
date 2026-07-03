@@ -85,6 +85,22 @@ def test_divergence_corrects_to_alpaca_and_alerts():
     assert snaps[-1]["nav"] == 100_000.0                 # nav/cash pulled from account()
 
 
+def test_correction_snapshot_carries_market_value_weights():
+    # The corrective snapshot must not write weights={} (audit B7): an empty-weights row made
+    # the dashboard's leverage / market values read 0 until the next monitor pass.
+    class _MVClient(_FakeClient):
+        def all_positions(self):
+            return [{"symbol": "AAPL", "qty": 120, "market_value": 24_000.0},
+                    {"symbol": "MSFT", "qty": 10, "market_value": 4_000.0}]
+
+    eng = _engine()
+    _seed_snapshot(eng, {"AAPL": 100})                   # diverges → correction path
+    res = reconcile.reconcile(_MVClient({}), eng)
+    assert res.corrected is True
+    snaps = _snapshots(eng)
+    assert snaps[-1]["weights"] == {"AAPL": 0.24, "MSFT": 0.04}   # mv / nav(100k), not {}
+
+
 def test_first_run_with_no_prior_snapshot_corrects():
     eng = _engine()                                      # empty — no snapshots
     res = reconcile.reconcile(_FakeClient({"AAPL": 50}), eng)

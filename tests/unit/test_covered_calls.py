@@ -618,11 +618,31 @@ def test_process_assignments_rebuys_scored_name_and_logs():
     broker = _FakeBroker()
     out = cc.process_assignments(client, broker, eng, settings=_settings(),
                                  as_of=date(2026, 7, 2))
-    assert out == {"assignments": 1, "reentered": 1}
+    assert out == {"assignments": 1, "reentered": 1, "flattened": 0}
     assert broker.equity_orders[0]["symbol"] == "AAA" and broker.equity_orders[0]["side"] == "buy"
     assert broker.equity_orders[0]["qty"] == 100
     events = [r["event_type"] for r in _lifecycle(eng)]
     assert "assignment" in events and "reentry" in events
+
+
+def test_process_assignments_flattens_short_stock_from_uncovered_assignment():
+    # The index overlay's SPY short leg assigned: no shares behind it → the account goes SHORT
+    # 700 SPY. That must be bought back to flat immediately, not carried until next rebalance.
+    eng = _engine()
+    client = _FakeClient(
+        activities=[{"activity_type": "OPASN", "symbol": _SPY_SHORT, "qty": 700}],
+        positions=[{"symbol": "SPY", "qty": -700, "market_value": -535_000.0,
+                    "asset_class": "us_equity"}])
+    broker = _FakeBroker()
+    alerts = []
+    out = cc.process_assignments(client, broker, eng, settings=_settings(),
+                                 as_of=date(2026, 7, 31), alert=alerts.append)
+    assert out["assignments"] == 1 and out["flattened"] == 1
+    assert out["reentered"] == 0                          # SPY isn't factor-scored → no re-entry
+    flat = broker.equity_orders[-1]
+    assert (flat["symbol"], flat["side"], flat["qty"]) == ("SPY", "buy", 700)
+    assert any("short stock SPY" in a for a in alerts)
+    assert "short_flatten" in [r["event_type"] for r in _lifecycle(eng)]
 
 
 def test_process_assignments_resilient_to_activities_error():
@@ -634,4 +654,4 @@ def test_process_assignments_resilient_to_activities_error():
 
     out = cc.process_assignments(_Boom(), _FakeBroker(), eng, settings=_settings(),
                                  as_of=date(2026, 7, 2))
-    assert out == {"assignments": 0, "reentered": 0}     # logged + skipped, no raise
+    assert out == {"assignments": 0, "reentered": 0, "flattened": 0}   # logged + skipped, no raise

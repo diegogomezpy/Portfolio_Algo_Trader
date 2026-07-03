@@ -182,6 +182,18 @@ def test_run_cycle_index_overlay_dispatches_spread_close_and_write():
     assert seq[-1][0] == "write_index" and seq[-1][1] == {"AAPL": 100.0}
 
 
+def test_run_cycle_raises_when_account_equity_missing():
+    # audit B5: the old `equity or settings.portfolio.nav` fallback would silently size a $1M
+    # account as the YAML's $100k. A missing equity must fail the cycle (daily_job retries).
+    eng = _engine()
+    with pytest.raises(RuntimeError, match="equity unavailable"):
+        run_eod.run_cycle(
+            client=_FakeClient(equity=None), broker=_FakeBroker(), db_engine=eng,
+            settings=load_settings(), as_of=date(2026, 7, 1), force=True,
+            targets_fn=_targets({"AAPL": 0.05}, {"AAPL": "Information Technology"},
+                                {"AAPL": 100.0}))
+
+
 def test_run_cycle_no_overlay_skips_call_legs():
     eng = _engine()
     called = []

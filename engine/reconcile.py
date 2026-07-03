@@ -91,12 +91,13 @@ def reconcile(client, db_engine=None, *, divergence_threshold: float = 0.0, aler
         AlpacaError: If Alpaca is unreachable (after alerting) — the pipeline must halt.
     """
     try:
-        live = fetch_live_positions(client)
+        raw = client.all_positions()
     except AlpacaError as exc:
         log.error("reconcile: Alpaca unreachable — blocking pipeline", extra={"error": str(exc)})
         if alert:
             alert(f"reconcile blocked: Alpaca unreachable: {exc}")
         raise
+    live = {p["symbol"]: float(p["qty"]) for p in raw}
 
     if db_engine is None:
         log.info("reconcile (no DB): fetched live positions", extra={"positions": len(live)})
@@ -112,7 +113,7 @@ def reconcile(client, db_engine=None, *, divergence_threshold: float = 0.0, aler
                 extra={"divergences": divergences})
     if alert:
         alert(f"position divergence on {len(divergences)} name(s); DB corrected to Alpaca")
-    _write_correction_snapshot(client, db_engine, live)
+    _write_correction_snapshot(client, db_engine, live, raw)
     return ReconcileResult(live, divergences, True)
 
 
@@ -180,8 +181,14 @@ def _dt(value):
         return None
 
 
-def _write_correction_snapshot(client, db_engine, live: dict[str, float]) -> None:
-    """Write a snapshot whose positions equal Alpaca's (the 'DB matches Alpaca' step)."""
+def _write_correction_snapshot(client, db_engine, live: dict[str, float],
+                               raw: list[dict] | None = None) -> None:
+    """Write a snapshot whose positions equal Alpaca's (the 'DB matches Alpaca' step).
+
+    Weights are computed from the raw positions' market values (like the monitor's snapshot)
+    rather than written empty — an empty-weights row made the dashboard's leverage/market-value
+    read 0 for the next 60s after every correction (audit B7).
+    """
     from sqlalchemy import insert
     from engine.db import snapshots
     nav = cash = last_equity = None
@@ -191,7 +198,13 @@ def _write_correction_snapshot(client, db_engine, live: dict[str, float]) -> Non
     except AlpacaError as exc:                       # positions read fine; account hiccup
         log.warning("reconcile: account read failed; correction snapshot without nav/cash",
                     extra={"error": str(exc)})
+    weights: dict[str, float] = {}
+    if nav and float(nav) > 0:
+        for p in (raw or []):
+            mv = p.get("market_value")
+            if p.get("symbol") and mv is not None:
+                weights[str(p["symbol"])] = float(mv) / float(nav)
     with db_engine.begin() as conn:
         conn.execute(insert(snapshots).values(
             ts=datetime.now(timezone.utc), nav=nav, cash=cash, last_equity=last_equity,
-            positions=live, weights={}, drift=None))
+            positions=live, weights=weights, drift=None))

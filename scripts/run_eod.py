@@ -292,8 +292,10 @@ def run_cycle(
         n_closed = len(closed or [])
 
     # Deployable base = leverage × account equity (DECISIONS D32). Weights are fractions of
-    # this base, so the optimizer/caps are unchanged; only the dollar base scales.
-    equity = float(client.account().get("equity") or settings.portfolio.nav)
+    # this base, so the optimizer/caps are unchanged; only the dollar base scales. A missing
+    # equity is a hard error (audit B5): the old settings.portfolio.nav fallback would have
+    # silently sized a $1M book at $100k — better to fail the cycle and retry next day.
+    equity = _account_equity(client)
     nav = equity * leverage
     orders, pending = plan_orders(weights, rec.live_positions, plan.prices, nav=nav,
                                   settings=settings, adv=plan.adv, spread=plan.spread)
@@ -342,6 +344,19 @@ def run_cycle(
                     **{k: v for k, v in vars(report).items() if k != "lines"}})
     return CycleResult("executed", weights, rc, report, mon,
                        calls_closed=n_closed, calls_written=n_written)
+
+
+def _account_equity(client) -> float:
+    """Live account equity, or raise — sizing the book off anything else is a silent error.
+
+    The pre-audit fallback (``or settings.portfolio.nav``) would have quietly sized a $1M
+    account as $100k if Alpaca ever omitted ``equity``; failing loudly lets ``daily_job``'s
+    catch-alert-retry handle it instead (audit B5).
+    """
+    eq = client.account().get("equity")
+    if eq is None or float(eq) <= 0:
+        raise RuntimeError(f"account equity unavailable/invalid ({eq!r}) — refusing to size the book")
+    return float(eq)
 
 
 def _equity_shares(client) -> dict[str, float]:
@@ -491,7 +506,7 @@ def work_pending_adjustments(client, broker, db_engine, *, settings, as_of, aler
     target = monitor.last_target_weights(db_engine) or {}
     held = {str(p["symbol"]): float(p["qty"]) for p in client.all_positions()
             if len(str(p["symbol"])) <= 5}                        # equities only
-    equity = float(client.account().get("equity") or settings.portfolio.nav)
+    equity = _account_equity(client)                              # raise > silently mis-size (B5)
     nav = equity * float(getattr(settings.portfolio, "target_leverage", 1.0))
     ex = settings.execution
 
