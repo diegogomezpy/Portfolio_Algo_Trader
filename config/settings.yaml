@@ -11,8 +11,12 @@ universe:
                                      # also have liquid US options for the overlay.
 
 portfolio:
-  nav: 100_000
-  min_position_usd: 4_000        # min funded position; the optimizer floor (w >= min or w = 0)
+  nav: 100_000                   # BACKTEST/report starting capital ONLY (scripts/build_dashboard).
+                                 # Live sizing always uses real account equity — a missing equity
+                                 # hard-fails the cycle rather than falling back here (audit B5).
+  min_position_pct: 0.04         # optimizer position floor as a WEIGHT (w >= floor or w = 0).
+                                 # Replaces min_position_usd/nav, which silently became "4% of
+                                 # whatever the account is" when the account left $100k (audit).
   max_single_name_pct: 0.05      # ~19-20 names (DECISIONS D24). The max-name cap — not
                                  # lambda/scale — governs name count; 5% over the 4% floor
                                  # gives a diversified, ~equal-weight book for capital
@@ -27,7 +31,6 @@ portfolio:
                                  # scales the backtested drawdown ~linearly (equity maxDD −26% →
                                  # ~−50%); the backtest itself is 1x. Set 1.0 for unlevered.
   max_leverage: 2.0              # hard cap the pre-trade risk gate enforces; target must be ≤ this.
-  infeasibility_max_retries: 3
   risk_aversion_lambda: 0.0      # alpha-driven weighting (DECISIONS D25): the composite
                                  # score already prices risk (low-vol is 25% of it), so a
                                  # mean-variance risk penalty double-counts the defensive
@@ -79,6 +82,16 @@ covered_calls:
   target_delta: 0.30             # raised from 0.25 (DECISIONS D29): the delta sweep showed
                                  # 0.25 left premium on the table — 0.30 lifts the market-IV
                                  # Sharpe (1.18→1.31) with assignment a safe 22% (<30% cap).
+  iv_window: 60                  # trailing days of realized vol behind the IV estimate that prices
+                                 # strike selection (D27). Was silently borrowed from
+                                 # covariance.estimation_window_days — changing the risk-model
+                                 # window changed strike selection (audit). Now its own knob.
+  min_bid_frac: 0.7              # write guard: skip a write when the live bid < this fraction of
+                                 # the planned chain mid (don't sell into a lowball/junk bid).
+                                 # Was hardcoded in OptionChase (audit).
+  rewrite_after_earnings_days: 5 # per_name mode: rewrite an uncovered held name only within this
+                                 # many days after its earnings (the close→rewrite pair). Was the
+                                 # hardcoded _REWRITE_AFTER_DAYS (audit).
   # Cadence (DECISIONS D31): calls are written at the monthly rebalance and closed +
   # rewritten at the next one — there is NO mid-cycle DTE roll. Matches the Phase 2b
   # backtest (one monthly write per option life); 30-45 DTE covers the ~1-month hold.
@@ -109,7 +122,6 @@ execution:
   large_cap_adv_threshold: 50_000_000
   mid_cap_adv_threshold: 5_000_000
   spread_threshold: 0.001
-  price_adjustment: all
   # Non-market orders cross the spread by up to this many bps so they actually FILL in-session,
   # instead of resting passively at the mid (which often never fills before the ~60s session-end
   # cancel — it left the establishing rebalance with a thin partial book). It is a CEILING: liquid
@@ -125,7 +137,6 @@ execution:
   # Re-price cadences (docs/EXECUTION.md §7). Fills now come from the live order feed (instant),
   # so these only govern how often a *resting* limit is re-anchored to the moving market.
   equity_repeg_s: 30             # stocks: re-anchor a resting limit to the live mid this often
-  option_repeg_s: 150            # options: slower — option quotes crawl and requoting loses queue spot
   close_buffer_s: 300            # stop working this many seconds before 16:00; residual → auction/cross-day
   poll_interval_s: 2             # fallback fill-check interval — only used if the live feed is down
   # When the daily EOD/rebalance job fires (America/New_York). Mid-session: tight spreads and a long
@@ -147,12 +158,13 @@ backtest:
                                  # (Phase 2b covered-call backtest; option spreads not in data)
 
 covariance:
-  estimation_window_days: 60
-  factor_source: ken_french      # FF5 daily, downloaded directly from the Ken French
-                                 # data library (DECISIONS D23a) — pandas_datareader
-                                 # import-crashes under pandas 3.0.
+  estimation_window_days: 60     # FF5 daily factors, fetched directly from the Ken French data
+                                 # library (DECISIONS D23a; URL lives in engine/covariance.py)
   min_regression_obs: 40         # a name needs >= this many aligned days in the window
                                  # or it is dropped from Sigma (history too thin)
+  ff5_max_stale_days: 7          # live pipeline: refresh the FF5 cache when it ends more than
+                                 # this many days ago (Ken French publishes with a lag); a failed
+                                 # refresh degrades to the stale cache. Was hardcoded (audit).
 
 ingest:
   # Free Alpaca IEX feed only has consolidated history from ~2020-07-27; full
@@ -184,7 +196,6 @@ alerts:
                              # smtp.gmail.com with the 16-char Gmail App Password in
                              # SMTP_PASSWORD. Alerts now email (and still record to the alerts
                              # table + show on the dashboard). Set false to return to dry-run.
-  staleness_threshold_pct: 0.10
 
 dashboard:
   # Public dashboard (Tailscale Funnel + Caddy basic auth). URL + user are NOT secret and feed

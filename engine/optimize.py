@@ -201,8 +201,14 @@ def optimize_portfolio(
     budget = p.base_equity_allocation
     w_max = p.max_single_name_pct
     lam = p.risk_aversion_lambda
-    nav = p.nav
-    base_min_pct = p.min_position_usd / nav
+    # The position floor is a WEIGHT (min_position_pct). It used to be min_position_usd ÷ the
+    # static YAML nav — which silently became a 4% weight floor the day the account stopped
+    # being $100k (audit: "min_position_usd: 4000" on the $1M book was actually ~$76k). The
+    # legacy pair is still honored for old fixtures.
+    if hasattr(p, "min_position_pct"):
+        base_min_pct = float(p.min_position_pct)
+    else:  # legacy settings shape
+        base_min_pct = float(p.min_position_usd) / float(p.nav)
 
     # Hysteresis (DECISIONS D26): give currently-held names a composite-score premium so
     # they stay selected unless a challenger clearly beats them — cuts membership churn /
@@ -223,12 +229,14 @@ def optimize_portfolio(
     mu = mu_all.loc[active]
     sectors = sector_map.reindex(active).fillna("Unknown")
 
-    # Infeasibility-relaxation ladder (DECISIONS / ARCHITECTURE).
+    # Infeasibility-relaxation ladder (DECISIONS / ARCHITECTURE). The floor relaxations are
+    # absolute weight steps (−0.25pp / −0.5pp), the pct equivalent of the old −$250/−$500 on
+    # the $100k reference nav — identical rungs, no longer tied to a stale dollar figure.
     ladder = [
         (p.max_sector_pct, base_min_pct),
         (p.max_sector_pct + 0.05, base_min_pct),
-        (p.max_sector_pct + 0.10, (p.min_position_usd - 250) / nav),
-        (p.max_sector_pct + 0.15, (p.min_position_usd - 500) / nav),
+        (p.max_sector_pct + 0.10, max(base_min_pct - 0.0025, 0.0)),
+        (p.max_sector_pct + 0.15, max(base_min_pct - 0.0050, 0.0)),
     ]
     for attempt, (sector_cap, w_min) in enumerate(ladder):
         funded = _solve_with_cleanup(

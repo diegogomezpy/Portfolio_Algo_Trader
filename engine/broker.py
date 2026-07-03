@@ -13,7 +13,7 @@ same whether it came back from a write here or a read in :class:`AlpacaClient`:
 * :meth:`cancel_order` — cancel one working order
 * :meth:`cancel_all_orders` — cancel every open order (session end / SIGTERM)
 
-``paper=True`` is hardcoded until go-live (Phase 7), matching :class:`AlpacaClient`. The
+Paper vs live follows ``ALPACA_BASE_URL`` (config.is_paper_env), matching :class:`AlpacaClient`. The
 SDK ``TradingClient`` is injectable (``client=``) so execution tests run against a fake
 with no network or credentials. Errors are raised as :class:`AlpacaAPIError` — the same
 taxonomy the read client uses.
@@ -66,14 +66,17 @@ class Broker:
         secret_key: str | None = None,
         *,
         client: Any | None = None,
+        paper: bool | None = None,
     ) -> None:
         """Build the write client.
 
         Args:
-            api_key / secret_key: Alpaca **paper** credentials (required unless
-                ``client`` is injected).
+            api_key / secret_key: Alpaca credentials (required unless ``client`` is injected).
             client: a pre-built trading client (or test fake). When given, the
                 credentials are not needed and no real client is constructed.
+            paper: paper vs live endpoint. ``None`` (default) derives it from
+                ``ALPACA_BASE_URL`` via :func:`engine.config.is_paper_env` — unset env
+                defaults to paper, the safe side.
 
         Raises:
             ValueError: if no ``client`` is injected and a credential is missing.
@@ -85,8 +88,10 @@ class Broker:
             raise ValueError("api_key is required and must be a non-empty string")
         if not secret_key or not str(secret_key).strip():
             raise ValueError("secret_key is required and must be a non-empty string")
-        # paper=True hardcoded until Phase 7 go-live (see module docstring).
-        self._trading = TradingClient(api_key, secret_key, paper=True)
+        if paper is None:
+            from engine.config import is_paper_env
+            paper = is_paper_env()
+        self._trading = TradingClient(api_key, secret_key, paper=paper)
 
     def submit_order(
         self,

@@ -104,17 +104,30 @@ def get_alpaca_client(feed: str = "iex"):
     )
 
 
+def is_paper_env() -> bool:
+    """Whether the loaded environment targets Alpaca's **paper** API.
+
+    Derived from ``ALPACA_BASE_URL`` (the one place the env already declares it) instead of a
+    hardcoded ``paper=True`` scattered across clients — the audit's Phase-7 landmine: with
+    ``--env live`` the trading stream would have silently connected to paper. Unset/blank
+    defaults to paper (the safe side).
+    """
+    url = os.environ.get("ALPACA_BASE_URL", "").strip().lower()
+    return ("paper" in url) if url else True
+
+
 def get_trading_stream():
-    """Build an Alpaca ``TradingStream`` (paper) from env credentials — the live order feed's
-    websocket source (see :class:`engine.order_feed.LiveOrderFeed`). Imported lazily so pure
-    pipeline code never pulls the streaming SDK.
+    """Build an Alpaca ``TradingStream`` from env credentials — the live order feed's
+    websocket source (see :class:`engine.order_feed.LiveOrderFeed`). Paper/live follows
+    :func:`is_paper_env`. Imported lazily so pure pipeline code never pulls the streaming SDK.
 
     Raises:
         RuntimeError: If ALPACA_API_KEY / ALPACA_SECRET_KEY are not set.
     """
     from alpaca.trading.stream import TradingStream
 
-    return TradingStream(require_env("ALPACA_API_KEY"), require_env("ALPACA_SECRET_KEY"), paper=True)
+    return TradingStream(require_env("ALPACA_API_KEY"), require_env("ALPACA_SECRET_KEY"),
+                         paper=is_paper_env())
 
 
 def get_stock_data_stream(feed: str = "iex"):

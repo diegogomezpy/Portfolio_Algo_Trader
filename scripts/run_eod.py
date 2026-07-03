@@ -103,7 +103,8 @@ def compute_targets(settings, as_of: date, *, db_engine=None,
     lookback = max(int(fac.beta_window), int(fac.vol_window)) + 5
     panel = factors.load_close_panel(prices_dir, end=as_of, lookback=lookback)
     allf, eligible = factors.load_scored_fundamentals(fundamentals_dir, settings)
-    ff5 = covariance.load_ff5_daily(max_stale_days=7)
+    ff5 = covariance.load_ff5_daily(
+        max_stale_days=int(getattr(settings.covariance, "ff5_max_stale_days", 7)))
     sector_map = sectors.load_sector_map()["sector"]
 
     scores = factors.score_date(as_of, settings=settings, price_panel=panel,
@@ -185,14 +186,20 @@ def _order_state():
     return _FEED.state if _FEED is not None else None
 
 
-def _option_chase(client, market_close):
+def _option_chase(client, market_close, settings=None):
     """An :class:`OptionChase` that crosses option orders to the touch until they fill (or the
     session nears ``market_close``). ``None`` when the client can't quote options — the overlay
-    then falls back to a single passive pass at the mid."""
+    then falls back to a single passive pass at the mid. ``min_bid_frac`` (the junk-bid write
+    guard) comes from ``settings.covered_calls`` when provided."""
     if not hasattr(client, "latest_option_quote"):
         return None
+    kw = {}
+    if settings is not None:
+        mbf = getattr(settings.covered_calls, "min_bid_frac", None)
+        if mbf is not None:
+            kw["min_bid_frac"] = float(mbf)
     return covered_calls.OptionChase(touch=(lambda sym, side: _option_touch(client, sym, side)),
-                                     market_close=market_close, order_state=_order_state())
+                                     market_close=market_close, order_state=_order_state(), **kw)
 
 
 def _format_breakdown(report, written, skipped) -> str:
@@ -283,7 +290,7 @@ def run_cycle(
     # Session close + the option chaser, built once and reused for the close-all, the equity
     # chase, and the fresh writes — so every option order crosses to the touch until it fills.
     mkt_close = _market_close(client)
-    opt_chase = _option_chase(client, mkt_close)
+    opt_chase = _option_chase(client, mkt_close, settings)
     index_mode = covered_calls.overlay_mode(settings) == "index"
     beta_market = str(getattr(getattr(settings, "factors", None), "beta_market", "SPY"))
 
@@ -637,7 +644,7 @@ def daily_job(
         else:
             lookback = int(settings.covariance.estimation_window_days) + 5
             panel = factors.load_close_panel(PRICES_DIR, end=as_of, lookback=lookback)
-        opt_chase = _option_chase(client, _market_close(client))
+        opt_chase = _option_chase(client, _market_close(client), settings)
         options_check_fn(client, broker, db_engine, settings=settings,
                          as_of=as_of, price_panel=panel, chase=opt_chase, alert=alert)
     tgt = monitor.last_target_weights(db_engine)

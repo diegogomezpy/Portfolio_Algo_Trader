@@ -18,9 +18,9 @@ carry positive ``qty``. The client still returns ``qty`` signed exactly as
 Alpaca reports it (a negative value would mean short) rather than assuming a
 sign — consistent with the validate-before-access philosophy throughout.
 
-The book runs on Alpaca **paper** through go-live (BUILD_ORDER Phase 7), so
-``paper=True`` is hardcoded here. Live trading (Phase 7) will require
-parameterizing this — see the note in ``__init__``.
+The book runs on Alpaca **paper** through go-live (BUILD_ORDER Phase 7).
+Paper vs live follows ``ALPACA_BASE_URL`` via ``engine.config.is_paper_env`` —
+an unset env defaults to paper, the safe side.
 
 It owns four SDK clients, each constructed once: a ``TradingClient``
 (account/asset/order reads), a ``StockHistoricalDataClient``
@@ -172,8 +172,8 @@ class AlpacaClient:
         """Construct the client.
 
         Args:
-            api_key: Alpaca **paper** API key. Required and non-empty.
-            secret_key: Alpaca **paper** secret key. Required and non-empty.
+            api_key: Alpaca API key. Required and non-empty.
+            secret_key: Alpaca secret key. Required and non-empty.
             feed: Market-data feed name (``"iex"``, ``"sip"``, ...).
 
         Raises:
@@ -181,9 +181,8 @@ class AlpacaClient:
                 or if ``feed`` is not a recognised feed.
 
         Note:
-            ``paper=True`` is hardcoded (see below). The book trades on
-            Alpaca paper through go-live; supporting the live endpoint at
-            Phase 7 means adding a ``paper``/``base_url`` parameter here.
+            Paper vs live follows ``ALPACA_BASE_URL`` (engine.config.is_paper_env);
+            an unset env defaults to paper — the safe side.
         """
         if not api_key or not str(api_key).strip():
             raise ValueError("api_key is required and must be a non-empty string")
@@ -195,9 +194,8 @@ class AlpacaClient:
             valid = ", ".join(f.value for f in DataFeed)
             raise ValueError(f"unknown feed {feed!r}; valid feeds: {valid}") from exc
 
-        # paper=True is hardcoded — the book trades on Alpaca paper until
-        # go-live (Phase 7), which will parameterize this. See __init__ note.
-        self._trading = TradingClient(api_key, secret_key, paper=True)
+        from engine.config import is_paper_env
+        self._trading = TradingClient(api_key, secret_key, paper=is_paper_env())
         self._data = StockHistoricalDataClient(api_key, secret_key)
         self._corp = CorporateActionsClient(api_key, secret_key)
         # Option chain/quote reads for the D3/D4 covered call overlay.

@@ -125,6 +125,16 @@ def contracts_for(shares: float, contract_size: int = _CONTRACT_SHARES) -> int:
     return int(shares) // int(contract_size)
 
 
+def _iv_window(settings) -> int:
+    """Trailing-vol window (days) behind the IV estimate that prices strike selection.
+
+    ``covered_calls.iv_window`` when set; falls back to the covariance estimation window — the
+    pre-audit behavior, where changing the risk-model window silently changed strike selection.
+    """
+    cc = settings.covered_calls
+    return int(getattr(cc, "iv_window", None) or settings.covariance.estimation_window_days)
+
+
 def overlay_mode(settings) -> str:
     """The overlay mode: ``"index"`` (SPY beta-overwrite spread) or ``"per_name"`` (classic
     covered calls). THE single source of truth for the default — config/settings.yaml sets it
@@ -453,7 +463,7 @@ def write_calls(client, broker, db_engine, holdings_shares: Mapping[str, float],
     names = list(holdings_shares)
     chains = fetch_chains(client, names, as_of, min_dte=cc.min_dte_entry, max_dte=cc.max_dte_entry)
     spots = _spots_from_panel(price_panel, names, as_of)
-    ivs = estimate_ivs(price_panel, names, as_of, window=settings.covariance.estimation_window_days)
+    ivs = estimate_ivs(price_panel, names, as_of, window=_iv_window(settings))
     writes, skipped = build_write_plan(holdings_shares, chains, spots, ivs, settings=settings, as_of=as_of)
 
     # Defense in depth (D32): re-derive coverage on the plan before anything reaches the broker.
@@ -523,7 +533,7 @@ def write_index_overwrite(client, broker, db_engine, holdings_shares: Mapping[st
     if n < 1:
         return [], [{"reason": "below one contract"}], info
     chain = fetch_chains(client, [market], as_of, min_dte=cc.min_dte_entry, max_dte=cc.max_dte_entry).get(market) or []
-    iv = estimate_ivs(price_panel, [market], as_of, window=settings.covariance.estimation_window_days).get(market)
+    iv = estimate_ivs(price_panel, [market], as_of, window=_iv_window(settings)).get(market)
     if iv is None or not chain:
         return [], [{"reason": "no chain / iv for market"}], info
     # Vertical call spread (defined risk, tradable at Alpaca's spread tier — naked calls are not
@@ -800,7 +810,8 @@ def options_daily_check(client, broker, db_engine, *, settings, as_of: date,
             s: q for s, q in held.items()
             if contracts_for(q) >= 1 and s not in covered
             and last_earnings(earnings.get(s, []), as_of) is not None
-            and (as_of - last_earnings(earnings.get(s, []), as_of)).days <= _REWRITE_AFTER_DAYS
+            and (as_of - last_earnings(earnings.get(s, []), as_of)).days
+            <= int(getattr(settings.covered_calls, "rewrite_after_earnings_days", _REWRITE_AFTER_DAYS))
         }
         if to_rewrite:
             rewritten, _ = write_calls(client, broker, db_engine, to_rewrite, settings=settings,
