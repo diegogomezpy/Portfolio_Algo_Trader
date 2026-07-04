@@ -410,7 +410,7 @@ def test_risk_route_postgres_only():
         for i, nv in enumerate([100_000.0, 101_000.0, 99_000.0, 102_000.0]):
             c.execute(insert(db.snapshots).values(
                 ts=datetime(2026, 6, 1 + i, 16), nav=nv, cash=0.0, last_equity=100_000.0,
-                weights={}, positions={}, drift=0.0))
+                weights={}, positions={"AAPL": 100}, drift=0.0))
     r = _route(create_app(eng, live=False), "/api/risk")()
     assert r["available"] and r["days"] == 4 and "drawdown" in r
     assert r["max_drawdown"] < 0 and r["var95_1d_pct"] > 0

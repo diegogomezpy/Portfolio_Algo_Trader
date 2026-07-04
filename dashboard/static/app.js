@@ -154,9 +154,9 @@ async function loadPerformance(){
   // Growth + risk default to "since first exposure" (server-side: the first snapshot that
   // actually holds positions — cash-only days before the first rebalance are excluded);
   // the date picker (_perfStart → ?start=) re-bases everything, benchmarks included.
-  const trURL = "/api/track_record" + (_perfStart ? "?start=" + _perfStart : "");
+  const w = _perfStart ? "?start=" + _perfStart : "";
   const [tr, slip, risk, st, fees, rcx, corr] = await Promise.all(
-    [trURL,"/api/slippage","/api/risk","/api/state","/api/fees",
+    ["/api/track_record"+w,"/api/slippage","/api/risk"+w,"/api/state","/api/fees",
      "/api/risk_contrib","/api/correlation"].map(get));
   lastFetch = Date.now(); tickFreshness();
   _perfTR=tr; _perfSlip=slip; _perfFees=fees; _perfRisk=risk; _perfSt=st; _perfRcx=rcx; _perfCorr=corr;
@@ -258,6 +258,12 @@ function sliceNav(dates, navs, period){
 // + a spark, computed client-side off the since-inception curve (mock's Period performance).
 function renderPeriodPanel(tr, risk){
   const host=$("pr-period"); if(!host) return;
+  // Never rebuild while the date picker is in use (the 30s tick used to destroy a focused
+  // input mid-pick, which could commit unintended values), and skip identical repaints.
+  if (host.contains(document.activeElement) && document.activeElement.tagName === "INPUT") return;
+  const sig = JSON.stringify([_perfPeriod, _perfStart, tr.start, tr.days, tr.nav_now]);
+  if (host._sig === sig) return;
+  host._sig = sig;
   const slice=sliceNav(tr.dates, tr.nav, _perfPeriod), m=statsOf(slice), imm=slice.length<11;
   const per=_perfPeriod;
   const tabBtns=["1M","3M","YTD","ITD"].map(p=>`<button onclick="setPerfPeriod('${p}')" style="background:${p===per?'var(--panel-2)':'transparent'};border:0;border-radius:5px;padding:4px 13px;font:600 11px 'Space Grotesk';color:${p===per?'var(--fg)':'var(--muted)'};cursor:pointer">${p}</button>`).join("");
@@ -956,9 +962,13 @@ function ovPanel(title,sub,body,pad,src,fill){ return `<div class="ovpanel"${fil
 function renderSession(){
   const host=$("ov-session"); if(!host) return;
   if(!MKT){ host.innerHTML=ovPanel("Trading session","NYSE","<div style='font:400 12px var(--mono);color:var(--muted)'>market clock offline</div>","14px 16px","clock"); return; }
-  const now=etNow(), et=etParts(now), secs=et.h*3600+et.m*60+et.s, open=9.5*3600, close=16*3600;
-  const f=Math.max(0,Math.min(1,(secs-open)/(close-open)));
+  const now=etNow(), et=etParts(now), secs=et.h*3600+et.m*60+et.s, open=9.5*3600;
   const nc=MKT.next_close?Date.parse(MKT.next_close):null, no=MKT.next_open?Date.parse(MKT.next_open):null;
+  // Close bound from the LIVE clock while the session runs — half-days close 13:00, and a
+  // hardcoded 16:00 would show ~50% progress after the market shut (see the holiday fix's sibling).
+  const cET=(MKT.is_open&&nc)?etParts(nc):null, close=cET?(cET.h*3600+cET.m*60):16*3600;
+  const hhmm=s=>`${String(Math.floor(s/3600)).padStart(2,'0')}:${String(Math.floor(s%3600/60)).padStart(2,'0')}`;
+  const f=Math.max(0,Math.min(1,(secs-open)/(close-open)));
   const clk=`<span style="font:500 22px var(--mono);color:var(--fg);font-variant-numeric:tabular-nums">${String(et.h).padStart(2,'0')}:${String(et.m).padStart(2,'0')}:${String(et.s).padStart(2,'0')}</span><span style="font:400 11px var(--mono);color:var(--muted)">ET</span>`;
   let sub, pill, pillCol, barW, noSession=false;
   if(MKT.is_open && nc){ sub=`· ${(f*100).toFixed(0)}% through session · ${hms((nc-now)/1000)} to close`; pill="Market open"; pillCol="#5fb088"; barW=f*100; }
@@ -975,7 +985,7 @@ function renderSession(){
     : `<div style="position:relative;height:9px;border-radius:5px;background:var(--panel-2);overflow:hidden;margin-top:11px"><div style="position:absolute;left:0;top:0;height:100%;width:${barW.toFixed(1)}%;background:linear-gradient(90deg,#2a6f63,#46b8ad)"></div><div style="position:absolute;top:-3px;width:2px;height:15px;background:var(--fg);left:${barW.toFixed(1)}%"></div></div>`;
   const marks = noSession
     ? `<div style="display:flex;justify-content:center;margin-top:6px;font:400 9.5px var(--mono);color:var(--muted)"><span>no NYSE session today${MKT.next_open?` · next open ${etWhen(MKT.next_open)}`:""}</span></div>`
-    : `<div style="display:flex;justify-content:space-between;margin-top:6px;font:400 9.5px var(--mono);color:var(--muted)"><span>09:30 open</span><span>12:45</span><span>16:00 close</span></div>`;
+    : `<div style="display:flex;justify-content:space-between;margin-top:6px;font:400 9.5px var(--mono);color:var(--muted)"><span>09:30 open</span><span>${hhmm((open+close)/2)}</span><span>${hhmm(close)} close</span></div>`;
   host.innerHTML=ovPanel("Trading session","NYSE · regular hours", head+bar+marks, "14px 16px", "clock");
 }
 
@@ -1302,8 +1312,14 @@ function renderExec(ex){
   const manSteps = man && ({liquidate:[["Trim spread",0],["Equity sells",1],["Settle",2]],
                             leverage:[["Overlay",0],["Equity scale",1],["Settle",2]],
                             trade:[["Order",0],["Settle",1]]})[man.action];
+  // Manual phase from real state: nothing posted yet → step 0; orders working → the equity
+  // step; posted-and-none-working → settling. (Was a crude n_working ternary that showed
+  // "Settle" for the first seconds of a run.)
+  const manIdx = manSteps ? Math.min(
+    ex.n_working > 0 ? manSteps.length - 2 : ((ex.chase||[]).length ? manSteps.length - 1 : 0),
+    manSteps.length - 1) : 0;
   const stripSrc = (man && man.action!=="rebalance" && manSteps)
-    ? manSteps.map(([l,i])=>[l,i,i < (ex.n_working?1:2), i === (ex.n_working?1:2)])
+    ? manSteps.map(([l,i])=>[l,i,i<manIdx,i===manIdx])
     : [[closeLbl,0],["Equity chase",1],[writeLbl,2],["Snapshot",3]].map(([l,i])=>[l,i,i<curIdx,i===curIdx]);
   const strip=stripSrc.map(([l,,done,cur])=>{
     const mark=done?"✓":cur?"●":"○";
@@ -1540,7 +1556,7 @@ function renderManualActions(rows, panelId){
   const G="display:grid;grid-template-columns:150px 110px 70px 1fr 90px 1.2fr;gap:12px;align-items:center";
   const head=`<div style="${G};padding:8px 16px;font:600 9.5px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Time (UTC)</span><span>Action</span><span>Mode</span><span>Params</span><span>Status</span><span>Result</span></div>`;
   let body;
-  if(!(rows&&rows.length)) body='<div style="padding:16px;font:400 11.5px var(--mono);color:var(--muted)">No manual actions yet — the Execute button\'s audit trail lands here.</div>';
+  if(!(rows&&rows.length)) body='<div style="padding:16px;font:400 11.5px var(--mono);color:var(--muted)">No manual actions yet — the Execute tab\'s audit trail lands here.</div>';
   else body=`<div class="sf-scroll" style="max-height:320px;overflow-y:auto">${rows.map(a=>{
     const sc=a.status==="done"?"var(--green)":a.status==="failed"?"var(--red)":"var(--amber)";
     const ps=Object.entries(a.params||{}).map(([k,v])=>`${k}=${v}`).join(" ")||"–";
@@ -1722,7 +1738,7 @@ function renderFootstrip(s){
     item("Target Δ", (META.target_delta||0.30).toFixed(2)) +
     `<span class="fnote">${META.live?'self-updating from Alpaca':'monitor bridges Alpaca → snapshots'}</span>`;
 }
-function humanAge(s){ s=Math.round(s); return s<60?s+"s":s<3600?Math.round(s/60)+"m":Math.round(s/3600)+"h"; }
+function humanAge(s){ s=Math.max(0,Math.round(s)); return s<60?s+"s":s<3600?Math.round(s/60)+"m":Math.round(s/3600)+"h"; }
 
 // header status: ticks every second so "checked" counts up (and the ↻/30s poll reset it),
 // while "data Nago" shows the snapshot's true age and turns amber when stale (>6 min).

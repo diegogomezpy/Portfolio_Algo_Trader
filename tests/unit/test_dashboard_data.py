@@ -130,11 +130,11 @@ def test_api_nav_history_daily_samples_the_past_full_res_today():
         for hour, nav in ((10, 101.0), (12, 102.0), (15, 103.0)):     # 3 intraday on one old day
             c.execute(insert(db.snapshots).values(
                 ts=old_day.replace(hour=hour, minute=0, second=0, microsecond=0),
-                nav=nav, cash=0.0, last_equity=nav, weights={}, positions={}, drift=None))
+                nav=nav, cash=0.0, last_equity=nav, weights={}, positions={"AAPL": 100}, drift=None))
         for mins, nav in ((30, 201.0), (5, 202.0)):                   # 2 recent (within 24h)
             c.execute(insert(db.snapshots).values(
                 ts=now - _td(minutes=mins), nav=nav, cash=0.0, last_equity=nav,
-                weights={}, positions={}, drift=None))
+                weights={}, positions={"AAPL": 100}, drift=None))
     hist = data.api_nav_history(eng, limit=1000)
     navs = [h["nav"] for h in hist]
     assert navs == [103.0, 201.0, 202.0]        # old day → its close only; today → full res
@@ -388,7 +388,7 @@ def _seed_curve(eng, navs):
         for i, nv in enumerate(navs):
             c.execute(insert(db.snapshots).values(
                 ts=datetime(2026, 6, 1 + i, 16), nav=float(nv), cash=0.0, last_equity=float(navs[0]),
-                weights={}, positions={}, drift=0.0))
+                weights={}, positions={"AAPL": 100}, drift=0.0))
 
 
 def test_api_risk_drawdown_and_var():
@@ -667,3 +667,21 @@ def test_api_track_record_unavailable_while_all_cash():
             last_equity=1_000_000.0, weights={}, positions={}, drift=0.0))
     tr = data.api_track_record(eng)
     assert tr["available"] is False and tr["exposure_start"] is None
+
+
+def test_api_risk_windows_like_track_record():
+    # Returns and Risk must describe the SAME period: exposure-gated default + start override.
+    eng = _engine()
+    with eng.begin() as c:
+        rows = [(datetime(2026, 6, 1, 16), 1_000_000.0, {}),                # cash parked
+                (datetime(2026, 6, 2, 16), 1_000_000.0, {"AAPL": 400}),     # first exposure
+                (datetime(2026, 6, 3, 16), 990_000.0, {"AAPL": 400}),
+                (datetime(2026, 6, 4, 16), 1_005_000.0, {"AAPL": 400})]
+        for ts, nv, pos in rows:
+            c.execute(insert(db.snapshots).values(
+                ts=ts, nav=nv, cash=0.0, last_equity=1_000_000.0, weights={},
+                positions=pos, drift=0.0))
+    r = data.api_risk(eng)
+    assert r["days"] == 3                                    # cash day excluded by default
+    assert data.api_risk(eng, start="2026-06-04")["days"] == 1
+    assert data.api_risk(eng, start="2026-06-01")["days"] == 4

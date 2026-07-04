@@ -772,11 +772,17 @@ def api_risk(db_engine, *, window: int = 10, start: str | None = None) -> dict:
     until the monitor writes snapshots; ``mature`` gates the noisy annualized figures (< ~10 days).
     """
     with db_engine.connect() as conn:
-        rows = conn.execute(
-            select(db.snapshots.c.ts, db.snapshots.c.nav).order_by(db.snapshots.c.ts)).all()
-    rows = [(ts, nav) for ts, nav in rows if nav is not None]
-    if start:
-        rows = [(ts, nav) for ts, nav in rows if str(ts)[:10] >= start]
+        raw = conn.execute(
+            select(db.snapshots.c.ts, db.snapshots.c.nav, db.snapshots.c.positions)
+            .order_by(db.snapshots.c.ts)).all()
+    raw = [(ts, nav, pos) for ts, nav, pos in raw if nav is not None]
+    # Same window rule as the track record (Returns and Risk must describe the SAME period):
+    # default start = first exposure; the dashboard's date picker overrides via ``start``.
+    exposure_start = next((str(ts)[:10] for ts, _n, pos in raw
+                           if any(q for q in (pos or {}).values())), None)
+    eff_start = start or exposure_start
+    rows = ([(ts, nav) for ts, nav, _p in raw if str(ts)[:10] >= eff_start]
+            if eff_start else [])
     if not rows:
         return {"available": False, "days": 0}
     dates, navs = _daily_nav(rows)
