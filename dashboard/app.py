@@ -784,6 +784,14 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
         except Exception:  # noqa: BLE001
             out["leverage_override"] = out["leverage_override_since"] = None
             out["settings_target_leverage"] = None
+        if client is not None:  # margin headroom for the console (spread collateral competes)
+            try:
+                acct = client.account()
+                for k in ("buying_power", "maintenance_margin", "cash"):
+                    v = acct.get(k)
+                    out[k] = float(v) if v is not None else None
+            except Exception:  # noqa: BLE001
+                pass
         if not running and proc is not None:
             out["outcome"] = _last_outcome()
         return out
@@ -883,6 +891,37 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
     @app.get("/api/manual_actions")
     def manual_actions_history(limit: int = 20) -> list:
         return data.api_manual_actions(db_engine, limit)
+
+    @app.get("/api/premium_ledger")
+    def premium_ledger() -> dict:
+        return data.api_premium_ledger(db_engine)
+
+    @app.get("/api/tca")
+    def tca() -> dict:
+        return data.api_tca(db_engine)
+
+    @app.get("/api/config")
+    def config_snapshot() -> dict:
+        """Read-only live parameter snapshot — which wing/delta/coverage/leverage the engine
+        runs RIGHT NOW, visible without SSH. Values only; no secrets live in settings."""
+        if settings is None:
+            return {"available": False}
+
+        def grab(section: str, keys: list[str]) -> dict:
+            s = getattr(settings, section, None)
+            return {k: getattr(s, k) for k in keys if getattr(s, k, None) is not None}
+
+        return {"available": True,
+                "portfolio": grab("portfolio", ["target_leverage", "max_leverage",
+                                                "min_position_pct", "max_sector_pct",
+                                                "max_single_name_pct"]),
+                "covered_calls": grab("covered_calls", ["overlay_mode", "overwrite_coverage",
+                                                        "target_delta", "wing_delta",
+                                                        "min_dte_entry", "max_dte_entry",
+                                                        "min_bid_frac", "iv_window"]),
+                "execution": grab("execution", ["min_trade_usd", "marketable_limit_bps",
+                                                "equity_repeg_s", "close_buffer_s",
+                                                "ladder_steps", "rebalance_hour_et"])}
 
     # Today's booked FEE activities, cached 5 min (they land next-morning; no need to hammer).
     _ATTR_FEES = {"ts": 0.0, "total": 0.0}
@@ -1061,8 +1100,18 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
         """Drawdown / volatility / VaR analytics from the equity curve (Postgres-only).
 
         ``start`` (ISO date) windows the curve to match the Performance start-date picker.
+        Rolling realized β vs SPY is layered on when there's enough curve (needs the
+        benchmark closes — cached; failure just omits the series).
         """
-        return data.api_risk(db_engine, start=start)
+        r = data.api_risk(db_engine, start=start)
+        if r.get("available") and r.get("days", 0) >= 12:
+            try:
+                from engine import benchmarks as _bm
+                spy = _bm.align(_bm.closes("SPY", r["dates"][0]), r["dates"])
+                r["rolling_beta"] = data.rolling_beta(r["nav"], spy)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("rolling beta unavailable: %s", exc)
+        return r
 
     @app.get("/api/risk_contrib")
     def risk_contrib() -> dict:

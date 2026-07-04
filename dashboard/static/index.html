@@ -7,7 +7,7 @@
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/fonts.css?v=1">
 <link rel="stylesheet" href="/static/theme.css?v=5">
-<link rel="stylesheet" href="/static/dashboard.css?v=4">
+<link rel="stylesheet" href="/static/dashboard.css?v=5">
 </head>
 <body>
 <div id="introOverlay" title="click to skip">
@@ -128,6 +128,7 @@
         <div id="pr-ribbon"></div>
         <div id="pr-track"></div>
         <div id="pr-bench"></div>
+        <div class="ovpanel" id="pr-premium"></div>
       </div>
     </div>
     <!-- Risk -->
@@ -141,6 +142,7 @@
         <div id="rk-ribbon"></div>
         <div id="rk-dd"></div>
         <div id="rk-rv"></div>
+        <div class="ovpanel" id="rk-beta"></div>
       </div>
     </div>
     <!-- Attribution (live P&L by holding / sector — an SFI extra beyond the mock) -->
@@ -161,6 +163,7 @@
     <!-- Execution -->
     <div class="subview flexcol" id="sub-execution" style="display:none">
       <div id="ex-slip"></div>
+      <div class="ovpanel" id="ex-tca"></div>
       <div id="ex-fees"></div>
     </div>
   </div>
@@ -177,10 +180,11 @@
       </div>
     </div>
     <div class="ovpanel" id="x-history"></div>
+    <div class="ovpanel" id="x-config"></div>
   </div>
 </div>
 
 
-<script src="/static/app.js?v=8" defer></script>
+<script src="/static/app.js?v=9" defer></script>
 </body>
 </html>

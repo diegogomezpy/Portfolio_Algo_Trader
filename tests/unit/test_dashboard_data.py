@@ -709,3 +709,65 @@ def test_api_track_record_carries_action_events_for_markers():
     ev = data.api_track_record(eng)["events"]
     assert [(e["date"], e["type"]) for e in ev] == [
         ("2026-07-01", "rebalance"), ("2026-07-03", "liquidate")]
+
+
+def test_api_premium_ledger_months_and_capture():
+    eng = _engine()
+    with eng.begin() as c:
+        c.execute(insert(db.options_lifecycle).values(          # July: write +1638
+            ts=datetime(2026, 7, 6), event_type="write", underlying="SPY",
+            option_symbol="SPY260731C00764000", contracts=19, premium=1638.0))
+        c.execute(insert(db.options_lifecycle).values(          # August: close pays back 500
+            ts=datetime(2026, 8, 3), event_type="close", underlying="SPY",
+            option_symbol="SPY260731C00764000", contracts=19, premium=-500.0))
+        c.execute(insert(db.options_lifecycle).values(          # August: new write +1700
+            ts=datetime(2026, 8, 3), event_type="write", underlying="SPY",
+            option_symbol="SPY260828C00780000", contracts=19, premium=1700.0))
+    pl = data.api_premium_ledger(eng)
+    assert pl["available"] and [m["month"] for m in pl["months"]] == ["2026-07", "2026-08"]
+    assert pl["months"][1] == {"month": "2026-08", "collected": 1700.0, "paid": 500.0, "net": 1200.0}
+    assert pl["collected"] == 3338.0 and pl["net"] == 2838.0
+    assert abs(pl["capture"] - 2838.0 / 3338.0) < 1e-4          # capture rounds to 4dp
+    assert data.api_premium_ledger(_engine())["available"] is False
+
+
+def test_api_tca_per_cycle_style_rounds_and_bps():
+    eng = _engine()
+    with eng.begin() as c:
+        # normal cycle: AAPL posts twice (2 rounds), fills at 100.1 vs first mid 100 → +10bps
+        for rnd in ("r1", "r2"):
+            c.execute(insert(db.order_events).values(
+                ts=datetime(2026, 7, 6, 14, 0 if rnd == "r1" else 1), cycle_key="2026-07-06",
+                round=rnd, symbol="AAPL", side="buy", event="post", tier="moderate",
+                bid=99.9, ask=100.1, mid=100.0, limit_price=100.0, qty=100,
+                filled_qty=0 if rnd == "r1" else 100, target_qty=100))
+        c.execute(insert(db.orders).values(
+            id="o1", rebalance_cycle="2026-07-06", symbol="AAPL", side="buy", qty=100,
+            status="filled", filled_qty=100, filled_avg_price=100.10))
+        # express cycle: market sell, fills below mid → negative (earned) bps for a sell? sign: sell => -(px-mid)
+        c.execute(insert(db.order_events).values(
+            ts=datetime(2026, 7, 7, 14), cycle_key="manual-liquidate-x", round="r1",
+            symbol="XOM", side="sell", event="post", tier="express", mid=50.0,
+            qty=50, filled_qty=50, target_qty=50))
+        c.execute(insert(db.orders).values(
+            id="o2", rebalance_cycle="manual-liquidate-x", symbol="XOM", side="sell", qty=50,
+            status="filled", filled_qty=50, filled_avg_price=49.95))
+    t = data.api_tca(eng)
+    assert t["available"] and len(t["cycles"]) == 2
+    by = {c["cycle"]: c for c in t["cycles"]}
+    n = by["2026-07-06"]
+    assert n["style"] == "normal" and n["avg_rounds"] == 2.0 and n["filled"] == 1
+    assert abs(n["avg_bps"] - 10.0) < 0.5
+    x = by["manual-liquidate-x"]
+    assert x["style"] == "express" and abs(x["avg_bps"] - 10.0) < 0.5   # sold 5bps*... paid 10bps below mid
+
+
+def test_rolling_beta_flat_vs_tracking():
+    # A curve that IS the benchmark → β 1; a flat curve → β 0. (The benchmark must have
+    # return VARIANCE — constant daily returns give var 0 → None, correctly.)
+    bench, px = [], 100.0
+    for i in range(30):
+        px *= 1 + (0.012 if i % 2 else -0.006)
+        bench.append(px)
+    assert data.rolling_beta(list(bench), bench, window=10)[-1] == 1.0
+    assert data.rolling_beta([100.0] * 30, bench, window=10)[-1] == 0.0

@@ -828,7 +828,114 @@ def api_risk(db_engine, *, window: int = 10, start: str | None = None) -> dict:
         "var95_1d_usd": (var_param * nav_now) if var_param is not None else None,
         "hist_var95_1d_pct": var_hist, "cvar95_1d_pct": cvar,
         "returns": rets,   # daily-return series → distribution histogram
+        "nav": navs,       # the route layers rolling realized beta on top (needs SPY closes)
     }
+
+
+def rolling_beta(navs: list, bench: list, window: int = 20) -> list:
+    """Rolling realized β of the NAV curve vs an aligned benchmark close series.
+
+    Cov/var over ``window`` daily returns, aligned to the dates (leading Nones while the
+    window fills). This is the live check on the low-beta thesis — and, once stable, the
+    honest multiplier for a beta-matched benchmark line.
+    """
+    rs, rb = [], []
+    for i in range(1, len(navs)):
+        rs.append(navs[i] / navs[i - 1] - 1 if navs[i - 1] else 0.0)
+        rb.append(bench[i] / bench[i - 1] - 1 if (bench[i] and bench[i - 1]) else 0.0)
+    out: list = [None]
+    for i in range(len(rs)):
+        if i + 1 < window:
+            out.append(None)
+            continue
+        a, b = rs[i + 1 - window:i + 1], rb[i + 1 - window:i + 1]
+        ma, mb = sum(a) / window, sum(b) / window
+        var = sum((x - mb) ** 2 for x in b) / window
+        cov = sum((x - ma) * (y - mb) for x, y in zip(a, b)) / window
+        out.append(round(cov / var, 3) if var > 1e-12 else None)
+    return out
+
+
+def api_premium_ledger(db_engine) -> dict:
+    """Monthly option-premium ledger from ``options_lifecycle``: collected (+, writes),
+    paid back (−, closes/rolls), net, and lifetime capture — the REALIZED answer to
+    'what premium yield am I earning', replacing estimates once cycles land."""
+    try:
+        with db_engine.connect() as conn:
+            rows = conn.execute(
+                select(db.options_lifecycle.c.ts, db.options_lifecycle.c.premium)
+                .order_by(db.options_lifecycle.c.ts)).all()
+    except Exception:  # noqa: BLE001
+        return {"available": False, "months": []}
+    months: dict[str, dict] = {}
+    for ts, prem in rows:
+        if prem is None:
+            continue
+        d = months.setdefault(str(ts)[:7], {"month": str(ts)[:7], "collected": 0.0,
+                                            "paid": 0.0, "net": 0.0})
+        p = float(prem)
+        d["collected" if p >= 0 else "paid"] += abs(p)
+        d["net"] += p
+    out = [{k: (round(v, 2) if isinstance(v, float) else v) for k, v in m.items()}
+           for m in months.values()]
+    coll = round(sum(m["collected"] for m in out), 2)
+    paid = round(sum(m["paid"] for m in out), 2)
+    return {"available": bool(out), "months": out, "collected": coll, "paid": paid,
+            "net": round(coll - paid, 2),
+            "capture": round((coll - paid) / coll, 4) if coll else None}
+
+
+def api_tca(db_engine, limit: int = 12) -> dict:
+    """Transaction-cost analysis over the chase telemetry: per cycle — style (normal vs
+    express), names, fill rate, average ladder rounds, and average signed slippage vs the
+    first-post mid (+bps = paid up). Express vs normal finally becomes a measured number."""
+    try:
+        with db_engine.connect() as conn:
+            ev = conn.execute(select(db.order_events).order_by(db.order_events.c.ts)).mappings().all()
+            od = conn.execute(select(db.orders.c.rebalance_cycle, db.orders.c.symbol,
+                                     db.orders.c.side, db.orders.c.filled_qty,
+                                     db.orders.c.filled_avg_price)).all()
+    except Exception:  # noqa: BLE001
+        return {"available": False, "cycles": []}
+    if not ev:
+        return {"available": False, "cycles": []}
+    fills: dict = {}
+    for cyc, sym, side, fq, fp in od:
+        if fp and fq:
+            fills[(cyc, sym)] = (str(side), float(fp))
+    cycles: dict[str, dict] = {}
+    for r in ev:
+        c = cycles.setdefault(r["cycle_key"], {"date": str(r["ts"])[:10], "syms": {},
+                                               "express": False})
+        s = c["syms"].setdefault(r["symbol"], {"mid": None, "rounds": 0, "filled": 0, "target": 0})
+        if r["event"] == "post":
+            s["rounds"] += 1
+            if s["mid"] is None and r["mid"]:
+                s["mid"] = float(r["mid"])
+        if r["tier"] == "express":
+            c["express"] = True
+        if r["filled_qty"]:
+            s["filled"] = max(s["filled"], int(r["filled_qty"]))
+        if r["target_qty"]:
+            s["target"] = max(s["target"], int(r["target_qty"]))
+    out = []
+    for key, c in cycles.items():
+        bps, rounds, n_filled = [], [], 0
+        for sym, s in c["syms"].items():
+            if s["target"] and s["filled"] >= s["target"]:
+                n_filled += 1
+            rounds.append(max(s["rounds"], 1))
+            f = fills.get((key, sym))
+            if f and s["mid"]:
+                side, px = f
+                bps.append((1 if side == "buy" else -1) * (px - s["mid"]) / s["mid"] * 1e4)
+        out.append({"cycle": key, "date": c["date"],
+                    "style": "express" if c["express"] else "normal",
+                    "names": len(c["syms"]), "filled": n_filled,
+                    "avg_rounds": round(sum(rounds) / len(rounds), 1) if rounds else None,
+                    "avg_bps": round(sum(bps) / len(bps), 1) if bps else None})
+    out.sort(key=lambda d: d["date"], reverse=True)
+    return {"available": True, "cycles": out[:limit]}
 
 
 def api_risk_contributions(db_engine) -> dict:

@@ -161,16 +161,19 @@ async function loadPerformance(){
   // actually holds positions — cash-only days before the first rebalance are excluded);
   // the date picker (_perfStart → ?start=) re-bases everything, benchmarks included.
   const w = _perfStart ? "?start=" + _perfStart : "";
-  const [tr, slip, risk, st, fees, rcx, corr] = await Promise.all(
+  const [tr, slip, risk, st, fees, rcx, corr, pl, tca] = await Promise.all(
     ["/api/track_record"+w,"/api/slippage","/api/risk"+w,"/api/state","/api/fees",
-     "/api/risk_contrib","/api/correlation"].map(get));
+     "/api/risk_contrib","/api/correlation","/api/premium_ledger","/api/tca"].map(get));
   lastFetch = Date.now(); tickFreshness();
   _perfTR=tr; _perfSlip=slip; _perfFees=fees; _perfRisk=risk; _perfSt=st; _perfRcx=rcx; _perfCorr=corr;
   if(st){ pushPx(st); renderTape(st); }   // keep the pinned ticker tape fresh on the Performance tab
   renderReturns(tr, slip, fees, risk);   // Returns sub-view (period / calendar / sharpe / annual / ribbon / growth / bench)
+  renderPremiumLedger(pl);               // realized option income (C4)
   renderRisk(risk, st, rcx, corr);       // Risk sub-view (contrib+corr / dist / ribbon / drawdown / rolling vol)
+  renderRollingBeta(risk);               // realized beta vs SPY (C4)
   renderAttribution(st);                 // Attribution sub-view — today's P&L by holding / sector
   renderExecution(slip, fees);           // Execution sub-view
+  renderTCA(tca);                        // per-cycle execution cost analysis (C4)
 }
 function setPerfPeriod(p){ _perfPeriod=p; localStorage.setItem('sepi_period', p); if(_perfTR) renderPeriodPanel(_perfTR, _perfRisk); }
 function setPerfStart(v){ _perfStart = v || ""; loadPerformance(); }
@@ -425,7 +428,7 @@ function renderReturnsTrack(tr){
   bsyms.forEach((sym,i)=>series.push({data:tr.benchmarks[sym].norm,color:bcol(sym,i),w:1.6,name:sym}));
   const legend=series.map(s=>`<span style="display:inline-flex;align-items:center;gap:6px;font:400 11.5px 'Space Grotesk';color:var(--fg-dim)"><span style="width:14px;height:3px;border-radius:2px;background:${s.color}"></span>${s.name}</span>`).join("");
   const evLegend=(tr.events&&tr.events.length)?`<span style="font:400 10.5px 'Space Grotesk';color:var(--muted);display:inline-flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#8f7ee0"></span>rebalance <span style="width:8px;height:8px;border-radius:50%;background:#d8a84b;margin-left:6px"></span>manual action</span>`:"";
-  $("pr-track").innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Growth since inception — strategy vs benchmarks</span><span class="ovhs">${tr.dates[0]} → ${tr.dates[tr.dates.length-1]}${srcInfo('benchmarks')}</span></div><div style="display:flex;gap:18px;padding:11px 18px 2px;flex-wrap:wrap;align-items:center">${legend}${evLegend}</div><div style="padding:6px 8px 10px">${perfMultiLine(tr.dates,series,tr.events)}</div></div>`;
+  $("pr-track").innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Growth since inception — strategy vs benchmarks</span><span class="ovhs">${tr.dates[0]} → ${tr.dates[tr.dates.length-1]} <button class="exm-chip" onclick="exportTrackCSV()">⤓ csv</button>${srcInfo('benchmarks')}</span></div><div style="display:flex;gap:18px;padding:11px 18px 2px;flex-wrap:wrap;align-items:center">${legend}${evLegend}</div><div style="padding:6px 8px 10px">${perfMultiLine(tr.dates,series,tr.events)}</div></div>`;
 }
 // Benchmark comparison table (mock grid) + descriptions.
 function renderBenchTable(tr){
@@ -1150,11 +1153,17 @@ function renderGauge(s,calls,ov){
     +`<text x="${cx}" y="${cy-28}" text-anchor="middle" font-size="26" fill="#eaf2fb" font-family="IBM Plex Mono" font-weight="500">${bo!=null?bo.toFixed(2):"–"}</text>`
     +`<text x="${cx}" y="${cy-11}" text-anchor="middle" font-size="10" fill="#65758c" font-family="Space Grotesk" letter-spacing="1.3">β OVERWRITTEN</text></svg>`;
   const d=dte(ov.expiration);
+  // Assignment-risk readout: how far SPY sits below the short strike (the plateau edge).
+  const dist=(ov.spot&&ov.short_strike)?(ov.short_strike/ov.spot-1):null;
+  const dCol=dist==null?'var(--muted)':dist<=0?'var(--red)':dist<0.01?'var(--amber)':'#5fb088';
+  const dState=dist==null?'':dist<=0?'in the money — assignment risk':dist<0.01?'near the strike — watch it':'upside runway before the plateau';
   const spread=(ov.short_strike!=null?fmt(ov.short_strike,0):"–")+" / "+(ov.long_strike!=null?fmt(ov.long_strike,0):"–");
   const totCredit=ov.premium_total!=null?usd(ov.premium_total):"–";
   const body=`<div style="display:flex;align-items:center;gap:10px"><div style="flex:none">${g}</div><div style="flex:1;display:flex;flex-direction:column;gap:12px;padding-left:4px">`
     +`<div style="display:flex;gap:10px">${st("Spread",spread+" C",null,`exp ${expShort(ov.expiration)} · ${d==null?"–":d+"d"}`)}${st("Net credit",ov.net_credit!=null?"$"+ov.net_credit.toFixed(2):"–","#5fb088",totCredit+" total")}</div>`
-    +`<div style="display:flex;gap:10px">${st("Short Δ",ov.short_delta==null?"–":ov.short_delta.toFixed(2))}${st("Spreads",fmt(ov.contracts))}${st("Max risk",ov.max_risk!=null?usd(ov.max_risk):"–","#cf9a5f")}</div></div></div>`;
+    +`<div style="display:flex;gap:10px">${st("Short Δ",ov.short_delta==null?"–":ov.short_delta.toFixed(2))}${st("Spreads",fmt(ov.contracts))}${st("Max risk",ov.max_risk!=null?usd(ov.max_risk):"–","#cf9a5f")}</div>`
+    +(dist!=null?`<div style="display:flex;gap:10px">${st("Spot → short strike",(dist<=0?"ITM ":"+")+(Math.abs(dist)*100).toFixed(1)+"%",dCol,dState)}</div>`:"")
+    +`</div></div>`;
   host.innerHTML=ovPanel("SPY beta overlay","β-sized call spread", body, "14px 16px", "overlay");
 }
 
@@ -1396,7 +1405,8 @@ function paintOverview(s){
   memoPaint('gauge',
     (_overlay && _overlay.mode !== "per_name")
       ? ['idx', _overlay.short_symbol, _overlay.contracts, _overlay.beta_overwritten,
-         _overlay.net_credit, _overlay.expiration]
+         _overlay.net_credit, _overlay.expiration,
+         _overlay.spot==null?null:Math.round(_overlay.spot)]
       : ['pn', (_calls||[]).map(c=>[c.option_symbol,c.contracts]),
          (s.positions||[]).map(p=>[p.symbol, p.qty, p.market_value==null?null:Math.round(p.market_value)])],
     () => renderGauge(s, _calls, _overlay));
@@ -1574,6 +1584,7 @@ async function loadPortfolio(){
 }
 
 function renderManualActions(rows, panelId){
+  _manualRows = rows || [];
   const G="display:grid;grid-template-columns:150px 110px 70px 1fr 90px 1.2fr;gap:12px;align-items:center";
   const head=`<div style="${G};padding:8px 16px;font:600 10px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Time (UTC)</span><span>Action</span><span>Mode</span><span>Params</span><span>Status</span><span>Result</span></div>`;
   let body;
@@ -1584,7 +1595,7 @@ function renderManualActions(rows, panelId){
     const r=a.result||{}; const rs=a.status==="failed"?(r.error||"–")
       : r.filled!=null?`${r.filled}/${r.submitted} filled${r.overlay_closed?` · spread ×${r.overlay_closed}`:""}`:"–";
     return `<div class="prow" style="${G};padding:9px 16px"><span class="pmono" style="font-size:11px;color:var(--muted)">${(a.ts||'').replace('T',' ').slice(0,19)}</span><span style="font:600 10.5px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:var(--fg-dim)">${a.action}</span><span class="pmono" style="font-size:10.5px;color:${a.mode==="express"?"var(--amber)":"var(--muted)"}">${a.mode||'–'}</span><span class="pmono" style="font-size:11px;color:var(--fg-dim)">${esc(ps)}</span><span style="font:600 10px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:${sc}">${a.status}</span><span class="pmono" style="font-size:11px;color:var(--fg-dim);overflow:hidden;text-overflow:ellipsis" title="${esc(String(rs))}">${esc(String(rs))}</span></div>`; }).join('')}</div>`;
-  fillPanel(panelId||"a-manual","Manual actions","execution console audit trail",head+body,"orders");
+  fillPanel(panelId||"a-manual","Manual actions",`execution console audit trail <button class="exm-chip" onclick="exportCSV('manual_actions',_manualRows)">⤓ csv</button>`,head+body,"orders");
 }
 
 // Solid sector colour for ribbons/swatches (brighter than the chip background).
@@ -1719,13 +1730,14 @@ function _isOpt(sym){ return /\d{6}[CP]\d{8}$/.test(String(sym||"")); }
 // 2026-07 audit — dead since the Overview/Portfolio overhaul replaced their panels.)
 
 function renderOrders(orders){
+  _ordersRows = orders || [];
   const G="display:grid;grid-template-columns:2fr .7fr .7fr 1fr .9fr;gap:10px;align-items:center";
   const head=`<div style="${G};padding:8px 16px;font:600 10px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Instrument</span><span>Side</span><span style="text-align:right">Qty</span><span>Status</span><span style="text-align:right">Fill px</span></div>`;
   let body;
   if(!(orders&&orders.length)) body='<div style="padding:16px;font:400 11.5px var(--mono);color:var(--muted)">No orders this session.</div>';
   else body=`<div class="sf-scroll" style="max-height:440px;overflow-y:auto">${orders.map(o=>{ const r=REF[(o.symbol||'').toUpperCase()]||{}, sc=o.side==='buy'?'var(--green)':'var(--red)';
     return `<div class="prow" style="${G};padding:8px 16px"><span style="display:flex;align-items:center;gap:10px;min-width:0">${tkrChip(o.symbol,r.sector)}<span style="font:500 12px 'Space Grotesk';color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.name||o.symbol}</span></span><span style="font:600 10px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:${sc}">${o.side||'–'}</span><span class="pmono" style="text-align:right;font-size:12px;color:var(--fg-dim)">${fmt(o.qty)}</span><span class="pmono" style="font-size:11px;color:var(--muted)">${o.status||'–'}</span><span class="pmono" style="text-align:right;font-size:12px;color:var(--fg)">${o.filled_avg_price==null?'–':usd2(o.filled_avg_price)}</span></div>`; }).join('')}</div>`;
-  fillPanel("a-orders","Recent orders","limit orders · last session",head+body,"orders");
+  fillPanel("a-orders","Recent orders",`limit orders · last session <button class="exm-chip" onclick="exportCSV('orders',_ordersRows)">⤓ csv</button>`,head+body,"orders");
 }
 
 // Alerts log — filterable by severity. _alerts holds the last fetch; _alertFilter the active pill.
@@ -1855,6 +1867,7 @@ async function loadExecute(){
   refreshExecStatus();
   pollExec();                                  // the live run panel lives on this tab now
   renderManualActions(await get("/api/manual_actions"), "x-history");
+  renderConfigPanel(await get("/api/config"));
   schedulePlan(0);
 }
 
@@ -2073,9 +2086,12 @@ async function refreshExecStatus(){
     const cash = (_ovS && _ovS.nav != null)
       ? `${usd(_ovS.cash)} cash · ${_ovS.gross_exposure!=null?usd(_ovS.gross_exposure)+" gross · ":""}${_ovS.leverage!=null?_ovS.leverage.toFixed(2)+"×":""}`
       : "–";
+    const bp = st.buying_power != null
+      ? `${usd(st.buying_power)} BP${st.maintenance_margin!=null?` · ${usd(st.maintenance_margin)} maint. margin`:""}`
+      : "–";
     inner = line("Server token", tokLn) + line("Browser token", btok)
           + line("Standing leverage target", lev) + line("Cash / exposure", cash)
-          + line("Manual run", run);
+          + line("Buying power", bp) + line("Manual run", run);
   }
   host.innerHTML = `<div class="ovhead"><span class="ovhk">Console status</span>
       <span class="ovhs"><button class="exm-btn" onclick="execCancelAll()" style="padding:5px 10px">Cancel all orders</button></span></div>
@@ -2139,3 +2155,88 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 tickSession();                    // paint the ET clock immediately on boot
+
+// ===================== Review-pass C4 additions =====================
+// Premium ledger — the REALIZED answer to "what premium yield am I earning".
+function renderPremiumLedger(pl){
+  const host=$("pr-premium"); if(!host) return;
+  if(!pl || !pl.available){ fillPanel("pr-premium","Premium ledger","realized option income by month",'<div style="padding:16px;font:400 11.5px var(--mono);color:var(--muted)">No option premium booked yet — the first spread write starts this ledger.</div>',"overlay"); return; }
+  const kc=(l,v,c)=>`<div style="background:var(--panel);padding:12px 16px"><div style="font:600 10px 'Space Grotesk';letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">${l}</div><div style="font:500 19px var(--mono);margin-top:6px;color:${c||'var(--fg)'}">${v}</div></div>`;
+  const kpis=`<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line-soft)">${
+    kc("Collected", usd(pl.collected))}${kc("Paid back", usd(pl.paid), pl.paid?'var(--red)':'var(--fg)')}${
+    kc("Net kept", usd(pl.net), pl.net>=0?'var(--green)':'var(--red)')}${
+    kc("Capture", pl.capture==null?'—':(pl.capture*100).toFixed(0)+'%')}</div>`;
+  const mx=Math.max(1,...pl.months.map(m=>Math.max(m.collected,m.paid)));
+  const head=`<div style="display:grid;grid-template-columns:70px 1fr 1fr 90px;gap:10px;padding:10px 0 4px;font:600 10px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted)"><span>Month</span><span>Collected</span><span>Paid back</span><span style="text-align:right">Net</span></div>`;
+  const rows=pl.months.map(m=>`<div style="display:grid;grid-template-columns:70px 1fr 1fr 90px;gap:10px;align-items:center;padding:6px 0">
+    <span class="pmono" style="font-size:11px;color:var(--fg-dim)">${m.month}</span>
+    <span style="height:9px;border-radius:4px;background:#0c1626;overflow:hidden"><span style="display:block;height:100%;width:${(m.collected/mx*100).toFixed(1)}%;background:var(--accent)"></span></span>
+    <span style="height:9px;border-radius:4px;background:#0c1626;overflow:hidden"><span style="display:block;height:100%;width:${(m.paid/mx*100).toFixed(1)}%;background:var(--red);opacity:.8"></span></span>
+    <span class="pmono" style="text-align:right;font-size:12px;color:${m.net>=0?'var(--green)':'var(--red)'}">${(m.net>=0?'+':'-')+'$'+fmt(Math.abs(m.net),0)}</span></div>`).join("");
+  fillPanel("pr-premium","Premium ledger",`realized option income · lifetime net ${usd(pl.net)}`,kpis+`<div style="padding:4px 16px 12px">${head}${rows}</div>`,"overlay");
+}
+
+// TCA — express vs normal becomes a measured number instead of a debate.
+function renderTCA(t){
+  const host=$("ex-tca"); if(!host) return;
+  if(!t || !t.available){ fillPanel("ex-tca","Execution cost analysis","per cycle · normal vs express",'<div style="padding:16px;font:400 11.5px var(--mono);color:var(--muted)">Appears after the first cycle writes chase telemetry.</div>',"orders"); return; }
+  const G="display:grid;grid-template-columns:1.4fr 90px 70px 90px 100px 120px;gap:10px;align-items:center";
+  const head=`<div style="${G};padding:8px 16px;font:600 10px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Cycle</span><span>Style</span><span style="text-align:right">Names</span><span style="text-align:right">Filled</span><span style="text-align:right">Avg rounds</span><span style="text-align:right">Avg bps vs mid</span></div>`;
+  const body=t.cycles.map(c=>`<div class="prow" style="${G};padding:8px 16px">
+    <span class="pmono" style="font-size:11px;color:var(--fg-dim);overflow:hidden;text-overflow:ellipsis">${c.cycle}</span>
+    <span style="font:600 10px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:${c.style==='express'?'var(--amber)':'var(--accent)'}">${c.style}</span>
+    <span class="pmono" style="text-align:right;font-size:12px">${c.names}</span>
+    <span class="pmono" style="text-align:right;font-size:12px">${c.filled}/${c.names}</span>
+    <span class="pmono" style="text-align:right;font-size:12px">${c.avg_rounds==null?'—':c.avg_rounds}</span>
+    <span class="pmono" style="text-align:right;font-size:12px;color:${c.avg_bps==null?'var(--muted)':c.avg_bps>0?'var(--red)':'var(--green)'}">${c.avg_bps==null?'—':(c.avg_bps>0?'+':'')+c.avg_bps}</span></div>`).join("");
+  fillPanel("ex-tca","Execution cost analysis","per cycle · +bps = paid up vs the first-post mid",head+body,"orders");
+}
+
+// Rolling realized β vs SPY — the live check on the low-beta thesis (and the future
+// multiplier for a beta-matched benchmark line).
+function renderRollingBeta(risk){
+  const host=$("rk-beta"); if(!host) return;
+  const rb=(risk&&risk.rolling_beta)||[];
+  const pts=rb.filter(v=>v!=null);
+  if(!pts.length){ fillPanel("rk-beta","Rolling realized β vs SPY","20-day window",'<div style="padding:16px;font:400 11.5px var(--mono);color:var(--muted)">Appears after ~4 weeks of live curve (a 20-day rolling window needs to fill).</div>',"navcurve"); return; }
+  const last=pts[pts.length-1];
+  const W=1160,H=140,pl2=44,pr2=12,pt2=10,pb2=14,pw=W-pl2-pr2,ph=H-pt2-pb2;
+  let lo=Math.min(0,...pts),hi=Math.max(1,...pts); const pad=(hi-lo)*.15||.1; lo-=pad; hi+=pad;
+  const n=rb.length,X=i=>pl2+(n<=1?0:i/(n-1)*pw),Y=v=>pt2+(hi-v)/(hi-lo)*ph;
+  const grid=cssv('--grid','#16223a'),mut=cssv('--muted','#65758c'),acc=cssv('--accent','#46b8ad');
+  let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="none" style="display:block;height:140px">`;
+  [0,0.5,1].forEach(v=>{ if(v>lo&&v<hi){ const y=Y(v).toFixed(1);
+    s+=`<line x1="${pl2}" y1="${y}" x2="${W-pr2}" y2="${y}" stroke="${grid}"${v===1?' stroke-dasharray="4 3"':''}/><text x="${pl2-6}" y="${(+y+3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="${mut}" font-family="IBM Plex Mono">${v.toFixed(1)}</text>`; }});
+  let d="",started=false;
+  rb.forEach((v,i)=>{ if(v==null) return; d+=(started?"L":"M")+X(i).toFixed(1)+" "+Y(v).toFixed(1); started=true; });
+  s+=`<path d="${d}" fill="none" stroke="${acc}" stroke-width="1.8" stroke-linejoin="round"/></svg>`;
+  fillPanel("rk-beta","Rolling realized β vs SPY",`20-day window · now ${last.toFixed(2)} · live check on the low-beta thesis`,`<div style="padding:8px 10px 10px">${s}</div>`,"navcurve");
+}
+
+// Live parameters — which wing/delta/coverage/leverage the engine runs NOW, without SSH.
+function renderConfigPanel(cfg){
+  const host=$("x-config"); if(!host) return;
+  if(!cfg || !cfg.available){ fillPanel("x-config","Live parameters","settings.yaml as the engine runs it",'<div style="padding:16px;font:400 11.5px var(--mono);color:var(--muted)">settings unavailable</div>',"clock"); return; }
+  const sec=(title,obj)=>`<div><div style="font:600 10px 'Space Grotesk';letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px">${title}</div>${
+    Object.entries(obj||{}).map(([k,v])=>`<div style="display:flex;justify-content:space-between;gap:12px;padding:4px 0;border-top:1px solid var(--line-soft)"><span style="font:400 11.5px 'Space Grotesk';color:var(--fg-dim)">${k}</span><span class="pmono" style="font-size:11.5px;color:var(--fg)">${v}</span></div>`).join("")}</div>`;
+  fillPanel("x-config","Live parameters","what the engine runs right now · read-only (edit settings.yaml + deploy to change)",
+    `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px 26px;padding:12px 16px">${sec("Portfolio",cfg.portfolio)}${sec("SPY overlay",cfg.covered_calls)}${sec("Execution",cfg.execution)}</div>`,"clock");
+}
+
+// CSV exports — client-side, from whatever the panel already loaded.
+let _manualRows=[], _ordersRows=[];
+function exportCSV(name, rows){
+  if(!rows || !rows.length){ toast("nothing to export", true); return; }
+  const keys=Object.keys(rows[0]);
+  const cell=v=>{ if(v==null) v=""; if(typeof v==="object") v=JSON.stringify(v);
+    v=String(v).replace(/"/g,'""'); return /[",\n]/.test(v)?`"${v}"`:v; };
+  const csv=[keys.join(",")].concat(rows.map(r=>keys.map(k=>cell(r[k])).join(","))).join("\n");
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+  a.download=`sepi_${name}_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click(); URL.revokeObjectURL(a.href);
+}
+function exportTrackCSV(){
+  if(!_perfTR || !_perfTR.dates || !_perfTR.dates.length){ toast("no track record yet", true); return; }
+  exportCSV("track_record", _perfTR.dates.map((d,i)=>({date:d, nav:_perfTR.nav[i], norm:_perfTR.norm[i]})));
+}
