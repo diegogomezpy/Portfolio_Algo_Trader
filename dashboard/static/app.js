@@ -119,10 +119,10 @@ async function get(p){ try { const r = await fetch(p); return r.ok ? await r.jso
 
 // ---- Track record (live paper performance vs benchmarks + slippage) -------
 const cssv = (n,f) => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || f;
-// Benchmarks are the engine's set (SPY + CBOE BXMD/BXRD). Neutral/purple/blue only — teal is the
-// strategy series and green/red are signed-P&L only (design language §8).
-const BENCH_VAR = {SPY:"--spy", BXMD:"--purple", BXRD:"--sec-tech"};
-function bcol(sym,i){ const palette=["--spy","--purple","--sec-tech"]; return cssv(BENCH_VAR[sym]||palette[i%palette.length], "#8893a3"); }
+// Benchmarks are the engine's set (SPY/BXMD/BXRD + JEPI the peer fund + USMV the passive
+// min-vol sleeve check). Teal stays the strategy series; green/red are signed-P&L only (§8).
+const BENCH_VAR = {SPY:"--spy", BXMD:"--purple", BXRD:"--sec-tech", JEPI:"--amber", USMV:"--sec-health"};
+function bcol(sym,i){ const palette=["--spy","--purple","--sec-tech","--amber","--sec-health"]; return cssv(BENCH_VAR[sym]||palette[i%palette.length], "#8893a3"); }
 
 // ---- Performance tab (built to the design mock: Returns / Risk / Execution) ----------------
 // Cache of the last payloads so the in-panel period tabs re-render without a refetch.

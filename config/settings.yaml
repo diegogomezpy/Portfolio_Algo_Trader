@@ -214,7 +214,10 @@ dashboard:
   public_url: "https://sharpe-engine.tailc7136e.ts.net"
   public_user: "viewer"
   # Track-record + backtest benchmarks (defined in engine/benchmarks.py with descriptions).
-  # SPY = S&P 500 beta; BXMD = CBOE S&P 500 30-delta BuyWrite (the direct analog of our 0.30Δ
-  # covered calls, from CBOE's CDN); BXRD = CBOE Russell 2000 30-delta BuyWrite (small-cap
-  # covered-call reference). Add a symbol here only after registering it in engine/benchmarks.py.
-  live_benchmarks: [SPY, BXMD, BXRD]
+  # SPY = S&P 500 beta (the null hypothesis); BXMD = CBOE S&P 500 30-delta BuyWrite (the
+  # mechanical analog of our 0.30Δ overwrite, from CBOE's CDN); BXRD = CBOE Russell 2000
+  # 30-delta BuyWrite (small-cap covered-call reference); JEPI = the real-world peer fund
+  # (low-vol book + index overwriting — compare Sharpe, our 2× gross runs ~2× its beta);
+  # USMV = passive min-vol (the stock-picking sleeve's benchmark, no options/leverage).
+  # Add a symbol here only after registering it in engine/benchmarks.py.
+  live_benchmarks: [SPY, BXMD, BXRD, JEPI, USMV]

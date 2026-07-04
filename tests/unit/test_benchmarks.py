@@ -44,3 +44,21 @@ def test_fetch_closes_multi(tmp_path, monkeypatch):
                          fetch_cboe=lambda t: {"2021-01-04": 100.0},
                          fetch_yf=lambda t, s: {"2021-01-04": 370.0})
     assert res["SPY"]["2021-01-04"] == 370.0 and res["BXMD"]["2021-01-04"] == 100.0
+
+
+def test_new_peer_benchmarks_registered():
+    # JEPI (the real-world peer fund) + USMV (the passive min-vol sleeve check), 2026-07-03.
+    assert B.BENCHMARKS["JEPI"]["source"] == "yf"
+    assert "Premium Income" in B.describe("JEPI")["name"] and B.describe("JEPI")["desc"]
+    assert B.BENCHMARKS["USMV"]["source"] == "yf"
+    assert "Min Vol" in B.describe("USMV")["name"]
+
+
+def test_every_configured_live_benchmark_is_registered():
+    # The YAML comment's rule, enforced: a symbol in dashboard.live_benchmarks that nobody
+    # registered would render as a silent empty curve.
+    import yaml
+    from pathlib import Path
+    cfg = yaml.safe_load((Path(__file__).resolve().parents[2] / "config" / "settings.yaml").read_text())
+    for sym in cfg["dashboard"]["live_benchmarks"]:
+        assert sym in B.BENCHMARKS, f"{sym} in live_benchmarks but not registered in engine/benchmarks.py"

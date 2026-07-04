@@ -49,6 +49,21 @@ BENCHMARKS: dict[str, dict] = {
                 "correlation to the Russell vs 0.84 to the S&P). A 'covered calls on small caps' "
                 "reference point; differs from our large-cap book mainly by universe.",
     },
+    "JEPI": {
+        "source": "yf", "ticker": "JEPI", "name": "JPMorgan Equity Premium Income (JEPI)",
+        "desc": "The $30B+ real-world peer: a defensive low-volatility equity book plus "
+                "systematic S&P call overwriting for premium income — the same product design "
+                "as this fund, run by professionals at ~0.65 beta unlevered. The 'is SEPI a "
+                "good version of this strategy?' head-to-head (compare Sharpe, not raw return — "
+                "our 2× gross runs roughly twice JEPI's beta).",
+    },
+    "USMV": {
+        "source": "yf", "ticker": "USMV", "name": "iShares MSCI Min Vol USA (USMV)",
+        "desc": "Passive minimum-volatility US equity ETF — the low-beta stock-picking sleeve's "
+                "benchmark with no options and no leverage. If the factor model earns its keep, "
+                "the equity book should beat this on risk-adjusted return; if not, the stock "
+                "selection is just expensive USMV.",
+    },
 }
 
 
