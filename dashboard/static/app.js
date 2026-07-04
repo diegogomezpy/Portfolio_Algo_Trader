@@ -273,7 +273,7 @@ function renderPeriodPanel(tr, risk){
   const slice=sliceNav(tr.dates, tr.nav, _perfPeriod), m=statsOf(slice), imm=slice.length<11;
   const per=_perfPeriod;
   const tabBtns=["1M","3M","YTD","ITD"].map(p=>`<button onclick="setPerfPeriod('${p}')" style="background:${p===per?'var(--panel-2)':'transparent'};border:0;border-radius:5px;padding:4px 13px;font:600 11px 'Space Grotesk';color:${p===per?'var(--fg)':'var(--muted)'};cursor:pointer">${p}</button>`).join("");
-  const kc=(label,val,color,sub)=>`<div style="background:var(--panel);padding:12px 16px"><div style="font:600 9px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">${label}</div><div style="font:500 21px var(--mono);margin-top:7px;color:${color};font-variant-numeric:tabular-nums">${val}</div><div style="font:400 10px var(--mono);margin-top:4px;color:var(--muted)">${sub}</div></div>`;
+  const kc=(label,val,color,sub)=>`<div style="background:var(--panel);padding:12px 16px"><div style="font:600 10px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">${label}</div><div style="font:500 21px var(--mono);margin-top:7px;color:${color};font-variant-numeric:tabular-nums">${val}</div><div style="font:400 10px var(--mono);margin-top:4px;color:var(--muted)">${sub}</div></div>`;
   const cells=[
     kc("Return", spct(m.total), m.total==null?'var(--fg)':(m.total>=0?'var(--green)':'var(--red)'), per+" · net"),
     kc("Sharpe"+(imm?"*":""), m.sharpe!=null?m.sharpe.toFixed(2):"—", 'var(--fg)', imm?"needs ≥10 days":"annualized"),
@@ -311,8 +311,8 @@ function calHtml(monthly){
     const byYear={}; (monthly||[]).forEach(c=>{ (byYear[c.year]||(byYear[c.year]={}))[c.month]=c; });
     const years=Object.keys(byYear).map(Number).sort();
     let head=`<div style="display:grid;grid-template-columns:${gc};gap:3px;margin-bottom:3px"><span></span>`
-      +MON.map(m=>`<span style="text-align:center;font:600 9px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:var(--muted)">${m}</span>`).join("")
-      +`<span style="text-align:center;font:600 9px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:#8295ab">YTD</span></div>`;
+      +MON.map(m=>`<span style="text-align:center;font:600 10px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:var(--muted)">${m}</span>`).join("")
+      +`<span style="text-align:center;font:600 10px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:#8295ab">YTD</span></div>`;
     const rows=years.map(y=>{
       let ytd=1, any=false, cs="";
       for(let m=1;m<=12;m++){ const c=byYear[y][m];
@@ -342,7 +342,7 @@ function sharpeStripHtml(risk){
     const grid=cssv('--grid','#16223a'),mut=cssv('--muted','#65758c'),acc=cssv('--accent','#46b8ad');
     let g=`<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;height:232px">`;
     g+=`<rect x="${pl}" y="${Y(1.5).toFixed(1)}" width="${pw}" height="${(Y(1.0)-Y(1.5)).toFixed(1)}" fill="rgba(70,184,173,.07)"/>`;
-    [0,0.5,1,1.5,2].forEach(v=>{ if(v>hi||v<lo) return; const y=Y(v).toFixed(1); g+=`<line x1="${pl}" y1="${y}" x2="${W-pr}" y2="${y}" stroke="${grid}"/><text x="${pl-6}" y="${(+y+3).toFixed(1)}" text-anchor="end" font-size="9" fill="${mut}" font-family="IBM Plex Mono">${v.toFixed(1)}</text>`; });
+    [0,0.5,1,1.5,2].forEach(v=>{ if(v>hi||v<lo) return; const y=Y(v).toFixed(1); g+=`<line x1="${pl}" y1="${y}" x2="${W-pr}" y2="${y}" stroke="${grid}"/><text x="${pl-6}" y="${(+y+3).toFixed(1)}" text-anchor="end" font-size="10" fill="${mut}" font-family="IBM Plex Mono">${v.toFixed(1)}</text>`; });
     if(1>=lo && 1<=hi){ const y1=Y(1).toFixed(1); g+=`<line x1="${pl}" y1="${y1}" x2="${W-pr}" y2="${y1}" stroke="${acc}" stroke-dasharray="3 3" stroke-opacity=".5"/>`; }
     const d=vals.map((v,k)=>(k?"L":"M")+X(k).toFixed(1)+" "+Y(v).toFixed(1)).join(" ");
     g+=`<path d="${d}" fill="none" stroke="${acc}" stroke-width="1.8" stroke-linejoin="round"/><circle cx="${X(idx.length-1).toFixed(1)}" cy="${Y(vals[vals.length-1]).toFixed(1)}" r="3" fill="${acc}"/></svg>`;
@@ -371,11 +371,11 @@ function annualHtml(tr){
     const Y=v=>pt+(hi-v)/(hi-lo)*ph, gw=pw/A.length, bw=Math.min(gw*0.32,40);
     const grid=cssv('--grid','#16223a'),mut=cssv('--muted','#65758c');
     let g=`<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;height:270px">`;
-    [hi,(hi+lo)/2,0,lo].forEach(v=>{ const y=Y(v).toFixed(1); g+=`<line x1="${pl}" y1="${y}" x2="${W-pr}" y2="${y}" stroke="${grid}"/><text x="${pl-6}" y="${(+y+3).toFixed(1)}" text-anchor="end" font-size="9" fill="${mut}" font-family="IBM Plex Mono">${(v*100).toFixed(0)}</text>`; });
+    [hi,(hi+lo)/2,0,lo].forEach(v=>{ const y=Y(v).toFixed(1); g+=`<line x1="${pl}" y1="${y}" x2="${W-pr}" y2="${y}" stroke="${grid}"/><text x="${pl-6}" y="${(+y+3).toFixed(1)}" text-anchor="end" font-size="10" fill="${mut}" font-family="IBM Plex Mono">${(v*100).toFixed(0)}</text>`; });
     const y0=Y(0);
     A.forEach((a,i)=>{ const cx=pl+gw*i+gw/2;
       [[a.strat||0,'#46b8ad',-1],[a.spy||0,'#5a6781',1]].forEach(arr=>{ const v=arr[0],c=arr[1],s=arr[2]; const x=cx+s*bw/2-bw/2, yy=Y(v), top=Math.min(yy,y0), hh=Math.abs(yy-y0); g+=`<rect x="${x.toFixed(1)}" y="${top.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1,hh).toFixed(1)}" rx="1.5" fill="${c}"/>`; });
-      g+=`<text x="${cx.toFixed(1)}" y="${H-22}" text-anchor="middle" font-size="9" fill="${mut}" font-family="IBM Plex Mono">'${String(a.y).slice(2)}</text>`; });
+      g+=`<text x="${cx.toFixed(1)}" y="${H-22}" text-anchor="middle" font-size="10" fill="${mut}" font-family="IBM Plex Mono">'${String(a.y).slice(2)}</text>`; });
     g+="</svg>";
     const leg=`<div style="display:flex;gap:16px;justify-content:center;padding-top:2px"><span style="display:inline-flex;align-items:center;gap:6px;font:400 10.5px 'Space Grotesk';color:var(--fg-dim)"><span style="width:12px;height:3px;background:#46b8ad;border-radius:2px"></span>Strategy</span><span style="display:inline-flex;align-items:center;gap:6px;font:400 10.5px 'Space Grotesk';color:#aab4c3"><span style="width:12px;height:3px;background:#5a6781;border-radius:2px"></span>SPY</span></div>`;
     return g+leg;
@@ -430,7 +430,7 @@ function renderReturnsTrack(tr){
 // Benchmark comparison table (mock grid) + descriptions.
 function renderBenchTable(tr){
   const bsyms=Object.keys(tr.benchmarks||{}), gc="1.6fr .8fr .8fr .8fr .8fr .8fr";
-  const head=`<div style="display:grid;grid-template-columns:${gc};gap:10px;padding:8px 16px;font:600 9.5px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Series</span><span style="text-align:right">Return</span><span style="text-align:right">Ann.</span><span style="text-align:right">Vol</span><span style="text-align:right">Sharpe</span><span style="text-align:right">Max DD</span></div>`;
+  const head=`<div style="display:grid;grid-template-columns:${gc};gap:10px;padding:8px 16px;font:600 10px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Series</span><span style="text-align:right">Return</span><span style="text-align:right">Ann.</span><span style="text-align:right">Vol</span><span style="text-align:right">Sharpe</span><span style="text-align:right">Max DD</span></div>`;
   const rowH=(name,swatch,m)=>`<div style="display:grid;grid-template-columns:${gc};gap:10px;align-items:center;padding:9px 16px;border-bottom:1px solid var(--line-soft)"><span style="display:flex;align-items:center;gap:9px;font:500 12.5px 'Space Grotesk';color:var(--fg)"><span style="width:10px;height:3px;border-radius:2px;background:${swatch};flex:none"></span>${name}</span><span style="text-align:right;font:500 12px var(--mono);color:${m.total_return==null?'var(--fg)':(m.total_return>=0?'var(--green)':'var(--red)')}">${spct(m.total_return)}</span><span style="text-align:right;font:400 12px var(--mono);color:var(--fg-dim)">${tr.mature&&m.ann_return!=null?spct(m.ann_return):"—"}</span><span style="text-align:right;font:400 12px var(--mono);color:var(--fg-dim)">${m.ann_vol!=null?pct(m.ann_vol):"—"}</span><span style="text-align:right;font:400 12px var(--mono);color:var(--fg-dim)">${tr.mature&&m.sharpe!=null?m.sharpe.toFixed(2):"—"}</span><span style="text-align:right;font:400 12px var(--mono);color:${m.max_drawdown==null?'var(--fg-dim)':'var(--red)'}">${pct(m.max_drawdown)}</span></div>`;
   let rows=rowH("Strategy (this book)", cssv('--accent','#46b8ad'), tr);
   bsyms.forEach((sym,i)=>rows+=rowH(tr.benchmarks[sym].name||sym, bcol(sym,i), tr.benchmarks[sym]));
@@ -448,7 +448,7 @@ function renderExecution(slip, fees){
   const gc="2fr .6fr .7fr 1fr 1fr .9fr .9fr";
   let slipBody;
   if(slip && slip.n_fills){
-    const head=`<div style="display:grid;grid-template-columns:${gc};gap:10px;padding:8px 16px;font:600 9.5px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Instrument</span><span>Side</span><span style="text-align:right">Qty</span><span style="text-align:right">Intended</span><span style="text-align:right">Filled</span><span style="text-align:right">Slippage</span><span style="text-align:right">Cost</span></div>`;
+    const head=`<div style="display:grid;grid-template-columns:${gc};gap:10px;padding:8px 16px;font:600 10px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Instrument</span><span>Side</span><span style="text-align:right">Qty</span><span style="text-align:right">Intended</span><span style="text-align:right">Filled</span><span style="text-align:right">Slippage</span><span style="text-align:right">Cost</span></div>`;
     const rows=slip.fills.map(r=>{ const bpsPos=r.slippage_bps>0, costPos=r.slippage_usd>0;
       const ref=REF[String(r.symbol).toUpperCase()]||{}, sec=ref.sector, nm=ref.name||r.symbol;
       return `<div style="display:grid;grid-template-columns:${gc};gap:10px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--line-soft)">`
@@ -515,12 +515,12 @@ function corrHtml(corr){
     if(!corr || !corr.available || !(corr.symbols||[]).length) return '<div class="se-empty" style="min-height:130px;display:flex;align-items:center;justify-content:center;text-align:center">correlation appears once the market-data feed returns enough daily history for the held names</div>';
     const syms=corr.symbols, n=syms.length, W=508, cell=(W-70)/n, H=70+cell*n, lab="#8295ab";
     let g=`<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;height:${H}px">`;
-    syms.forEach((s,i)=>{ g+=`<text x="${(64+cell*i+cell/2).toFixed(1)}" y="14" text-anchor="middle" font-size="9.5" fill="${lab}" font-family="IBM Plex Mono">${s}</text><text x="58" y="${(26+cell*i+cell/2+3).toFixed(1)}" text-anchor="end" font-size="9.5" fill="${lab}" font-family="IBM Plex Mono">${s}</text>`; });
+    syms.forEach((s,i)=>{ g+=`<text x="${(64+cell*i+cell/2).toFixed(1)}" y="14" text-anchor="middle" font-size="10" fill="${lab}" font-family="IBM Plex Mono">${s}</text><text x="58" y="${(26+cell*i+cell/2+3).toFixed(1)}" text-anchor="end" font-size="10" fill="${lab}" font-family="IBM Plex Mono">${s}</text>`; });
     for(let i=0;i<n;i++)for(let j=0;j<n;j++){ const c=corr.matrix[i][j], x=64+cell*j, y=22+cell*i;
       if(c==null){ g+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(cell-2).toFixed(1)}" height="${(cell-2).toFixed(1)}" rx="2" fill="none" stroke="#1b2740" stroke-dasharray="2 2"/>`; continue; }
       const col=c>=0?`rgba(70,184,173,${(0.06+c*0.6).toFixed(2)})`:`rgba(207,111,102,${(0.06-c*0.5).toFixed(2)})`;
       g+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(cell-2).toFixed(1)}" height="${(cell-2).toFixed(1)}" rx="2" fill="${col}"/>`;
-      if(cell>40) g+=`<text x="${(x+cell/2-1).toFixed(1)}" y="${(y+cell/2+2).toFixed(1)}" text-anchor="middle" font-size="9" fill="${Math.abs(c)>0.5?'#eaf2fb':lab}" font-family="IBM Plex Mono">${c.toFixed(2)}</text>`; }
+      if(cell>40) g+=`<text x="${(x+cell/2-1).toFixed(1)}" y="${(y+cell/2+2).toFixed(1)}" text-anchor="middle" font-size="10" fill="${Math.abs(c)>0.5?'#eaf2fb':lab}" font-family="IBM Plex Mono">${c.toFixed(2)}</text>`; }
     return g+"</svg>";
   })();
   const sub=(corr&&corr.available)?`pairwise · trailing ${corr.window||60}d`:"pairwise · trailing 60d";
@@ -542,9 +542,9 @@ function distHtml(risk){
     const mut=cssv('--muted','#65758c'),acc=cssv('--accent','#46b8ad');
     let g=`<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;height:250px">`;
     bins.forEach((c,i)=>{ const x=pl+bw*i, y=Y(c), mid=lo+(i+0.5)/nb*(hi-lo); const col=mid<var95?'#cf6f66':(mid<0?'#6e4f55':'#3f7e6e'); g+=`<rect x="${(x+1).toFixed(1)}" y="${y.toFixed(1)}" width="${(bw-2).toFixed(1)}" height="${(pt+ph-y).toFixed(1)}" rx="1.5" fill="${col}"/>`; });
-    if(var95!=null){ const vx=X(var95).toFixed(1); g+=`<line x1="${vx}" y1="${pt}" x2="${vx}" y2="${pt+ph}" stroke="#cf6f66" stroke-width="1.5" stroke-dasharray="3 2"/><text x="${vx}" y="${pt-3}" text-anchor="middle" font-size="9.5" fill="#cf6f66" font-family="IBM Plex Mono">VaR ${(var95*100).toFixed(1)}%</text>`; }
-    const mxx=X(mean).toFixed(1); g+=`<line x1="${mxx}" y1="${pt}" x2="${mxx}" y2="${pt+ph}" stroke="${acc}" stroke-width="1.5"/><text x="${mxx}" y="${pt-3}" text-anchor="middle" font-size="9.5" fill="${acc}" font-family="IBM Plex Mono">μ</text>`;
-    for(let t=0;t<=4;t++){ const v=lo+(hi-lo)*t/4; g+=`<text x="${X(v).toFixed(1)}" y="${H-12}" text-anchor="middle" font-size="9" fill="${mut}" font-family="IBM Plex Mono">${(v*100).toFixed(1)}%</text>`; }
+    if(var95!=null){ const vx=X(var95).toFixed(1); g+=`<line x1="${vx}" y1="${pt}" x2="${vx}" y2="${pt+ph}" stroke="#cf6f66" stroke-width="1.5" stroke-dasharray="3 2"/><text x="${vx}" y="${pt-3}" text-anchor="middle" font-size="10" fill="#cf6f66" font-family="IBM Plex Mono">VaR ${(var95*100).toFixed(1)}%</text>`; }
+    const mxx=X(mean).toFixed(1); g+=`<line x1="${mxx}" y1="${pt}" x2="${mxx}" y2="${pt+ph}" stroke="${acc}" stroke-width="1.5"/><text x="${mxx}" y="${pt-3}" text-anchor="middle" font-size="10" fill="${acc}" font-family="IBM Plex Mono">μ</text>`;
+    for(let t=0;t<=4;t++){ const v=lo+(hi-lo)*t/4; g+=`<text x="${X(v).toFixed(1)}" y="${H-12}" text-anchor="middle" font-size="10" fill="${mut}" font-family="IBM Plex Mono">${(v*100).toFixed(1)}%</text>`; }
     return g+"</svg>";
   })();
   return ovPanel("Daily return distribution", `${a.length} daily return${a.length===1?'':'s'} · 95% VaR`, body, "12px 12px 8px", "risk");
@@ -1002,8 +1002,8 @@ function renderSession(){
     ? `<div style="position:relative;height:9px;border-radius:5px;background:var(--panel-2);margin-top:11px;background-image:repeating-linear-gradient(45deg,transparent,transparent 5px,#16223a 5px,#16223a 10px)"></div>`
     : `<div style="position:relative;height:9px;border-radius:5px;background:var(--panel-2);overflow:hidden;margin-top:11px"><div style="position:absolute;left:0;top:0;height:100%;width:${barW.toFixed(1)}%;background:linear-gradient(90deg,#2a6f63,#46b8ad)"></div><div style="position:absolute;top:-3px;width:2px;height:15px;background:var(--fg);left:${barW.toFixed(1)}%"></div></div>`;
   const marks = noSession
-    ? `<div style="display:flex;justify-content:center;margin-top:6px;font:400 9.5px var(--mono);color:var(--muted)"><span>no NYSE session today${MKT.next_open?` · next open ${etWhen(MKT.next_open)}`:""}</span></div>`
-    : `<div style="display:flex;justify-content:space-between;margin-top:6px;font:400 9.5px var(--mono);color:var(--muted)"><span>09:30 open</span><span>${hhmm((open+close)/2)}</span><span>${hhmm(close)} close</span></div>`;
+    ? `<div style="display:flex;justify-content:center;margin-top:6px;font:400 10px var(--mono);color:var(--muted)"><span>no NYSE session today${MKT.next_open?` · next open ${etWhen(MKT.next_open)}`:""}</span></div>`
+    : `<div style="display:flex;justify-content:space-between;margin-top:6px;font:400 10px var(--mono);color:var(--muted)"><span>09:30 open</span><span>${hhmm((open+close)/2)}</span><span>${hhmm(close)} close</span></div>`;
   host.innerHTML=ovPanel("Trading session","NYSE · regular hours", head+bar+marks, "14px 16px", "clock");
 }
 
@@ -1056,7 +1056,7 @@ function renderNavHero(s){
         <div style="display:flex;align-items:baseline;gap:14px;margin-top:8px">
           <div id="navbig" class="ovflash" style="font:500 46px/1 'Space Grotesk';letter-spacing:-.01em;color:var(--fg);font-variant-numeric:tabular-nums;padding:1px 6px;margin:-1px -6px">${usd(nav)}</div>
           <div id="navpnl" class="ovflash" style="font:500 14px var(--mono);color:${dayColor};padding:1px 5px;margin:-1px -5px">${daySub}</div>
-          ${sessTag?`<span style="font:600 8.5px 'Space Grotesk';letter-spacing:.07em;text-transform:uppercase;color:var(--amber);background:rgba(216,168,75,.10);border:1px solid rgba(216,168,75,.28);border-radius:4px;padding:2px 6px;align-self:center">${sessTag}</span>`:''}
+          ${sessTag?`<span style="font:600 10px 'Space Grotesk';letter-spacing:.07em;text-transform:uppercase;color:var(--amber);background:rgba(216,168,75,.10);border:1px solid rgba(216,168,75,.28);border-radius:4px;padding:2px 6px;align-self:center">${sessTag}</span>`:''}
         </div>
         <div style="margin-top:11px;display:flex;align-items:center;gap:10px"><svg width="240" height="38" viewBox="0 0 240 38" preserveAspectRatio="none" style="display:block"><path d="${sparkP(navs.slice(-48),240,38,2)}" fill="none" stroke="${smallCol}" stroke-width="1.6" stroke-linejoin="round"/></svg><span style="font:400 10px var(--mono);color:var(--muted)">intraday · live</span></div>
       </div>
@@ -1076,7 +1076,7 @@ function renderNavHero(s){
 }
 
 function kpiCell(label,val,sub,opts){ opts=opts||{};
-  return `<div style="background:var(--panel);padding:13px 16px"><div style="font:600 9.5px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">${label}</div>`
+  return `<div style="background:var(--panel);padding:13px 16px"><div style="font:600 10px 'Space Grotesk';letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">${label}</div>`
     +`<div style="font:500 22px var(--mono);margin-top:8px;color:${opts.valColor||'var(--fg)'}">${val}</div>${opts.extra||''}`
     +`<div style="font:400 10.5px var(--mono);margin-top:5px;color:${opts.subColor||'var(--muted)'}">${sub||''}</div></div>`;
 }
@@ -1132,9 +1132,9 @@ function expShort(iso){ if(!iso) return "–"; const p=String(iso).split("-"); r
 function renderGauge(s,calls,ov){
   const host=$("ov-gauge"); if(!host) return;
   if(ov && ov.mode==="per_name"){ renderCoveredGauge(host,s,calls); return; }
-  const st=(l,v,c,sub)=>`<div style="flex:1;min-width:0"><div style="font:600 8.5px 'Space Grotesk';letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">${l}</div>`
+  const st=(l,v,c,sub)=>`<div style="flex:1;min-width:0"><div style="font:600 10px 'Space Grotesk';letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">${l}</div>`
     +`<div style="font:500 16px var(--mono);color:${c||'var(--fg)'};margin-top:5px;white-space:nowrap">${v}</div>`
-    +(sub?`<div style="font:400 9.5px var(--mono);color:var(--muted);margin-top:2px">${sub}</div>`:"")+`</div>`;
+    +(sub?`<div style="font:400 10px var(--mono);color:var(--muted);margin-top:2px">${sub}</div>`:"")+`</div>`;
   if(!ov || !ov.active){
     const body=`<div style="padding:18px 16px;font:400 11.5px var(--mono);color:var(--muted);line-height:1.55">`
       +`No SPY spread open — the overlay writes one beta-sized SPY call spread (short ~0.30Δ / long wing) at each monthly rebalance, sized to the book's market beta.</div>`;
@@ -1148,7 +1148,7 @@ function renderGauge(s,calls,ov){
     return `<path d="M${x0.toFixed(1)} ${y0.toFixed(1)} A${rr} ${rr} 0 ${large} ${sw} ${x1.toFixed(1)} ${y1.toFixed(1)}" fill="none" stroke="${c}" stroke-width="${wd}" stroke-linecap="round"/>`; };
   const g=`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="display:block">${arc(a0,a1,"#16223a",11)}${frac>0.001?arc(a0,ang,"#46b8ad",11):""}`
     +`<text x="${cx}" y="${cy-28}" text-anchor="middle" font-size="26" fill="#eaf2fb" font-family="IBM Plex Mono" font-weight="500">${bo!=null?bo.toFixed(2):"–"}</text>`
-    +`<text x="${cx}" y="${cy-11}" text-anchor="middle" font-size="8.5" fill="#65758c" font-family="Space Grotesk" letter-spacing="1.3">β OVERWRITTEN</text></svg>`;
+    +`<text x="${cx}" y="${cy-11}" text-anchor="middle" font-size="10" fill="#65758c" font-family="Space Grotesk" letter-spacing="1.3">β OVERWRITTEN</text></svg>`;
   const d=dte(ov.expiration);
   const spread=(ov.short_strike!=null?fmt(ov.short_strike,0):"–")+" / "+(ov.long_strike!=null?fmt(ov.long_strike,0):"–");
   const totCredit=ov.premium_total!=null?usd(ov.premium_total):"–";
@@ -1177,8 +1177,8 @@ function renderCoveredGauge(host,s,calls){
     return `<path d="M${x0.toFixed(1)} ${y0.toFixed(1)} A${rr} ${rr} 0 ${large} ${sw} ${x1.toFixed(1)} ${y1.toFixed(1)}" fill="none" stroke="${c}" stroke-width="${wd}" stroke-linecap="round"/>`; };
   const g=`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="display:block">${arc(a0,a1,"#16223a",11)}${cov>0.001?arc(a0,ang,"#46b8ad",11):""}`
     +`<text x="${cx}" y="${cy-28}" text-anchor="middle" font-size="29" fill="#eaf2fb" font-family="IBM Plex Mono" font-weight="500">${(cov*100).toFixed(0)}%</text>`
-    +`<text x="${cx}" y="${cy-11}" text-anchor="middle" font-size="9" fill="#65758c" font-family="Space Grotesk" letter-spacing="1.5">COVERED</text></svg>`;
-  const st=(l,v,c)=>`<div style="flex:1"><div style="font:600 8.5px 'Space Grotesk';letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">${l}</div><div style="font:500 16px var(--mono);color:${c||'var(--fg)'};margin-top:5px">${v}</div></div>`;
+    +`<text x="${cx}" y="${cy-11}" text-anchor="middle" font-size="10" fill="#65758c" font-family="Space Grotesk" letter-spacing="1.5">COVERED</text></svg>`;
+  const st=(l,v,c)=>`<div style="flex:1"><div style="font:600 10px 'Space Grotesk';letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">${l}</div><div style="font:500 16px var(--mono);color:${c||'var(--fg)'};margin-top:5px">${v}</div></div>`;
   const body=`<div style="display:flex;align-items:center;gap:10px"><div style="flex:none">${g}</div><div style="flex:1;display:flex;flex-direction:column;gap:12px;padding-left:4px">`
     +`<div style="display:flex;gap:10px">${st("Net delta",netDelta.toFixed(2))}${st("Theta / day",theta?"+"+usd(theta):"–","#5fb088")}</div>`
     +`<div style="display:flex;gap:10px">${st("Prem. yield",yld==null?"–":yld.toFixed(1)+"%","#5fb088")}${st("Calls open",fmt((calls||[]).length))}</div></div></div>`;
@@ -1249,19 +1249,22 @@ function chaseTrack(o){
     ? `<div style="position:relative;height:18px;border-radius:4px;background:linear-gradient(90deg,#0c1626,#12203a);border:1px solid var(--line-soft)">`
       +`<span style="position:absolute;left:${(fr(mid)*100).toFixed(1)}%;top:2px;bottom:2px;width:1px;background:#33415e"></span>`
       +`<span style="position:absolute;left:${(fr(lp)*100).toFixed(1)}%;top:-1px;bottom:-1px;width:2px;background:${mc};box-shadow:0 0 6px ${mc};transform:translateX(-1px);transition:left .5s var(--ease)"></span>`
-      +`<span style="position:absolute;left:5px;top:4px;font:500 9px var(--mono);color:var(--muted)">${usd2(lo)}</span>`
-      +`<span style="position:absolute;right:5px;top:4px;font:500 9px var(--mono);color:var(--muted)">${usd2(hi)}</span></div>`
-    : `<div style="height:18px;border-radius:4px;background:#0c1626;display:flex;align-items:center;justify-content:center;font:400 9px var(--mono);color:var(--muted)">${lp!=null?'limit '+usd2(lp):'—'}</div>`;
+      +`<span style="position:absolute;left:5px;top:4px;font:500 10px var(--mono);color:var(--muted)">${usd2(lo)}</span>`
+      +`<span style="position:absolute;right:5px;top:4px;font:500 10px var(--mono);color:var(--muted)">${usd2(hi)}</span></div>`
+    : `<div style="height:18px;border-radius:4px;background:#0c1626;display:flex;align-items:center;justify-content:center;font:400 10px var(--mono);color:var(--muted)">${lp!=null?'limit '+usd2(lp):'—'}</div>`;
+  const statusTip = rejected ? 'the broker rejected this order — deferred to the cross-day queue'
+    : filled ? `filled${(o.n_rounds||0)>1?` after ${o.n_rounds} ladder rounds`:''}`
+    : `limit ladder round ${String(o.round||'').replace(/^r/,'')||'1'} — the child limit re-pegs from the mid toward the touch each round until it fills`;
   return `<div style="display:grid;grid-template-columns:50px 1fr 92px;gap:10px;align-items:center;padding:5px 0">`
     +`<span style="font:600 10px var(--mono);color:var(--fg-dim)">${o.symbol}</span>`
     +`<div>${track}<div style="height:3px;margin-top:3px;border-radius:2px;background:#0c1626;overflow:hidden"><span style="display:block;height:100%;width:${fillW}%;background:${mc};opacity:.65;transition:width .4s var(--ease)"></span></div></div>`
-    +`<span style="text-align:right;font:500 9.5px 'Space Grotesk';letter-spacing:.02em;text-transform:uppercase;color:${statusCol}">${statusTxt}</span></div>`;
+    +`<span style="text-align:right;font:500 10px 'Space Grotesk';letter-spacing:.02em;text-transform:uppercase;color:${statusCol}" data-tip="${statusTip}">${statusTxt}</span></div>`;
 }
 function chaseBoard(ex){
   const orders=(ex.chase||[]).filter(o=>o.bid!=null||o.limit_price!=null).slice(0,10);
   if(!orders.length) return "";
   return `<div style="border-top:1px solid var(--line-soft);padding:10px 16px 12px">`
-    +`<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:5px"><span style="font:600 9px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Chase board</span><span style="font:400 9.5px var(--mono);color:var(--muted);opacity:.75">bid ← limit walks → ask</span></div>`
+    +`<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:5px"><span style="font:600 10px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Chase board</span><span style="font:400 10px var(--mono);color:var(--muted);opacity:.75">bid ← limit walks → ask</span></div>`
     +orders.map(chaseTrack).join("")+`</div>`;
 }
 
@@ -1292,11 +1295,11 @@ function rotationFlow(ex){
       +`<text x="${rightX+nodeW+7}" y="${(ry+h/2+3.5).toFixed(1)}" text-anchor="start" font-size="10.5" fill="#aab4c3" font-family="IBM Plex Mono">${b.symbol}</text>`;
     ry+=h+6; oy+=h; });
   g+=`<rect x="${cashX}" y="${top}" width="${nodeW}" height="${Math.max(2,cashH).toFixed(1)}" rx="2" fill="#7c8bb0"/>`
-    +`<text x="${(cashX+nodeW/2).toFixed(1)}" y="${(top+cashH+15).toFixed(1)}" text-anchor="middle" font-size="9" fill="#8695ad" font-family="Space Grotesk" letter-spacing="1.5">CASH</text>`
+    +`<text x="${(cashX+nodeW/2).toFixed(1)}" y="${(top+cashH+15).toFixed(1)}" text-anchor="middle" font-size="10" fill="#8695ad" font-family="Space Grotesk" letter-spacing="1.5">CASH</text>`
     +`<text x="${leftX-7}" y="${(H-10)}" text-anchor="end" font-size="10" fill="#65758c" font-family="Space Grotesk">sold ${abbr(raised)}</text>`
     +`<text x="${rightX+nodeW+7}" y="${(H-10)}" text-anchor="start" font-size="10" fill="#65758c" font-family="Space Grotesk">bought ${abbr(deployed)}</text></svg>`;
   return `<div style="border-top:1px solid var(--line-soft);padding:9px 16px 6px">`
-    +`<div style="font:600 9px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:2px">Rotation — cash → names</div>${g}</div>`;
+    +`<div style="font:600 10px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:2px">Rotation — cash → names</div>${g}</div>`;
 }
 
 // ---- Animated fills tape (Phase 3): a live marquee of recent fills, buys teal / sells red -------
@@ -1309,7 +1312,7 @@ function fillsTape(ex){
   const seq=fl.map(chip).join("");
   const t=(typeof performance!=='undefined'?performance.now():Date.now())/1000;
   return `<div style="border-top:1px solid var(--line-soft);padding:9px 16px;display:flex;align-items:center;gap:12px;overflow:hidden">`
-    +`<span style="display:inline-flex;align-items:center;gap:6px;flex:none"><span style="width:6px;height:6px;border-radius:50%;background:#5fb088;animation:pulse 1.8s infinite"></span><span style="font:600 9px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Fills</span></span>`
+    +`<span style="display:inline-flex;align-items:center;gap:6px;flex:none"><span style="width:6px;height:6px;border-radius:50%;background:#5fb088;animation:pulse 1.8s infinite"></span><span style="font:600 10px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Fills</span></span>`
     +`<div style="overflow:hidden;flex:1;-webkit-mask-image:linear-gradient(90deg,transparent,#000 5%,#000 95%,transparent);mask-image:linear-gradient(90deg,transparent,#000 5%,#000 95%,transparent)">`
     +`<div style="display:inline-flex;white-space:nowrap;font:400 11px var(--mono);animation:tape-scroll 42s linear infinite;animation-delay:-${(t%42).toFixed(2)}s">${seq}${seq}</div></div></div>`;
 }
@@ -1350,7 +1353,7 @@ function renderExec(ex){
     return `<div style="display:grid;grid-template-columns:58px 1fr 56px;gap:8px;align-items:center;padding:4px 0">`
       +`<span style="font:600 10px var(--mono);color:var(--fg-dim)">${n.symbol}</span>`
       +`<span style="height:8px;border-radius:4px;background:#0c1626;overflow:hidden;display:block"><span style="display:block;height:100%;width:${fw}%;background:${c};transition:width .4s var(--ease)"></span></span>`
-      +`<span style="text-align:right;font:600 8.5px 'Space Grotesk';letter-spacing:.03em;text-transform:uppercase;color:${c}">${n.status}</span></div>`; }).join("");
+      +`<span style="text-align:right;font:600 10px 'Space Grotesk';letter-spacing:.03em;text-transform:uppercase;color:${c}">${n.status}</span></div>`; }).join("");
   const body=`<div style="display:flex;gap:18px;flex-wrap:wrap;padding:11px 16px;border-bottom:1px solid var(--line-soft)">${strip}</div>`
     +`<div style="display:flex;align-items:center;gap:14px;padding:12px 16px">`
     +`<span style="font:500 13px var(--mono);color:var(--fg);white-space:nowrap">${ex.n_filled} / ${ex.n_target} <span style="color:var(--muted);font-size:11px">filled</span></span>`
@@ -1365,7 +1368,7 @@ function renderExec(ex){
                           liquidate:`Liquidation ${mp.pct!=null?(+mp.pct)+"%":""}`,
                           leverage:`Leverage → ${mp.target!=null?(+mp.target).toFixed(2)+"×":""}`,
                           trade:`Manual ${(mp.side||"trade").toUpperCase()} ${mp.symbol||""}`}[man.action] || "Manual action");
-  const title=`<span style="display:inline-flex;align-items:center;gap:7px"><span style="width:8px;height:8px;border-radius:50%;background:${man?"#d9a441":"#5fb088"};box-shadow:0 0 0 3px ${man?"rgba(217,164,65,.18)":"rgba(95,176,136,.18)"}"></span>${man?manLbl:"Live rebalance"}${man?` <span style="font:600 9px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:2px 6px">${man.mode}</span>`:""}</span>`;
+  const title=`<span style="display:inline-flex;align-items:center;gap:7px"><span style="width:8px;height:8px;border-radius:50%;background:${man?"#d9a441":"#5fb088"};box-shadow:0 0 0 3px ${man?"rgba(217,164,65,.18)":"rgba(95,176,136,.18)"}"></span>${man?manLbl:"Live rebalance"}${man?` <span style="font:600 10px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:2px 6px">${man.mode}</span>`:""}</span>`;
   host.innerHTML=ovPanel(title, phaseName, body, "0", "orders");
 }
 async function pollExec(){ try{ renderExec(await get("/api/execution")); }catch(e){} }
@@ -1444,7 +1447,7 @@ function renderPPositions(s){
   const rows=(s.positions||[]).filter(p=>p.symbol&&!_isOpt(p.symbol)&&p.qty);
   const G="display:grid;grid-template-columns:1.8fr .75fr .72fr .95fr 1fr 1.35fr .8fr .62fr;gap:10px;align-items:center";
   const maxW=Math.max(0.01,...rows.map(p=>p.weight||0),...rows.map(p=>p.target_weight||0));
-  const head=`<div style="${G};padding:8px 16px;font:600 9.5px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Instrument</span><span style="text-align:right">Last</span><span style="text-align:right">Day</span><span>20-tick</span><span style="text-align:right">Mkt value</span><span>Allocation vs target</span><span style="text-align:right">Δ vs tgt</span><span style="text-align:right">Trade</span></div>`;
+  const head=`<div style="${G};padding:8px 16px;font:600 10px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Instrument</span><span style="text-align:right">Last</span><span style="text-align:right">Day</span><span>20-tick</span><span style="text-align:right">Mkt value</span><span>Allocation vs target</span><span style="text-align:right">Δ vs tgt</span><span style="text-align:right">Trade</span></div>`;
   const body=rows.map(p=>{ const chg=p.day_pct,c=chg==null?'var(--muted)':chg>=0?'var(--green)':'var(--red)';
     const px=p.last_price!=null?p.last_price:(p.qty?p.market_value/p.qty:null),r=REF[p.symbol.toUpperCase()]||{};
     const spk=sparkP((_px[p.symbol]||[]).slice(-16),92,22,2),d=(p.weight!=null&&p.target_weight!=null)?p.weight-p.target_weight:null;
@@ -1507,11 +1510,11 @@ function renderPCalls(s,calls,ov){
   // SPY beta-overwrite spread (index overlay): a defined-risk detail card, not a per-name table.
   if(ov && ov.mode!=="per_name"){ renderPOverlay(s,ov); return; }
   const G="display:grid;grid-template-columns:1.3fr .6fr .8fr .8fr .55fr .8fr;gap:8px;align-items:center";
-  const head=`<div style="${G};padding:8px 16px;font:600 9px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Underlying</span><span style="text-align:right">Ct</span><span style="text-align:right">Strike</span><span style="text-align:right">DTE</span><span style="text-align:right">Δ</span><span style="text-align:right">Premium</span></div>`;
+  const head=`<div style="${G};padding:8px 16px;font:600 10px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Underlying</span><span style="text-align:right">Ct</span><span style="text-align:right">Strike</span><span style="text-align:right">DTE</span><span style="text-align:right">Δ</span><span style="text-align:right">Premium</span></div>`;
   let body;
   if(!(calls&&calls.length)) body=`<div style="padding:16px;font:400 11.5px var(--mono);color:var(--muted)">No calls written — the overlay sells ~0.30-delta calls on ≥100-share holdings at each rebalance.</div>`;
   else body=`<div class="sf-scroll" style="max-height:340px;overflow:auto">${calls.map(c=>{ const d=dte(c.expiration),r=REF[(c.underlying||'').toUpperCase()]||{};
-    return `<div class="prow" style="${G};padding:8px 16px"><span style="display:flex;align-items:center;gap:8px;min-width:0">${tkrChip(c.underlying,r.sector)}<span style="font:400 9px 'Space Grotesk';color:var(--amber);letter-spacing:.04em;text-transform:uppercase">call</span></span><span class="pmono" style="text-align:right;font-size:12px;color:var(--fg-dim)">${fmt(c.contracts)}</span><span class="pmono" style="text-align:right;font-size:12px;color:var(--fg-dim)">${usd2(c.strike)}</span><span class="pmono" style="text-align:right;font-size:12px;font-weight:500;color:${d!=null&&d<=7?'var(--amber)':'var(--fg-dim)'}">${d==null?'–':d+'d'}</span><span class="pmono" style="text-align:right;font-size:12px;color:var(--fg-dim)">${c.delta==null?'–':c.delta.toFixed(2)}</span><span class="pmono" style="text-align:right;font-size:12px;font-weight:500;color:var(--green)">${usd(c.premium)}</span></div>`; }).join('')}</div>`;
+    return `<div class="prow" style="${G};padding:8px 16px"><span style="display:flex;align-items:center;gap:8px;min-width:0">${tkrChip(c.underlying,r.sector)}<span style="font:400 10px 'Space Grotesk';color:var(--amber);letter-spacing:.04em;text-transform:uppercase">call</span></span><span class="pmono" style="text-align:right;font-size:12px;color:var(--fg-dim)">${fmt(c.contracts)}</span><span class="pmono" style="text-align:right;font-size:12px;color:var(--fg-dim)">${usd2(c.strike)}</span><span class="pmono" style="text-align:right;font-size:12px;font-weight:500;color:${d!=null&&d<=7?'var(--amber)':'var(--fg-dim)'}">${d==null?'–':d+'d'}</span><span class="pmono" style="text-align:right;font-size:12px;color:var(--fg-dim)">${c.delta==null?'–':c.delta.toFixed(2)}</span><span class="pmono" style="text-align:right;font-size:12px;font-weight:500;color:var(--green)">${usd(c.premium)}</span></div>`; }).join('')}</div>`;
   const coveredSh=(calls||[]).reduce((a,c)=>a+(c.contracts||0)*100,0);
   fillPanel("p-calls","Covered calls",(calls&&calls.length)?`${calls.length} open · ${fmt(coveredSh)} sh covered`:"0 open",head+body,"calls");
 }
@@ -1524,9 +1527,9 @@ function renderPOverlay(s,ov){
   }
   const d=dte(ov.expiration);
   const legRow=(side,strike,col)=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--line-soft)">`
-    +`<span style="display:flex;align-items:center;gap:9px">${tkrChip(ov.market||"SPY","ETF")}<span style="font:600 9.5px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:${col}">${side}</span></span>`
+    +`<span style="display:flex;align-items:center;gap:9px">${tkrChip(ov.market||"SPY","ETF")}<span style="font:600 10px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:${col}">${side}</span></span>`
     +`<span class="pmono" style="font-size:13px;color:var(--fg)">${strike==null?"–":fmt(strike,0)+"C"}</span></div>`;
-  const kv=(k,v,c)=>`<div style="display:flex;flex-direction:column;gap:3px"><span style="font:600 8.5px 'Space Grotesk';letter-spacing:.07em;text-transform:uppercase;color:var(--muted)">${k}</span><span class="pmono" style="font-size:13px;color:${c||'var(--fg-dim)'}">${v}</span></div>`;
+  const kv=(k,v,c)=>`<div style="display:flex;flex-direction:column;gap:3px"><span style="font:600 10px 'Space Grotesk';letter-spacing:.07em;text-transform:uppercase;color:var(--muted)">${k}</span><span class="pmono" style="font-size:13px;color:${c||'var(--fg-dim)'}">${v}</span></div>`;
   const grid=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 12px;padding:14px 16px">`
     +kv("Expiry",`${expShort(ov.expiration)} · ${d==null?"–":d+"d"}`)
     +kv("Spreads",fmt(ov.contracts))
@@ -1543,7 +1546,7 @@ function renderPOverlay(s,ov){
 
 function renderPFactors(factors){
   const G="display:grid;grid-template-columns:1.1fr .7fr .55fr .55fr .55fr .6fr;gap:6px;align-items:center";
-  const head=`<div style="${G};padding:8px 16px;font:600 9px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Symbol</span><span style="text-align:right">Comp</span><span style="text-align:right">Qual</span><span style="text-align:right">Val</span><span style="text-align:right">Beta</span><span style="text-align:right">LoVol</span></div>`;
+  const head=`<div style="${G};padding:8px 16px;font:600 10px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Symbol</span><span style="text-align:right">Comp</span><span style="text-align:right">Qual</span><span style="text-align:right">Val</span><span style="text-align:right">Beta</span><span style="text-align:right">LoVol</span></div>`;
   let body;
   if(!(factors&&factors.length)) body=`<div style="padding:16px;font:400 11.5px var(--mono);color:var(--muted)">Factor scores appear after the next rebalance scores the book.</div>`;
   else { const rows=[...factors].sort((a,b)=>(b.composite||0)-(a.composite||0));
@@ -1572,7 +1575,7 @@ async function loadPortfolio(){
 
 function renderManualActions(rows, panelId){
   const G="display:grid;grid-template-columns:150px 110px 70px 1fr 90px 1.2fr;gap:12px;align-items:center";
-  const head=`<div style="${G};padding:8px 16px;font:600 9.5px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Time (UTC)</span><span>Action</span><span>Mode</span><span>Params</span><span>Status</span><span>Result</span></div>`;
+  const head=`<div style="${G};padding:8px 16px;font:600 10px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Time (UTC)</span><span>Action</span><span>Mode</span><span>Params</span><span>Status</span><span>Result</span></div>`;
   let body;
   if(!(rows&&rows.length)) body='<div style="padding:16px;font:400 11.5px var(--mono);color:var(--muted)">No manual actions yet — the Execute tab\'s audit trail lands here.</div>';
   else body=`<div class="sf-scroll" style="max-height:320px;overflow-y:auto">${rows.map(a=>{
@@ -1717,7 +1720,7 @@ function _isOpt(sym){ return /\d{6}[CP]\d{8}$/.test(String(sym||"")); }
 
 function renderOrders(orders){
   const G="display:grid;grid-template-columns:2fr .7fr .7fr 1fr .9fr;gap:10px;align-items:center";
-  const head=`<div style="${G};padding:8px 16px;font:600 9.5px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Instrument</span><span>Side</span><span style="text-align:right">Qty</span><span>Status</span><span style="text-align:right">Fill px</span></div>`;
+  const head=`<div style="${G};padding:8px 16px;font:600 10px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Instrument</span><span>Side</span><span style="text-align:right">Qty</span><span>Status</span><span style="text-align:right">Fill px</span></div>`;
   let body;
   if(!(orders&&orders.length)) body='<div style="padding:16px;font:400 11.5px var(--mono);color:var(--muted)">No orders this session.</div>';
   else body=`<div class="sf-scroll" style="max-height:440px;overflow-y:auto">${orders.map(o=>{ const r=REF[(o.symbol||'').toUpperCase()]||{}, sc=o.side==='buy'?'var(--green)':'var(--red)';
@@ -1737,7 +1740,7 @@ function drawAlerts(){
   const pills=FIL.map(([k,l,n])=>`<button onclick="setAlertFilter('${k}')" class="evtf${_alertFilter===k?' on':''}">${l}${k!=="all"?` <span style="opacity:.55">${n}</span>`:''}</button>`).join('');
   const filterRow=`<div style="display:flex;gap:5px;flex-wrap:wrap;padding:10px 14px 6px;border-bottom:1px solid var(--line-soft)">${pills}</div>`;
   const G="display:grid;grid-template-columns:150px 84px 1fr 70px;gap:12px;align-items:center";
-  const head=`<div style="${G};padding:8px 16px;font:600 9.5px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Time (UTC)</span><span>Sev</span><span>Message</span><span style="text-align:right">Emailed</span></div>`;
+  const head=`<div style="${G};padding:8px 16px;font:600 10px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line-soft)"><span>Time (UTC)</span><span>Sev</span><span>Message</span><span style="text-align:right">Emailed</span></div>`;
   let body;
   if(!rows.length) body=`<div style="padding:16px;font:400 11.5px var(--mono);color:var(--muted)">No ${f==="all"?"":f+" "}alerts.</div>`;
   else body=`<div class="sf-scroll" style="max-height:440px;overflow-y:auto">${rows.map(a=>`<div class="prow" style="${G};padding:9px 16px"><span class="pmono" style="font-size:11px;color:var(--muted)">${(a.ts||'').replace('T',' ').slice(0,19)}</span><span style="font:500 10px 'Space Grotesk';letter-spacing:.04em;text-transform:uppercase;color:${_alertCls(a.severity)}">${a.severity||'info'}</span><span style="font:400 12px 'Space Grotesk';color:var(--fg-dim);min-width:0;overflow:hidden;text-overflow:ellipsis" title="${esc(a.message||'')}">${a.message||'–'}</span><span class="pmono" style="text-align:right;font-size:11px;color:${a.delivered?'var(--green)':'var(--muted)'}">${a.delivered?'✓ sent':'dry-run'}</span></div>`).join('')}</div>`;

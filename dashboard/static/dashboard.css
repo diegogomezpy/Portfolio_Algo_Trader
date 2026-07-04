@@ -22,7 +22,7 @@
   .tape-vp { flex: 1; overflow: hidden; white-space: nowrap; }
   .tape-session { display: none; align-items: center; gap: 6px; padding: 4px 14px; flex: none;
                   border-right: 1px solid var(--line); background: rgba(216,168,75,.10);
-                  font: 600 9px 'Space Grotesk'; letter-spacing: .08em; text-transform: uppercase;
+                  font: 600 10px 'Space Grotesk'; letter-spacing: .08em; text-transform: uppercase;
                   color: var(--amber); white-space: nowrap; }
   .tape-session i { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); flex: none; }
   .tape:hover .tape-track { animation-play-state: paused; }
@@ -236,7 +236,7 @@
   .health { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
             gap: 1px; background: var(--line); border-radius: var(--r); overflow: hidden; }
   .htile { background: var(--panel); padding: 10px 13px; min-width: 0; }
-  .htile .hk { font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .htile .hk { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
   .htile .hv { font-size: 14px; font-weight: 600; margin-top: 4px; display: flex; align-items: flex-start;
                gap: 7px; font-family: var(--mono); font-variant-numeric: tabular-nums; line-height: 1.3; }
   .htile .hv .hdot { margin-top: 4px; }
@@ -311,11 +311,11 @@
   .tkp-name { font: 400 11.5px 'Space Grotesk'; color: var(--muted); margin-top: 2px; }
   .tkp-px { font: 600 17px var(--mono); color: var(--fg); font-variant-numeric: tabular-nums; }
   .tkp-chg { font: 500 12px var(--mono); margin-top: 2px; text-align: right; }
-  .tkp-sess { font: 600 8.5px 'Space Grotesk'; letter-spacing: .06em; text-transform: uppercase;
+  .tkp-sess { font: 600 10px 'Space Grotesk'; letter-spacing: .06em; text-transform: uppercase;
               color: var(--amber); margin-top: 3px; text-align: right; }
   .tkp-rgt { text-align: right; }
   .tkp-rng { margin-top: 13px; }
-  .tkp-rl { font: 600 9px 'Space Grotesk'; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  .tkp-rl { font: 600 10px 'Space Grotesk'; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
   .tkp-track { position: relative; height: 4px; border-radius: 2px; background: var(--panel-3); margin: 8px 0 5px; }
   .tkp-fill { position: absolute; left: 0; top: 0; height: 100%; border-radius: 2px; background: color-mix(in srgb, var(--accent) 45%, transparent); }
   .tkp-knob { position: absolute; top: 50%; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); border: 2px solid var(--panel-2); transform: translate(-50%,-50%); }
@@ -363,7 +363,7 @@
   .evt-date { font-family: var(--mono); font-weight: 600; color: var(--fg); font-size: 13px; }
   .evt-in { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-top: 1px; }
   .evt-body { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
-  .evt-type { font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700;
+  .evt-type { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700;
               padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
   .evt-type.warn { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 42%, transparent); }
   .evt-type.acc { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 42%, transparent); }

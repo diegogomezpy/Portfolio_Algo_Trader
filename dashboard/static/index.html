@@ -41,13 +41,13 @@
     <button class="tab" data-view="execute">Execute</button>
   </nav>
   <div class="right">
-    <a class="rebal" href="/backtest" target="_blank" rel="noopener" style="text-decoration:none;display:inline-flex;align-items:center" title="backtest analytics — standalone page">Backtest ↗</a>
     <span class="etclock" id="etclock" title="New York time (US market timezone)"></span>
     <span class="se-pill neutral" id="envbadge" title="trading environment">— </span>
     <span class="upd"><span class="live-dot down" id="dot"></span><span id="upd">connecting…</span></span>
     <button class="refresh" id="refreshbtn" title="refresh now" aria-label="refresh">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
     </button>
+    <a class="rebal" href="/backtest" target="_blank" rel="noopener" style="text-decoration:none;display:inline-flex;align-items:center" title="backtest analytics — standalone page">Backtest ↗</a>
   </div>
 </header>
 <div class="statusbar" id="statusbar" style="display:none">
@@ -63,7 +63,9 @@
     <div id="ov-kpi"></div>
     <div class="ov-live">
       <div class="ovpanel" style="display:flex;flex-direction:column;overflow:hidden">
-        <div class="ovhead"><span class="ovhk">Holdings heatmap</span><span class="ovhs">size = weight · color = day move <span class="srcinfo" data-tip="Source: Alpaca account + IEX live trade feed — position weights from the account, day move from the live price stream (vs prior close).">ⓘ</span></span></div>
+        <div class="ovhead"><span class="ovhk">Holdings heatmap</span><span class="ovhs">size = weight · color = day move
+          <span style="display:inline-flex;align-items:center;gap:5px;margin:0 4px 0 8px;vertical-align:middle"><span style="font:400 10px var(--mono);color:var(--muted)">−2%</span><span style="width:54px;height:8px;border-radius:4px;background:linear-gradient(90deg,var(--red),var(--panel-2) 50%,var(--green))"></span><span style="font:400 10px var(--mono);color:var(--muted)">+2%</span></span>
+          <span class="srcinfo" data-tip="Source: Alpaca account + IEX live trade feed — position weights from the account, day move from the live price stream (vs prior close).">ⓘ</span></span></div>
         <div style="flex:1;min-height:300px" id="ov-treemap"></div>
       </div>
       <div style="display:flex;flex-direction:column;gap:14px" id="ov-side">
