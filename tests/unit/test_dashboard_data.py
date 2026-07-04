@@ -685,3 +685,27 @@ def test_api_risk_windows_like_track_record():
     assert r["days"] == 3                                    # cash day excluded by default
     assert data.api_risk(eng, start="2026-06-04")["days"] == 1
     assert data.api_risk(eng, start="2026-06-01")["days"] == 4
+
+
+def test_api_track_record_carries_action_events_for_markers():
+    eng = _engine()
+    with eng.begin() as c:
+        for i in range(3):
+            c.execute(insert(db.snapshots).values(
+                ts=datetime(2026, 7, 1 + i, 16), nav=1_000_000.0 + i * 1000, cash=0.0,
+                last_equity=1_000_000.0, weights={}, positions={"AAPL": 400}, drift=0.0))
+        c.execute(insert(db.rebalance_log).values(
+            ts=datetime(2026, 7, 1, 17), trigger_reason="monthly", target_weights={},
+            risk_gate_passed=True, risk_gate_reason=""))
+        c.execute(insert(db.rebalance_log).values(
+            ts=datetime(2026, 7, 2, 17), trigger_reason="monthly", target_weights={},
+            risk_gate_passed=False, risk_gate_reason="blocked"))    # blocked → no marker
+        c.execute(insert(db.manual_actions).values(
+            ts=datetime(2026, 7, 3, 15), action="liquidate", mode="express",
+            params={"pct": 25}, status="done", cycle_key="manual-x"))
+        c.execute(insert(db.manual_actions).values(
+            ts=datetime(2026, 7, 3, 16), action="trade", mode="normal",
+            params={}, status="failed", cycle_key="manual-y"))      # failed → no marker
+    ev = data.api_track_record(eng)["events"]
+    assert [(e["date"], e["type"]) for e in ev] == [
+        ("2026-07-01", "rebalance"), ("2026-07-03", "liquidate")]

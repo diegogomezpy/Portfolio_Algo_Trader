@@ -676,9 +676,27 @@ def api_track_record(db_engine, *, start: str | None = None) -> dict:
     dates, navs = _daily_nav(rows)
     stats = series_stats(navs)
     norm = [v / navs[0] for v in navs] if navs[0] else navs
+    # Action markers for the growth chart + the picker's preset chips: every landed
+    # rebalance and every completed console action inside the window. Best-effort.
+    events: list[dict] = []
+    try:
+        with db_engine.connect() as conn:
+            rl = conn.execute(select(db.rebalance_log.c.ts, db.rebalance_log.c.trigger_reason)
+                              .where(db.rebalance_log.c.risk_gate_passed.is_(True))).all()
+            ma = conn.execute(select(db.manual_actions.c.ts, db.manual_actions.c.action,
+                                     db.manual_actions.c.mode)
+                              .where(db.manual_actions.c.status == "done")).all()
+        events = ([{"date": str(ts)[:10], "type": "rebalance", "label": f"rebalance · {trg}"}
+                   for ts, trg in rl]
+                  + [{"date": str(ts)[:10], "type": str(act), "label": f"{act} · {mode}"}
+                     for ts, act, mode in ma if act != "rebalance"])
+        events = sorted((e for e in events if e["date"] >= dates[0]),
+                        key=lambda e: e["date"])[:60]
+    except Exception:  # noqa: BLE001 — markers are decoration
+        events = []
     return {"available": True, "inception": dates[0], "days": len(dates),
             "mature": len(dates) >= 10, "nav0": navs[0], "nav_now": navs[-1],
-            "exposure_start": exposure_start, "start": eff_start,
+            "exposure_start": exposure_start, "start": eff_start, "events": events,
             "premium_collected": float(premium or 0.0), "dates": dates, "nav": navs,
             "norm": norm, "monthly": _monthly_returns(dates, navs), **stats}
 

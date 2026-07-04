@@ -84,6 +84,12 @@ document.addEventListener("mouseover", e=>{
   if(t){ TIP.textContent = t.getAttribute("data-tip"); TIP.style.display = "block"; posTip(e); } else TIP.style.display = "none";
 });
 document.addEventListener("mousemove", e=>{ if(tkEl) posFloat(TKP, e, 16); else if(tipEl) posTip(e); });
+// Touch devices have no hover: tap a ⓘ / any [data-tip] element to toggle its tooltip.
+if (matchMedia("(hover: none)").matches) document.addEventListener("click", e=>{
+  const t = e.target.closest("[data-tip]");
+  if (t && TIP.style.display !== "block"){ TIP.textContent = t.getAttribute("data-tip"); TIP.style.display = "block"; posTip(e); }
+  else TIP.style.display = "none";
+});
 
 // ---- two-level nav: top tabs + sub-tabs -----------------------------------
 const VIEWS = ["overview","portfolio","performance","execute"];
@@ -128,7 +134,7 @@ function bcol(sym,i){ const palette=["--spy","--purple","--amber","--sec-health"
 // ---- Performance tab (built to the design mock: Returns / Risk / Execution) ----------------
 // Cache of the last payloads so the in-panel period tabs re-render without a refetch.
 let _perfTR=null, _perfSlip=null, _perfFees=null, _perfRisk=null, _perfSt=null, _perfRcx=null, _perfCorr=null;
-let _perfPeriod = "ITD";   // 1M | 3M | YTD | ITD — Period-performance selector (mock)
+let _perfPeriod = localStorage.getItem('sepi_period') || "ITD";   // 1M | 3M | YTD | ITD
 let _perfStart = "";       // comparison start override (date picker); "" = first exposure
 
 // Stats of a normalized/NAV series, mirroring the backend's series_stats (client-side so the
@@ -166,7 +172,7 @@ async function loadPerformance(){
   renderAttribution(st);                 // Attribution sub-view — today's P&L by holding / sector
   renderExecution(slip, fees);           // Execution sub-view
 }
-function setPerfPeriod(p){ _perfPeriod=p; if(_perfTR) renderPeriodPanel(_perfTR, _perfRisk); }
+function setPerfPeriod(p){ _perfPeriod=p; localStorage.setItem('sepi_period', p); if(_perfTR) renderPeriodPanel(_perfTR, _perfRisk); }
 function setPerfStart(v){ _perfStart = v || ""; loadPerformance(); }
 
 // Today's P&L attribution: each holding's dollar contribution to the day = market value × today's
@@ -274,11 +280,16 @@ function renderPeriodPanel(tr, risk){
     kc("Max drawdown", pct(m.mdd), 'var(--red)', "peak-to-trough"),
     kc("Volatility"+(imm?"*":""), m.vol!=null?pct(m.vol):"—", 'var(--fg)', imm?"needs ≥10 days":"annualized"),
   ].join("");
+  const evs=tr.events||[], _lastEv=t=>{ const f=evs.filter(e=>t?e.type===t:e.type!=="rebalance"); return f.length?f[f.length-1].date:null; };
+  const presets=[["exposure", tr.exposure_start],["last rebal", _lastEv("rebalance")],["last action", _lastEv(null)]]
+    .filter(([,d],i,a)=>d && a.findIndex(x=>x[1]===d)===i)
+    .map(([l,d])=>`<button onclick="setPerfStart('${d}')" data-tip="compare from ${d}" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--muted);font:500 10px 'Space Grotesk';padding:3px 7px;cursor:pointer">${l}</button>`).join("");
   const dateCtl=`<span style="display:inline-flex;align-items:center;gap:6px;margin-right:12px">
     <span style="font:400 10px 'Space Grotesk';color:var(--muted)" data-tip="Comparison start date — defaults to the first day the book held positions (cash-only days before the first rebalance are excluded). Re-bases the curve, stats and every benchmark.">compare from</span>
+    ${presets}
     <input type="date" value="${_perfStart || tr.start || tr.inception || ''}" onchange="setPerfStart(this.value)"
       style="background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--fg);font:500 11px var(--mono);padding:3px 6px;color-scheme:dark">
-    ${_perfStart?`<button onclick="setPerfStart('')" title="back to first exposure" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--muted);font:600 9.5px var(--mono);padding:3px 7px;cursor:pointer">RESET</button>`:''}</span>`;
+    ${_perfStart?`<button onclick="setPerfStart('')" title="back to first exposure" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--muted);font:600 10px var(--mono);padding:3px 7px;cursor:pointer">RESET</button>`:''}</span>`;
   host.innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Period performance${srcInfo('navcurve')}</span>`
     +`<span style="display:inline-flex;align-items:center">${dateCtl}<span style="display:inline-flex;background:var(--bg-2);border:1px solid var(--line);border-radius:8px;padding:2px">${tabBtns}</span></span></div>`
     +`<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line-soft)">${cells}</div>`
@@ -388,7 +399,7 @@ function renderReturnsRibbon(tr, slip){
 }
 
 // Growth chart (mock multiLine) — strategy teal + benchmarks neutral/purple/blue.
-function perfMultiLine(dates, series){
+function perfMultiLine(dates, series, events){
   let all=[]; series.forEach(se=>se.data.forEach(v=>{ if(v!=null) all.push(v); }));
   if(all.length<2) return '<div class="se-empty">one data point so far — the curve appears after a second day</div>';
   const W=1160,H=260,pl=58,pr=16,pt=14,pb=28,pw=W-pl-pr,ph=H-pt-pb;
@@ -397,6 +408,12 @@ function perfMultiLine(dates, series){
   const grid=cssv('--grid','#16223a'),mut=cssv('--muted','#65758c'),ML="font-family:var(--mono)";
   let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="none" style="display:block;height:260px">`;
   for(let k=0;k<=4;k++){ const v=lo+(hi-lo)*k/4,y=Y(v).toFixed(1); s+=`<line x1="${pl}" y1="${y}" x2="${W-pr}" y2="${y}" stroke="${grid}"/><text x="${pl-8}" y="${(+y+3.5).toFixed(1)}" text-anchor="end" font-size="11" fill="${mut}" style="${ML}">${((v-1)*100).toFixed(0)}%</text>`; }
+  // Action markers: dashed verticals at every rebalance / console action, so "what did that
+  // trade do to the curve" is visible instead of mental (hover the dot for the label).
+  (events||[]).forEach(ev=>{ const i=dates.findIndex(d=>d>=ev.date); if(i<0) return; const x=X(i).toFixed(1);
+    const c=ev.type==='rebalance'?'#8f7ee0':'#d8a84b';
+    s+=`<line x1="${x}" y1="${pt}" x2="${x}" y2="${H-pb}" stroke="${c}" stroke-dasharray="3 4" stroke-opacity=".5"/>`
+      +`<circle cx="${x}" cy="${pt+4}" r="4" fill="${c}" data-tip="${ev.date} — ${esc(ev.label)}" style="cursor:help"/>`; });
   const step=Math.max(1,Math.round(n/7));
   for(let i=0;i<n;i+=step) s+=`<text x="${X(i).toFixed(1)}" y="${H-9}" text-anchor="middle" font-size="10.5" fill="${mut}" style="${ML}">${String(dates[i]).slice(5)}</text>`;
   series.forEach(se=>{ let p=""; se.data.forEach((v,i)=>{ if(v!=null) p+=(p?"L":"M")+X(i).toFixed(1)+" "+Y(v).toFixed(1); }); s+=`<path d="${p}" fill="none" stroke="${se.color}" stroke-width="${se.w||1.6}" stroke-linejoin="round"/>`; });
@@ -407,7 +424,8 @@ function renderReturnsTrack(tr){
   const bsyms=Object.keys(tr.benchmarks||{});
   bsyms.forEach((sym,i)=>series.push({data:tr.benchmarks[sym].norm,color:bcol(sym,i),w:1.6,name:sym}));
   const legend=series.map(s=>`<span style="display:inline-flex;align-items:center;gap:6px;font:400 11.5px 'Space Grotesk';color:var(--fg-dim)"><span style="width:14px;height:3px;border-radius:2px;background:${s.color}"></span>${s.name}</span>`).join("");
-  $("pr-track").innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Growth since inception — strategy vs benchmarks</span><span class="ovhs">${tr.dates[0]} → ${tr.dates[tr.dates.length-1]}${srcInfo('benchmarks')}</span></div><div style="display:flex;gap:18px;padding:11px 18px 2px;flex-wrap:wrap">${legend}</div><div style="padding:6px 8px 10px">${perfMultiLine(tr.dates,series)}</div></div>`;
+  const evLegend=(tr.events&&tr.events.length)?`<span style="font:400 10.5px 'Space Grotesk';color:var(--muted);display:inline-flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#8f7ee0"></span>rebalance <span style="width:8px;height:8px;border-radius:50%;background:#d8a84b;margin-left:6px"></span>manual action</span>`:"";
+  $("pr-track").innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Growth since inception — strategy vs benchmarks</span><span class="ovhs">${tr.dates[0]} → ${tr.dates[tr.dates.length-1]}${srcInfo('benchmarks')}</span></div><div style="display:flex;gap:18px;padding:11px 18px 2px;flex-wrap:wrap;align-items:center">${legend}${evLegend}</div><div style="padding:6px 8px 10px">${perfMultiLine(tr.dates,series,tr.events)}</div></div>`;
 }
 // Benchmark comparison table (mock grid) + descriptions.
 function renderBenchTable(tr){
@@ -1007,7 +1025,7 @@ function navAreaSVG(hist){
   s+=`<circle cx="${X(n-1).toFixed(1)}" cy="${Y(navs[navs.length-1]).toFixed(1)}" r="2.6" fill="${col}"/>`;
   return s+"</svg>";
 }
-let _lastNav=null, _navWin='ALL', _ovS=null, _attr=null;
+let _lastNav=null, _navWin=localStorage.getItem('sepi_navwin')||'ALL', _ovS=null, _attr=null;
 const NAV_WINS=[["1W","1W"],["1M","1M"],["3M","3M"],["YTD","YTD"],["ALL","All"]];
 function navWindowed(){
   if(_navWin==='ALL'||_navBase.length<2) return _navBase;
@@ -1017,7 +1035,7 @@ function navWindowed(){
   const f=_navBase.filter(p=>{ const t=tsMs(p.ts); return t==null||t>=cut; });
   return f.length>=2?f:_navBase.slice(-2);
 }
-function setNavWin(w){ _navWin=w; if(_ovS) renderNavHero(_ovS); }
+function setNavWin(w){ _navWin=w; localStorage.setItem('sepi_navwin', w); if(_ovS) renderNavHero(_ovS); }
 function renderNavHero(s){
   const host=$("ov-navhero"); if(!host||s.nav==null) return;
   const nav=s.nav, dp=s.day_pnl, dpp=s.day_pnl_pct;
@@ -1708,9 +1726,9 @@ function renderOrders(orders){
 }
 
 // Alerts log — filterable by severity. _alerts holds the last fetch; _alertFilter the active pill.
-let _alerts = [], _alertFilter = "all";
+let _alerts = [], _alertFilter = localStorage.getItem('sepi_alertf') || "all";
 const _alertCls = sv => sv==="error" ? "var(--red)" : sv==="warn" ? "var(--amber)" : "var(--muted)";
-function setAlertFilter(f){ _alertFilter=f; drawAlerts(); }
+function setAlertFilter(f){ _alertFilter=f; localStorage.setItem('sepi_alertf', f); drawAlerts(); }
 function renderAlerts(alerts){ _alerts = alerts || []; drawAlerts(); }
 function drawAlerts(){
   const f=_alertFilter, rows=_alerts.filter(a=>f==="all"||(a.severity||"info")===f);
@@ -1782,6 +1800,22 @@ function execToken(force){
   }
   return t;
 }
+function execTokenChange(){ execToken(true); refreshExecStatus(); }
+function execTokenClear(){ localStorage.removeItem("sepi_exec_token"); refreshExecStatus(); }
+
+// Lightweight toasts — run outcomes must be visible even after navigating away mid-run.
+function toast(msg, bad){
+  let h = $("toasts");
+  if (!h){ h = document.createElement("div"); h.id = "toasts"; document.body.appendChild(h); }
+  const t = document.createElement("div");
+  t.className = "toast" + (bad ? " bad" : "");
+  t.textContent = msg;
+  t.onclick = () => t.remove();
+  h.appendChild(t);
+  setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 400); }, 7000);
+}
+const _TITLE0 = document.title;
+function setRunTitle(action){ document.title = action ? `● ${action} — SEPI` : _TITLE0; }
 async function postExec(path, tok){
   try { const r = await fetch(path, { method: "POST", headers: tok ? { "X-Exec-Token": tok } : {} });
         return r.ok ? await r.json() : null; } catch { return null; }
@@ -1942,8 +1976,10 @@ async function execPlanNow(){
       <span class="side sell">CLOSE</span><span class="pmono" style="text-align:right">${ov.close_contracts}/${ov.contracts}</span>
       <span></span><span class="pmono" style="text-align:right">both legs</span></div>` : "";
   const t = plan.totals || {};
+  const traded=(t.sell_notional||0)+(t.buy_notional||0), _nav=_ovS&&_ovS.nav;
   const tot = [t.sell_notional ? `raise ~${usd(t.sell_notional)}` : null,
                t.buy_notional ? `deploy ~${usd(t.buy_notional)}` : null,
+               (_nav&&traded) ? `${(traded/_nav*100).toFixed(1)}% of NAV` : null,
                t.current_leverage != null ? `${t.current_leverage.toFixed(2)}× → ${(+t.target_leverage).toFixed(2)}×` : null]
               .filter(Boolean).join(" · ");
   const warns = (plan.warnings||[]).map(w => `<div class="exm-warn">▲ ${esc(w)}</div>`).join("");
@@ -1955,6 +1991,11 @@ async function execPlanNow(){
 
 async function execRun(){
   const b = $("xGo"); if (!b || b.disabled) return;
+  const p0 = execParams();
+  if (EXEC.tab === "liquidate" && p0.pct >= 100){          // one confirm() is thin for "sell everything"
+    const typed = (prompt("This sells the ENTIRE book and closes the SPY spread.\nType SELL ALL to confirm:") || "").trim().toUpperCase();
+    if (typed !== "SELL ALL"){ $("xMsg").textContent = "cancelled — confirmation text did not match"; return; }
+  }
   const tok = execToken(); if (!tok){ $("xMsg").textContent = "no token — cancelled"; return; }
   b.disabled = true; $("xMsg").textContent = "starting…";
   let r = await postExec(`/api/exec/run?${execQS({ mode: EXEC.mode })}`, tok);
@@ -1970,15 +2011,20 @@ async function execRun(){
     armGo(); return;
   }
   $("xMsg").textContent = `running (${r.cycle_key}) — the run panel above narrates it…`;
+  setRunTitle(EXEC.tab);
   if (EXEC.statusPoll) clearInterval(EXEC.statusPoll);
   EXEC.statusPoll = setInterval(async () => {
     const st = await get("/api/exec/status");
     if (!st || st.running) return;
     clearInterval(EXEC.statusPoll); EXEC.statusPoll = null;
+    setRunTitle(null);
     const oc = st.outcome || {};
-    $("xMsg").textContent = st.returncode === 0
+    const ok = st.returncode === 0;
+    const msg = ok
       ? (oc.summary ? oc.summary : `done — ${oc.filled!=null ? `${oc.filled}/${oc.submitted} filled` : "complete"}${oc.overlay_closed ? `, spread ×${oc.overlay_closed}` : ""}`)
       : `failed — ${oc.error || "see " + (st.log||"log")}`;
+    $("xMsg").textContent = msg;
+    toast(`${st.action||"run"}: ${msg}`, !ok);
     EXEC.plan = null; EXEC.planQS = "";
     armGo(); refreshExecStatus(); schedulePlan(0);
     renderManualActions(await get("/api/manual_actions"), "x-history");
@@ -2018,7 +2064,15 @@ async function refreshExecStatus(){
          <button class="exm-chip" onclick="clearLevOverride()">clear</button>`
       : `${st.settings_target_leverage != null ? (+st.settings_target_leverage).toFixed(2)+"×" : "–"} from settings.yaml`;
     const run = st.running ? `<span style="color:var(--amber)">${st.action} (${st.mode}) — ${st.cycle_key}</span>` : "idle";
-    inner = line("Server token", tokLn) + line("Standing leverage target", lev) + line("Manual run", run);
+    const btok = localStorage.getItem("sepi_exec_token")
+      ? `saved in this browser <button class="exm-chip" onclick="execTokenChange()">change</button> <button class="exm-chip" onclick="execTokenClear()">clear</button>`
+      : `not set <button class="exm-chip" onclick="execTokenChange()">set</button>`;
+    const cash = (_ovS && _ovS.nav != null)
+      ? `${usd(_ovS.cash)} cash · ${_ovS.gross_exposure!=null?usd(_ovS.gross_exposure)+" gross · ":""}${_ovS.leverage!=null?_ovS.leverage.toFixed(2)+"×":""}`
+      : "–";
+    inner = line("Server token", tokLn) + line("Browser token", btok)
+          + line("Standing leverage target", lev) + line("Cash / exposure", cash)
+          + line("Manual run", run);
   }
   host.innerHTML = `<div class="ovhead"><span class="ovhk">Console status</span>
       <span class="ovhs"><button class="exm-btn" onclick="execCancelAll()" style="padding:5px 10px">Cancel all orders</button></span></div>
@@ -2027,6 +2081,10 @@ async function refreshExecStatus(){
 // ---- logo intro: dot grid scales in → wordmark → contracts to SFI → reveals dashboard ----
 function playIntro(){
   const ov=$("introOverlay"); if(!ov) return;
+  // Charming once a day; friction the other twenty times.
+  const today=new Date().toISOString().slice(0,10);
+  if(localStorage.getItem("sepi_intro")===today){ ov.remove(); return; }
+  localStorage.setItem("sepi_intro", today);
   let h=""; for(let r=0;r<3;r++){ h+='<div class="irow">';
     for(let c=0;c<3;c++) h+=`<span class="dot${c===1?' teal':''}" style="transition-delay:${(r+c)*75}ms"></span>`;
     h+='</div>'; }

@@ -191,11 +191,21 @@
   .exm-btn.go { background: rgba(70,184,173,.14); border-color: var(--accent); color: var(--accent); }
   .exm-btn.go:hover:not(:disabled) { color: #eafffb; }
   .exm-btn:disabled { opacity: .45; cursor: default; }
-  .mini-trade { width: 22px; height: 20px; border-radius: 5px; border: 1px solid var(--line); background: var(--panel-2);
-                font: 600 9.5px var(--mono); cursor: pointer; padding: 0; transition: all .12s var(--ease); }
+  .mini-trade { width: 26px; height: 22px; border-radius: 5px; border: 1px solid var(--line); background: var(--panel-2);
+                font: 600 10px var(--mono); cursor: pointer; padding: 0; transition: all .12s var(--ease); }
   .mini-trade.buy { color: var(--green); }
   .mini-trade.sell { color: var(--red); }
   .mini-trade:hover { border-color: var(--accent); background: var(--panel); }
+
+  /* ---- toasts (run outcomes survive navigating away mid-run) ---- */
+  #toasts { position: fixed; right: 18px; bottom: 18px; z-index: 120; display: flex;
+            flex-direction: column; gap: 8px; max-width: 380px; }
+  .toast { background: var(--panel); border: 1px solid var(--accent); border-radius: 10px;
+           color: var(--fg); font: 500 12px 'Space Grotesk'; line-height: 1.45; padding: 10px 14px;
+           box-shadow: 0 10px 30px rgba(0,0,0,.45); cursor: pointer; animation: toastin .25s var(--ease); }
+  .toast.bad { border-color: var(--red); }
+  .toast.out { opacity: 0; transform: translateY(6px); transition: all .35s var(--ease); }
+  @keyframes toastin { from { opacity: 0; transform: translateY(8px); } }
   .refresh { background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
              border-radius: 8px; width: 30px; height: 30px; cursor: pointer; display: grid;
              place-items: center; transition: all .15s var(--ease); }
