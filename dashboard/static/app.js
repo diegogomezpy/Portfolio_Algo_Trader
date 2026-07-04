@@ -119,15 +119,17 @@ async function get(p){ try { const r = await fetch(p); return r.ok ? await r.jso
 
 // ---- Track record (live paper performance vs benchmarks + slippage) -------
 const cssv = (n,f) => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || f;
-// Benchmarks are the engine's set (SPY/BXMD/BXRD + JEPI the peer fund + USMV the passive
-// min-vol sleeve check). Teal stays the strategy series; green/red are signed-P&L only (§8).
-const BENCH_VAR = {SPY:"--spy", BXMD:"--purple", BXRD:"--sec-tech", JEPI:"--amber", USMV:"--sec-health"};
-function bcol(sym,i){ const palette=["--spy","--purple","--sec-tech","--amber","--sec-health"]; return cssv(BENCH_VAR[sym]||palette[i%palette.length], "#8893a3"); }
+// Benchmarks are the engine's set (SPY null hypothesis, BXMD mechanical overwrite, JEPI the
+// peer fund, USMV the passive min-vol sleeve check). Teal stays the strategy series;
+// green/red are signed-P&L only (§8).
+const BENCH_VAR = {SPY:"--spy", BXMD:"--purple", JEPI:"--amber", USMV:"--sec-health"};
+function bcol(sym,i){ const palette=["--spy","--purple","--amber","--sec-health"]; return cssv(BENCH_VAR[sym]||palette[i%palette.length], "#8893a3"); }
 
 // ---- Performance tab (built to the design mock: Returns / Risk / Execution) ----------------
 // Cache of the last payloads so the in-panel period tabs re-render without a refetch.
 let _perfTR=null, _perfSlip=null, _perfFees=null, _perfRisk=null, _perfSt=null, _perfRcx=null, _perfCorr=null;
 let _perfPeriod = "ITD";   // 1M | 3M | YTD | ITD — Period-performance selector (mock)
+let _perfStart = "";       // comparison start override (date picker); "" = first exposure
 
 // Stats of a normalized/NAV series, mirroring the backend's series_stats (client-side so the
 // period tabs can re-slice the since-inception curve without another round-trip).
@@ -149,10 +151,12 @@ function heat(v,sc){ if(v==null) return "var(--panel-2)"; const t=Math.max(-1,Ma
   return t>=0?`rgba(95,176,136,${(0.1+t*0.55).toFixed(2)})`:`rgba(207,111,102,${(0.1-t*0.55).toFixed(2)})`; }
 
 async function loadPerformance(){
-  // Growth + risk are "since inception" to match the mock (the in-panel period tabs window the
-  // Period-performance KPIs client-side); no separate window picker.
+  // Growth + risk default to "since first exposure" (server-side: the first snapshot that
+  // actually holds positions — cash-only days before the first rebalance are excluded);
+  // the date picker (_perfStart → ?start=) re-bases everything, benchmarks included.
+  const trURL = "/api/track_record" + (_perfStart ? "?start=" + _perfStart : "");
   const [tr, slip, risk, st, fees, rcx, corr] = await Promise.all(
-    ["/api/track_record","/api/slippage","/api/risk","/api/state","/api/fees",
+    [trURL,"/api/slippage","/api/risk","/api/state","/api/fees",
      "/api/risk_contrib","/api/correlation"].map(get));
   lastFetch = Date.now(); tickFreshness();
   _perfTR=tr; _perfSlip=slip; _perfFees=fees; _perfRisk=risk; _perfSt=st; _perfRcx=rcx; _perfCorr=corr;
@@ -163,6 +167,7 @@ async function loadPerformance(){
   renderExecution(slip, fees);           // Execution sub-view
 }
 function setPerfPeriod(p){ _perfPeriod=p; if(_perfTR) renderPeriodPanel(_perfTR, _perfRisk); }
+function setPerfStart(v){ _perfStart = v || ""; loadPerformance(); }
 
 // Today's P&L attribution: each holding's dollar contribution to the day = market value × today's
 // return (day%). Exact intraday decomposition; the bars sum to the day's equity P&L. Rolled up by
@@ -263,8 +268,13 @@ function renderPeriodPanel(tr, risk){
     kc("Max drawdown", pct(m.mdd), 'var(--red)', "peak-to-trough"),
     kc("Volatility"+(imm?"*":""), m.vol!=null?pct(m.vol):"—", 'var(--fg)', imm?"needs ≥10 days":"annualized"),
   ].join("");
+  const dateCtl=`<span style="display:inline-flex;align-items:center;gap:6px;margin-right:12px">
+    <span style="font:400 10px 'Space Grotesk';color:var(--muted)" data-tip="Comparison start date — defaults to the first day the book held positions (cash-only days before the first rebalance are excluded). Re-bases the curve, stats and every benchmark.">compare from</span>
+    <input type="date" value="${_perfStart || tr.start || tr.inception || ''}" onchange="setPerfStart(this.value)"
+      style="background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--fg);font:500 11px var(--mono);padding:3px 6px;color-scheme:dark">
+    ${_perfStart?`<button onclick="setPerfStart('')" title="back to first exposure" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--muted);font:600 9.5px var(--mono);padding:3px 7px;cursor:pointer">RESET</button>`:''}</span>`;
   host.innerHTML=`<div class="ovpanel"><div class="ovhead"><span class="ovhk">Period performance${srcInfo('navcurve')}</span>`
-    +`<span style="display:inline-flex;background:var(--bg-2);border:1px solid var(--line);border-radius:8px;padding:2px">${tabBtns}</span></div>`
+    +`<span style="display:inline-flex;align-items:center">${dateCtl}<span style="display:inline-flex;background:var(--bg-2);border:1px solid var(--line);border-radius:8px;padding:2px">${tabBtns}</span></span></div>`
     +`<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line-soft)">${cells}</div>`
     +`<div style="padding:8px 10px 10px">${periodSparkSvg(slice)}</div></div>`;
 }

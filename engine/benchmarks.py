@@ -42,13 +42,8 @@ BENCHMARKS: dict[str, dict] = {
                 "covered-call overlay: keeps most of the upside, harvests option premium, and "
                 "gives up only the far tail. The apples-to-apples 'is the overlay worth it?' line.",
     },
-    "BXRD": {
-        "source": "cboe", "ticker": "BXRD", "name": "CBOE Russell 2000 30Δ BuyWrite (BXRD)",
-        "desc": "CBOE Russell 2000 30-Delta BuyWrite Index — the same 30-delta covered-call "
-                "strategy as BXMD but on the small-cap Russell 2000 (verified: 0.95 return "
-                "correlation to the Russell vs 0.84 to the S&P). A 'covered calls on small caps' "
-                "reference point; differs from our large-cap book mainly by universe.",
-    },
+    # BXRD (Russell 2000 buy-write) removed 2026-07-03 (Diego): a small-cap reference added
+    # noise, not signal, against a large-cap book — JEPI/USMV cover the useful comparisons.
     "JEPI": {
         "source": "yf", "ticker": "JEPI", "name": "JPMorgan Equity Premium Income (JEPI)",
         "desc": "The $30B+ real-world peer: a defensive low-volatility equity book plus "

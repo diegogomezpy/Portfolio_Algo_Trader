@@ -19,7 +19,7 @@ def test_align_forward_fills():
 
 def test_describe_known_and_unknown():
     assert "BuyWrite" in B.describe("BXMD")["name"] and B.describe("BXMD")["desc"]
-    assert "Russell" in B.describe("BXRD")["desc"]
+    assert "BXRD" not in B.BENCHMARKS          # dropped 2026-07-03 (small-cap noise)
     assert B.describe("ZZZ") == {"name": "ZZZ", "desc": ""}
 
 

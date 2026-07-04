@@ -272,7 +272,7 @@ def test_api_track_record_curve_and_premium():
         for i, nv in enumerate([100_000.0, 100_500.0, 99_800.0, 101_200.0]):
             c.execute(insert(db.snapshots).values(
                 ts=datetime(2026, 6, 1 + i, 16), nav=nv, cash=5_000.0, last_equity=100_000.0,
-                weights={}, positions={}, drift=0.0))
+                weights={}, positions={"AAPL": 100}, drift=0.0))
         c.execute(insert(db.options_lifecycle).values(
             ts=datetime(2026, 6, 1), event_type="write", underlying="AAPL",
             option_symbol="AAPLX", strike=100.0, contracts=1, premium=300.0))
@@ -296,7 +296,8 @@ def test_api_track_record_monthly_returns_chain_across_months():
                 (datetime(2026, 7, 1, 16), 103_000.0), (datetime(2026, 7, 2, 16), 104_040.0)]  # July: 2
         for ts, nv in rows:
             c.execute(insert(db.snapshots).values(
-                ts=ts, nav=nv, cash=0.0, last_equity=100_000.0, weights={}, positions={}, drift=0.0))
+                ts=ts, nav=nv, cash=0.0, last_equity=100_000.0, weights={},
+                positions={"AAPL": 100}, drift=0.0))
     m = data.api_track_record(eng)["monthly"]
     assert len(m) == 2
     jun, jul = m
@@ -634,3 +635,35 @@ def test_apply_live_prices_ignores_bad_tick():
     row = out["positions"][0]
     assert row["market_value"] == 20_000.0 and "last_price" not in row and "day_pct" not in row
     assert out["nav"] == 100_000.0                                          # NAV unmoved by the bad tick
+
+
+def test_api_track_record_starts_at_first_exposure_not_first_snapshot():
+    # Cash-only days before the first rebalance are NOT the strategy: the default window
+    # starts at the first snapshot that holds positions; an explicit start= overrides.
+    eng = _engine()
+    with eng.begin() as c:
+        rows = [(datetime(2026, 6, 1, 16), 1_000_000.0, {}),          # cash parked (pre-rebalance)
+                (datetime(2026, 6, 2, 16), 1_000_000.0, {}),
+                (datetime(2026, 6, 3, 16), 1_000_000.0, {"AAPL": 400}),   # first exposure
+                (datetime(2026, 6, 4, 16), 1_010_000.0, {"AAPL": 400})]
+        for ts, nv, pos in rows:
+            c.execute(insert(db.snapshots).values(
+                ts=ts, nav=nv, cash=0.0, last_equity=1_000_000.0, weights={},
+                positions=pos, drift=0.0))
+    tr = data.api_track_record(eng)
+    assert tr["inception"] == "2026-06-03" and tr["days"] == 2       # cash days excluded
+    assert tr["exposure_start"] == "2026-06-03" and tr["start"] == "2026-06-03"
+    tr2 = data.api_track_record(eng, start="2026-06-01")             # picker overrides earlier
+    assert tr2["inception"] == "2026-06-01" and tr2["days"] == 4
+    tr3 = data.api_track_record(eng, start="2026-06-04")             # …and later
+    assert tr3["inception"] == "2026-06-04" and tr3["days"] == 1
+
+
+def test_api_track_record_unavailable_while_all_cash():
+    eng = _engine()
+    with eng.begin() as c:
+        c.execute(insert(db.snapshots).values(
+            ts=datetime(2026, 7, 2, 16), nav=1_000_000.0, cash=1_000_000.0,
+            last_equity=1_000_000.0, weights={}, positions={}, drift=0.0))
+    tr = data.api_track_record(eng)
+    assert tr["available"] is False and tr["exposure_start"] is None

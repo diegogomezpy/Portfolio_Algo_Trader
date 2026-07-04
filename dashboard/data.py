@@ -654,21 +654,31 @@ def api_track_record(db_engine, *, start: str | None = None) -> dict:
     layered on in the route (needs Alpaca), so this stays Postgres-only + unit-testable.
     """
     with db_engine.connect() as conn:
-        rows = conn.execute(
-            select(db.snapshots.c.ts, db.snapshots.c.nav).order_by(db.snapshots.c.ts)).all()
+        raw = conn.execute(
+            select(db.snapshots.c.ts, db.snapshots.c.nav, db.snapshots.c.positions)
+            .order_by(db.snapshots.c.ts)).all()
         premium = conn.execute(
             select(func.coalesce(func.sum(db.options_lifecycle.c.premium), 0.0))).scalar()
-    rows = [(ts, nav) for ts, nav in rows if nav is not None]
-    if start:
-        rows = [(ts, nav) for ts, nav in rows if str(ts)[:10] >= start]
+    raw = [(ts, nav, pos) for ts, nav, pos in raw if nav is not None]
+    # The comparison starts at EXPOSURE, not at the first snapshot: cash-only days before the
+    # first rebalance are not the strategy (they'd dilute every stat and shift the benchmark
+    # base). Default start = first snapshot actually holding something; an explicit ``start``
+    # (the dashboard's date picker) overrides in either direction.
+    exposure_start = next((str(ts)[:10] for ts, _n, pos in raw
+                           if any(q for q in (pos or {}).values())), None)
+    eff_start = start or exposure_start
+    rows = ([(ts, nav) for ts, nav, _p in raw if str(ts)[:10] >= eff_start]
+            if eff_start else [])
     if not rows:
         return {"available": False, "days": 0, "dates": [], "nav": [], "norm": [],
+                "exposure_start": exposure_start,
                 "premium_collected": float(premium or 0.0)}
     dates, navs = _daily_nav(rows)
     stats = series_stats(navs)
     norm = [v / navs[0] for v in navs] if navs[0] else navs
     return {"available": True, "inception": dates[0], "days": len(dates),
             "mature": len(dates) >= 10, "nav0": navs[0], "nav_now": navs[-1],
+            "exposure_start": exposure_start, "start": eff_start,
             "premium_collected": float(premium or 0.0), "dates": dates, "nav": navs,
             "norm": norm, "monthly": _monthly_returns(dates, navs), **stats}
 
