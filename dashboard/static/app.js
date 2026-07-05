@@ -2214,11 +2214,33 @@ function renderRollingBeta(risk){
 }
 
 // Live parameters — which wing/delta/coverage/leverage the engine runs NOW, without SSH.
+// Tooltip per knob (distilled from the settings.yaml rationale) so the numbers self-explain.
+const _CFG_TIPS = {
+  target_leverage: "Gross exposure target: this × account equity is the dollar base every rebalance sizes to (a console leverage override takes precedence until cleared).",
+  max_leverage: "Hard cap the pre-trade risk gate enforces — targets and console overrides are clamped to it. Also the Reg T overnight ceiling: the broker won't carry more than 2× anyway.",
+  min_position_pct: "Optimizer position floor as a WEIGHT: a name gets at least this fraction of the book or is dropped to zero (no dust positions).",
+  max_sector_pct: "Concentration cap per GICS sector, enforced by the optimizer and flagged red on the sector bar when breached.",
+  max_single_name_pct: "Concentration cap per single name at the optimizer.",
+  overlay_mode: "index = ONE portfolio-level SPY call-spread overwrite sized to the book's market beta; per_name = classic per-holding covered calls (kept for fallback).",
+  overwrite_coverage: "Fraction of the book's beta-dollar exposure the spread overwrites. 1.0 = fully covered — the payoff goes FLAT between the short strike and the wing.",
+  target_delta: "The short leg's target delta. Higher = richer premium but a closer strike (plateau starts sooner) and more assignment risk. 0.30 chosen by the D29 delta sweep.",
+  wing_delta: "The long wing's delta — the bought-back tail. Lower = cheaper wing, more credit kept, but a wider max give-up band. 0.05 since Jul 3: keeps ~84% of the credit vs ~53% at 0.15.",
+  min_dte_entry: "Minimum days-to-expiry for a new spread write (the monthly cycle's near bound).",
+  max_dte_entry: "Maximum days-to-expiry for a new spread write (the monthly cycle's far bound).",
+  min_bid_frac: "Write guard: skip the write when the live bid is below this fraction of the planned chain mid — never sell premium into a lowball/junk bid.",
+  iv_window: "Trailing days of realized vol behind the IV estimate that prices strike selection (its own knob so risk-model changes can't silently move strikes).",
+  min_trade_usd: "Orders below this notional aren't sent — they roll into pending adjustments and get re-attempted on later days.",
+  marketable_limit_bps: "The chase ladder's ceiling: how far past fair value a limit may cross to guarantee the fill. Caps the worst price the chase will ever pay.",
+  equity_repeg_s: "Seconds between ladder rounds — each round the child limit re-pegs from the mid toward the touch.",
+  close_buffer_s: "Seconds before the close at which unfilled residuals stop chasing and route to the closing auction (liquid names) or the cross-day queue.",
+  ladder_steps: "Rungs between the mid and the marketable ceiling — more steps = more patient early rounds.",
+  rebalance_hour_et: "The scheduler's daily job hour (ET). Mid-session on purpose: DAY orders fill in-session and spreads are tightest away from the open/close.",
+};
 function renderConfigPanel(cfg){
   const host=$("x-config"); if(!host) return;
   if(!cfg || !cfg.available){ fillPanel("x-config","Live parameters","settings.yaml as the engine runs it",'<div style="padding:16px;font:400 11.5px var(--mono);color:var(--muted)">settings unavailable</div>',"clock"); return; }
   const sec=(title,obj)=>`<div><div style="font:600 10px 'Space Grotesk';letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px">${title}</div>${
-    Object.entries(obj||{}).map(([k,v])=>`<div style="display:flex;justify-content:space-between;gap:12px;padding:4px 0;border-top:1px solid var(--line-soft)"><span style="font:400 11.5px 'Space Grotesk';color:var(--fg-dim)">${k}</span><span class="pmono" style="font-size:11.5px;color:var(--fg)">${v}</span></div>`).join("")}</div>`;
+    Object.entries(obj||{}).map(([k,v])=>`<div style="display:flex;justify-content:space-between;gap:12px;padding:4px 0;border-top:1px solid var(--line-soft)"><span style="font:400 11.5px 'Space Grotesk';color:var(--fg-dim);${_CFG_TIPS[k]?'text-decoration:underline dotted var(--faint);text-underline-offset:3px;cursor:help':''}"${_CFG_TIPS[k]?` data-tip="${esc(_CFG_TIPS[k])}"`:''}>${k}</span><span class="pmono" style="font-size:11.5px;color:var(--fg)">${v}</span></div>`).join("")}</div>`;
   fillPanel("x-config","Live parameters","what the engine runs right now · read-only (edit settings.yaml + deploy to change)",
     `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px 26px;padding:12px 16px">${sec("Portfolio",cfg.portfolio)}${sec("SPY overlay",cfg.covered_calls)}${sec("Execution",cfg.execution)}</div>`,"clock");
 }
