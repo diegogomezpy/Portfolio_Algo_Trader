@@ -432,3 +432,38 @@ def test_graceful_shutdown_finishes_stage_then_cancels():
 
     run_eod.graceful_shutdown(_Sched(), _Brk())
     assert calls == [("shutdown", True), ("cancel_all",)]           # finish stage, then cancel
+
+
+# ====================================================================== #
+# Rebalance lease (2026-07-06) — ONE rebalance at a time across all entry paths
+# ====================================================================== #
+def test_run_cycle_refuses_when_lease_held_elsewhere():
+    """A second trigger (dashboard button vs the 13:00 scheduler, a double click) must trade
+    NOTHING and report already_running."""
+    from contextlib import contextmanager
+    from scripts.run_eod import run_cycle
+
+    @contextmanager
+    def held_lease(_db):
+        yield False                                   # someone else holds it
+
+    class _Untouchable:
+        def __getattr__(self, name):                  # any use = the guard failed
+            raise AssertionError(f"no client/broker call may happen while leased out ({name})")
+
+    alerts = []
+    res = run_cycle(client=_Untouchable(), broker=_Untouchable(), db_engine=None,
+                    settings=None, as_of=date(2026, 7, 6), alert=alerts.append,
+                    lease=held_lease)
+    assert res.status == "already_running"
+    assert alerts and "already running" in alerts[0]
+
+
+def test_rebalance_lease_is_noop_off_postgres():
+    """sqlite engines (every test suite) skip locking — the lease always grants."""
+    from scripts.run_eod import rebalance_lease
+    eng = create_engine("sqlite://")
+    with rebalance_lease(eng) as got:
+        assert got is True
+    with rebalance_lease(None) as got:
+        assert got is True

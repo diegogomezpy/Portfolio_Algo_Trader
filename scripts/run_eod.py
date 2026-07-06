@@ -33,6 +33,7 @@ import argparse
 import math
 import sys
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -77,7 +78,7 @@ class TargetPlan:
 @dataclass
 class CycleResult:
     """Outcome of one rebalance cycle."""
-    status: str  # "executed" | "blocked_risk" | "not_trading_day" | "no_targets"
+    status: str  # "executed" | "blocked_risk" | "not_trading_day" | "no_targets" | "already_running"
     target_weights: pd.Series = field(default_factory=lambda: pd.Series(dtype=float))
     risk: Optional[RiskCheckResult] = None
     exec_report: Optional[ExecReport] = None
@@ -141,6 +142,37 @@ def compute_targets(settings, as_of: date, *, db_engine=None,
 # ====================================================================== #
 # Orchestrator
 # ====================================================================== #
+# Cross-process rebalance mutex (2026-07-06, Diego): ONE rebalance at a time, across every
+# entry path — the 13:00 scheduler, the dashboard's `--once` child, and a terminal `--once`
+# all funnel through run_cycle, which takes this lease first. A Postgres session advisory
+# lock is used because it is atomic AND crash-safe: it dies with the holder's connection,
+# so there is no stale-flag failure mode to clean up.
+_REBALANCE_LOCK_KEY = 0x5EB10001            # arbitrary stable 64-bit key for the advisory lock
+
+
+@contextmanager
+def rebalance_lease(db_engine):
+    """Yield ``True`` while this process holds the exclusive rebalance lease, ``False`` if
+    another rebalance holds it. Held on a dedicated connection for the whole ``with`` block
+    (hours, for a full chase). Non-Postgres engines (the sqlite test suites) skip locking."""
+    if db_engine is None or db_engine.dialect.name != "postgresql":
+        yield True
+        return
+    from sqlalchemy import text
+    conn = db_engine.connect()
+    got = False
+    try:
+        got = bool(conn.execute(text("select pg_try_advisory_lock(:k)"),
+                                {"k": _REBALANCE_LOCK_KEY}).scalar())
+        yield got
+    finally:
+        try:
+            if got:
+                conn.execute(text("select pg_advisory_unlock(:k)"), {"k": _REBALANCE_LOCK_KEY})
+        finally:
+            conn.close()
+
+
 def _quote_fns(client, settings):
     """``(quote_fn, quote_batch)`` for the tiered executor — the shared builders in
     :mod:`engine.execute` (raw NBBO, stale-print guard, one batched sweep per round)."""
@@ -225,6 +257,37 @@ def run_cycle(
     db_engine,
     settings,
     as_of: date,
+    alert: Callable[[str], None] | None = None,
+    lease: Callable = rebalance_lease,
+    **kw,
+) -> CycleResult:
+    """Run one rebalance cycle under the exclusive rebalance lease.
+
+    THE two-rebalances guard: a second trigger — the dashboard button while the 13:00
+    scheduler is mid-chase, a double click, a terminal ``--once`` alongside either — finds
+    the lease held, trades **nothing**, and returns ``already_running`` (surfaced in the
+    console as ``Cycle <date> → already_running`` and alerted). ``lease`` is injectable for
+    tests; all other arguments are :func:`_run_cycle_locked`'s.
+    """
+    with lease(db_engine) as got:
+        if not got:
+            log.warning("rebalance lease held elsewhere; refusing a concurrent cycle",
+                        extra={"date": as_of.isoformat()})
+            if alert:
+                alert(f"rebalance {as_of.isoformat()} not started: another rebalance is "
+                      f"already running (lease held) — refusing to run two at once")
+            return CycleResult("already_running")
+        return _run_cycle_locked(client=client, broker=broker, db_engine=db_engine,
+                                 settings=settings, as_of=as_of, alert=alert, **kw)
+
+
+def _run_cycle_locked(
+    *,
+    client,
+    broker,
+    db_engine,
+    settings,
+    as_of: date,
     force: bool = False,
     trigger: str = "monthly",
     targets_fn: Callable[..., TargetPlan] = compute_targets,
@@ -237,7 +300,8 @@ def run_cycle(
     express: bool = False,
     alert: Callable[[str], None] | None = None,
 ) -> CycleResult:
-    """Run one rebalance cycle. Returns a :class:`CycleResult`.
+    """Run one rebalance cycle (the body; callers use :func:`run_cycle`, which holds the
+    lease). Returns a :class:`CycleResult`.
 
     Order: reconcile (block if Alpaca down) → holiday gate (unless ``force``) → compute
     targets → pre-trade risk gate (logged to ``rebalance_log``; blocks on failure) →
