@@ -72,6 +72,12 @@ class OptionChase:
     # phantom-spread guard). Option spreads are naturally wide, so this keys off the bid-vs-mid
     # give-up, not a raw spread %. Writes only; closes still cross to get the risk off.
     min_bid_frac: float = 0.7
+    # Patience ladder (2026-07-06 execution review): with N > 0, round r posts at
+    # planned_mid + (touch − mid) × min((r−1)/N, 1) — the first round rests at the mid, walking
+    # to the touch over N rounds, instead of surrendering the full half-spread from round 1
+    # (premium capture is the strategy's weak link; monthly closes are not urgent). 0 = the
+    # legacy touch-from-round-1 behaviour; production wires covered_calls.chase_ladder_rounds.
+    ladder_rounds: int = 0
 
 
 @dataclass
@@ -337,7 +343,8 @@ def _execute_option_leg(broker, db_engine, orders: Sequence[CoveredCallOrder], *
 
     is_write = side == "sell"
 
-    def _price(sym: str, o: CoveredCallOrder, *, force_market: bool) -> tuple[Optional[str], Optional[float]]:
+    def _price(sym: str, o: CoveredCallOrder, *, force_market: bool,
+               rnd: int = 1) -> tuple[Optional[str], Optional[float]]:
         # ``(None, None)`` means "skip this name this round" — only writes skip (an income miss,
         # not a breach); closes never skip (we want the risk off), falling back to market.
         if force_market:
@@ -345,7 +352,7 @@ def _execute_option_leg(broker, db_engine, orders: Sequence[CoveredCallOrder], *
         if not do_chase:                                 # single passive pass at the planned mid
             return ("limit", o.limit_price) if o.limit_price else ("market", None)
         try:
-            px = chase.touch(sym, side)                  # bid (sell) / ask (buy) — cross to the touch
+            px = chase.touch(sym, side)                  # bid (sell) / ask (buy) — the guaranteed end
         except AlpacaAPIError as exc:
             log.warning("option touch failed", extra={"symbol": sym, "error": str(exc)})
             return (None, None) if is_write else ("market", None)
@@ -355,16 +362,22 @@ def _execute_option_leg(broker, db_engine, orders: Sequence[CoveredCallOrder], *
             log.info("covered-call write skipped: bid below floor",
                      extra={"underlying": o.underlying, "bid": float(px), "planned_mid": o.limit_price})
             return None, None                            # junk bid — don't give away the premium
+        # Patience ladder: interpolate planned mid → touch over ladder_rounds (0 = straight to
+        # the touch, the legacy behaviour). Crossing the full half-spread from round 1 gave away
+        # exactly the premium the overlay exists to collect.
+        if chase.ladder_rounds > 0 and o.limit_price:
+            lvl = min(max(rnd - 1, 0) / float(chase.ladder_rounds), 1.0)
+            return "limit", round(float(o.limit_price) + (float(px) - float(o.limit_price)) * lvl, 2)
         return "limit", round(float(px), 2)
 
-    def _round(tag: str, *, force_market: bool) -> None:
+    def _round(tag: str, *, force_market: bool, rnd: int = 1) -> None:
         live: list[tuple[str, str]] = []
         for sym in list(active):
             o = by_sym[sym]
             residual = o.contracts - filled[sym]
             if residual <= 0:
                 active.discard(sym); continue
-            otype, lp = _price(sym, o, force_market=force_market)
+            otype, lp = _price(sym, o, force_market=force_market, rnd=rnd)
             if otype is None:                            # write guard tripped — leave uncovered, retry next round
                 continue
             coid = f"cc:{stamp}:{o.underlying}:{event}:{tag}"
@@ -426,7 +439,7 @@ def _execute_option_leg(broker, db_engine, orders: Sequence[CoveredCallOrder], *
             if chase.market_close is not None and now() >= chase.market_close - timedelta(seconds=chase.close_buffer_s):
                 break
             rnd += 1
-            _round(f"r{rnd}", force_market=False)
+            _round(f"r{rnd}", force_market=False, rnd=rnd)
         if active and final_market:
             _round("final", force_market=True)
 
@@ -554,37 +567,79 @@ def write_index_overwrite(client, broker, db_engine, holdings_shares: Mapping[st
     if net <= 0:
         return [], [{"reason": "non-positive net credit"}], info
     log.info("index spread overwrite plan", extra=info)
-    coid = f"ovw:{as_of.isoformat()}:{market}"
-    try:
-        resp = broker.submit_option_spread(
-            [(short["symbol"], "sell", "sell_to_open"), (long_leg["symbol"], "buy", "buy_to_open")],
-            contracts=n, net_limit_price=net, client_order_id=coid)
-    except AlpacaAPIError as exc:
-        log.error("index spread overwrite rejected", extra={"error": str(exc)})
-        if alert:
-            alert(f"SPY spread overwrite rejected: {exc}")
-        return [], [{"reason": f"rejected: {exc}"}], info
-    oid = resp["id"]
-    filled = int(float(resp.get("filled_qty") or 0))
-    for _ in range(20):                                   # poll to fill (SPY spreads are liquid)
-        if filled >= n or str(resp.get("status") or "").lower() in ("filled", "canceled", "rejected", "expired"):
-            break
-        time.sleep(2)
+
+    # Net-credit chase (2026-07-06 execution review): re-peg the spread's net limit from the
+    # planned mid credit DOWN toward a floor (min_credit_frac × planned) over spread_chase_rounds,
+    # cancelling between rounds. The old one-shot posted 40 s at the rigid mid and then WALKED
+    # AWAY WITHOUT CANCELLING — the day order kept working at a stale credit, and a later fill
+    # never reached options_lifecycle (the premium ledger under-reported real income).
+    ch = chase or OptionChase()
+    frac = float(getattr(cc, "min_credit_frac", 0.7))
+    chase_rounds = max(int(getattr(cc, "spread_chase_rounds", 3)), 1)
+    floor_credit = max(round(net * frac, 2), 0.01)
+    legs = [(short["symbol"], "sell", "sell_to_open"), (long_leg["symbol"], "buy", "buy_to_open")]
+    total = 0
+    cash = 0.0
+    last_status = None
+    for r in range(1, chase_rounds + 1):
+        remaining = n - total
+        credit_r = (round(net - (net - floor_credit) * (r - 1) / (chase_rounds - 1), 2)
+                    if chase_rounds > 1 else round(net, 2))
         try:
-            resp = broker.get_order(oid)
-        except AlpacaAPIError:
+            resp = broker.submit_option_spread(legs, contracts=remaining, net_limit_price=credit_r,
+                                               client_order_id=f"ovw:{as_of.isoformat()}:{market}:r{r}")
+        except AlpacaAPIError as exc:
+            log.error("index spread overwrite rejected", extra={"error": str(exc), "round": r})
+            if alert and total == 0:
+                alert(f"SPY spread overwrite rejected: {exc}")
+            if total == 0:
+                return [], [{"reason": f"rejected: {exc}"}], info
             break
+        oid = resp["id"]
         filled = int(float(resp.get("filled_qty") or 0))
-    if filled < 1:
-        log.info("index spread overwrite unfilled", extra={"id": oid, "status": resp.get("status")})
-        return [], [{"reason": f"unfilled ({resp.get('status')})"}], info
-    # Lifecycle: one row on the short leg carrying the NET credit collected (real cash income).
+        for _ in range(ch.poll_attempts):
+            if filled >= remaining or str(resp.get("status") or "").lower() in _TERMINAL:
+                break
+            ch.sleep(ch.poll_interval_s)
+            try:
+                resp = broker.get_order(oid)
+            except AlpacaAPIError:
+                break
+            filled = int(float(resp.get("filled_qty") or 0))
+        if filled < remaining and str(resp.get("status") or "").lower() not in _TERMINAL:
+            try:
+                broker.cancel_order(oid)                  # never leave the spread working stale
+            except AlpacaAPIError as exc:
+                log.warning("spread cancel failed", extra={"id": oid, "error": str(exc)})
+            for _ in range(8):                            # settle-wait: the cancel is async
+                try:
+                    resp = broker.get_order(oid)
+                except AlpacaAPIError:
+                    break
+                if str(resp.get("status") or "").lower() in _TERMINAL:
+                    break
+                ch.sleep(0.5)
+            filled = int(float(resp.get("filled_qty") or 0))
+        if filled > 0:
+            cash += float(resp.get("filled_avg_price") or credit_r) * filled * _CONTRACT_SHARES
+            total += filled
+        last_status = resp.get("status")
+        if total >= n:
+            break
+    if total < 1:
+        log.info("index spread overwrite unfilled after chase",
+                 extra={"status": last_status, "rounds": chase_rounds})
+        return [], [{"reason": f"unfilled after {chase_rounds}-round credit chase ({last_status})"}], info
+    # Lifecycle: one row on the short leg carrying the NET credit actually collected (real cash,
+    # averaged over the rounds' fills — not the planned mid).
+    avg_credit = round(cash / (total * _CONTRACT_SHARES), 2)
     order = CoveredCallOrder(action="sell_to_open", option_symbol=str(short["symbol"]), underlying=market,
-                             contracts=filled, limit_price=net, strike=float(short["strike"]),
+                             contracts=total, limit_price=avg_credit, strike=float(short["strike"]),
                              expiration=exp, delta=round(float(short["delta"]), 3),
-                             premium=round(filled * _CONTRACT_SHARES * net, 2))
+                             premium=round(cash, 2))
     _log_lifecycle(db_engine, "write", order)
-    info["filled"] = filled
+    info["filled"] = total
+    info["avg_credit"] = avg_credit
     log.info("index spread overwrite filled", extra=info)
     return [order], [], info
 

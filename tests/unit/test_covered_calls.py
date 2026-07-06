@@ -655,3 +655,120 @@ def test_process_assignments_resilient_to_activities_error():
     out = cc.process_assignments(_Boom(), _FakeBroker(), eng, settings=_settings(),
                                  as_of=date(2026, 7, 2))
     assert out == {"assignments": 0, "reentered": 0, "flattened": 0}   # logged + skipped, no raise
+
+
+# ====================================================================== #
+# 2026-07-06 execution review: option patience ladder + SPY spread credit chase
+# ====================================================================== #
+def test_option_ladder_walks_mid_to_touch_before_crossing():
+    """With ladder_rounds=2 a write posts r1 AT the planned mid, r2 halfway, r3 at the touch —
+    the half-spread is only surrendered after patience fails (it IS the premium)."""
+    eng = _engine()
+    panel, as_of, chains = _write_setup()
+    broker = _FakeBroker(fills={"AAA_C105": [0, 0]})       # r1, r2 rest; r3 fills
+    chase = _fast_chase(touch=lambda sym, side: 1.90, ladder_rounds=2)
+    submitted, _ = cc.write_calls(_FakeClient(chains=chains), broker, eng, {"AAA": 250},
+                                  settings=_settings(), as_of=as_of, price_panel=panel, chase=chase)
+    assert [o["limit_price"] for o in broker.option_orders] == [2.0, 1.95, 1.90]
+    rows = _lifecycle(eng)
+    assert len(rows) == 1 and rows[0]["premium"] == 1.90 * 2 * 100   # filled at the touch rung
+    assert len(submitted) == 1
+
+
+def test_option_ladder_zero_keeps_legacy_touch_behaviour():
+    eng = _engine()
+    panel, as_of, chains = _write_setup()
+    broker = _FakeBroker(fills={"AAA_C105": [0]})
+    chase = _fast_chase(touch=lambda sym, side: 1.90)                # ladder_rounds default 0
+    cc.write_calls(_FakeClient(chains=chains), broker, eng, {"AAA": 250},
+                   settings=_settings(), as_of=as_of, price_panel=panel, chase=chase)
+    assert [o["limit_price"] for o in broker.option_orders] == [1.90, 1.90]
+
+
+class _FakeSpreadBroker(_FakeBroker):
+    """Adds multi-leg spread support: ``fill_seq`` is the filled-contract count consumed per
+    spread submission (default: fill everything)."""
+    def __init__(self, fill_seq=(), **kw):
+        super().__init__(**kw)
+        self.spread_orders = []
+        self._fill_seq = list(fill_seq)
+
+    def submit_option_spread(self, legs, contracts, net_limit_price, *, client_order_id=None):
+        fq = self._fill_seq.pop(0) if self._fill_seq else contracts
+        fq = min(int(fq), contracts)
+        rec = dict(legs=list(legs), contracts=contracts, net_limit_price=net_limit_price,
+                   client_order_id=client_order_id, id=f"sp-{len(self.spread_orders) + 1}",
+                   status=("filled" if fq >= contracts else "accepted"),
+                   filled_qty=fq, filled_avg_price=(net_limit_price if fq else None))
+        self.spread_orders.append(rec)
+        self._by_id[rec["id"]] = ("spread", rec)
+        return dict(rec)
+
+    def get_order(self, order_id):
+        entry = self._by_id[order_id]
+        if isinstance(entry, tuple) and entry[0] == "spread":
+            rec = entry[1]
+            status = ("filled" if rec["filled_qty"] >= rec["contracts"]
+                      else "canceled" if order_id in self.cancelled else "accepted")
+            return dict(id=order_id, status=status, filled_qty=rec["filled_qty"],
+                        filled_avg_price=rec["filled_avg_price"])
+        return super().get_order(order_id)
+
+
+def _idx_settings():
+    return SimpleNamespace(
+        covered_calls=SimpleNamespace(target_delta=0.30, min_dte_entry=30, max_dte_entry=45,
+                                      overwrite_coverage=1.0, wing_delta=0.05,
+                                      min_credit_frac=0.7, spread_chase_rounds=3, iv_window=60),
+        covariance=SimpleNamespace(estimation_window_days=60),
+        factors=SimpleNamespace(beta_market="SPY", beta_window=60))
+
+
+def _idx_setup():
+    """Panel where AAA tracks SPY exactly (β=1), a SPY chain with a 0.30Δ-ish short and a far
+    wing. 300 AAA shares ≈ 3 spreads at coverage 1.0."""
+    panel = _panel(["SPY"], n=70)
+    panel["AAA"] = panel["SPY"]
+    as_of = panel.index[-1].date()
+    exp = (as_of + timedelta(days=35)).isoformat()
+    spot = float(panel["SPY"].iloc[-1])
+    chain = [{"symbol": "SPY_SHORT", "strike": round(spot * 1.03), "expiration": exp, "mid": 3.0},
+             {"symbol": "SPY_WING", "strike": round(spot * 1.25), "expiration": exp, "mid": 0.5}]
+    return panel, as_of, {"SPY": chain}
+
+
+def test_write_index_overwrite_chases_credit_down_and_journals_real_fills():
+    """The credit chase: r1 posts the planned net mid (2.5), later rounds walk toward the 0.7×
+    floor (1.75), cancelling between rounds; the lifecycle row carries the contracts and net
+    credit ACTUALLY filled, averaged across rounds."""
+    eng = _engine()
+    panel, as_of, chains = _idx_setup()
+    broker = _FakeSpreadBroker(fill_seq=[0, 2, 1])         # r1 rests, r2 fills 2, r3 fills last 1
+    submitted, skipped, info = cc.write_index_overwrite(
+        _FakeClient(chains=chains), broker, eng, {"AAA": 300},
+        settings=_idx_settings(), as_of=as_of, price_panel=panel, chase=_fast_chase())
+    credits = [o["net_limit_price"] for o in broker.spread_orders]
+    assert credits[0] == 2.5 and credits[-1] == 1.75 and len(credits) == 3
+    assert credits == sorted(credits, reverse=True)        # walks DOWN toward the floor only
+    assert len(broker.cancelled) == 2                      # r1 and r2 cancelled before re-pricing
+    assert info["filled"] == 3 and skipped == []
+    rows = _lifecycle(eng)
+    assert len(rows) == 1 and rows[0]["contracts"] == 3
+    expected_cash = 2 * credits[1] * 100 + 1 * credits[2] * 100
+    assert rows[0]["premium"] == round(expected_cash, 2)   # real fills, not the planned mid
+    assert len(submitted) == 1 and submitted[0].contracts == 3
+
+
+def test_write_index_overwrite_unfilled_cancels_and_leaves_no_ledger_row():
+    """The walk-away regression: an unfilled chase must CANCEL its final order (the old one-shot
+    left the spread working at a stale credit) and write no lifecycle row."""
+    eng = _engine()
+    panel, as_of, chains = _idx_setup()
+    broker = _FakeSpreadBroker(fill_seq=[0, 0, 0])
+    submitted, skipped, _info = cc.write_index_overwrite(
+        _FakeClient(chains=chains), broker, eng, {"AAA": 300},
+        settings=_idx_settings(), as_of=as_of, price_panel=panel, chase=_fast_chase())
+    assert submitted == [] and _lifecycle(eng) == []
+    assert len(broker.spread_orders) == 3
+    assert len(broker.cancelled) == 3                      # every round cleaned up after itself
+    assert any("unfilled after" in s["reason"] for s in skipped)

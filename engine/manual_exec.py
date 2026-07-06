@@ -254,6 +254,7 @@ def _option_chase(client, mkt_close, settings) -> covered_calls.OptionChase | No
 
     mbf = getattr(settings.covered_calls, "min_bid_frac", None)
     kw = {"min_bid_frac": float(mbf)} if mbf is not None else {}
+    kw["ladder_rounds"] = int(getattr(settings.covered_calls, "chase_ladder_rounds", 0) or 0)
     return covered_calls.OptionChase(touch=_touch, market_close=mkt_close, **kw)
 
 

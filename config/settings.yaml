@@ -94,6 +94,17 @@ covered_calls:
   min_bid_frac: 0.7              # write guard: skip a write when the live bid < this fraction of
                                  # the planned chain mid (don't sell into a lowball/junk bid).
                                  # Was hardcoded in OptionChase (audit).
+  # Option execution patience (2026-07-06 execution review).
+  chase_ladder_rounds: 2         # single-leg option chase: rounds spent walking the limit from the
+                                 # planned mid to the touch (r1 = mid, r3+ = touch). Crossing the
+                                 # full half-spread from round 1 gave away exactly the premium the
+                                 # overlay exists to collect. 0 = legacy touch-from-round-1.
+  min_credit_frac: 0.7           # SPY spread write: floor on the chased net credit as a fraction
+                                 # of the planned mid credit — below it, leave the cycle unwritten
+                                 # (an income miss, not a breach) rather than sell cheap.
+  spread_chase_rounds: 3         # SPY spread write: rounds walking the net-credit limit from the
+                                 # planned mid down to the floor, cancelling between rounds (the
+                                 # old one-shot left the order working stale + unjournaled).
   rewrite_after_earnings_days: 5 # per_name mode: rewrite an uncovered held name only within this
                                  # many days after its earnings (the close→rewrite pair). Was the
                                  # hardcoded _REWRITE_AFTER_DAYS (audit).
