@@ -805,3 +805,28 @@ def test_spread_write_express_finish_drops_to_credit_floor():
     assert broker.spread_orders[0]["net_limit_price"] == 1.75      # 0.7 × 2.5 planned credit
     assert info["filled"] == 3 and skipped == []
     assert overrides.get(eng, "express_finish") is None
+
+
+def test_spread_write_journals_alpaca_negative_credit_fill_as_positive_cash():
+    """Regression (2026-07-06 live): Alpaca reports a net-CREDIT mleg fill with a NEGATIVE
+    filled_avg_price (debit +/credit −). The first live overwrite collected +$4,368 and the
+    ledger recorded −$4,368. Premium must be |fill| — always positive cash for a write."""
+    from dataclasses import dataclass
+
+    class _CreditBroker(_FakeSpreadBroker):
+        def submit_option_spread(self, legs, contracts, net_limit_price, *, client_order_id=None):
+            rec = super().submit_option_spread(legs, contracts, net_limit_price,
+                                               client_order_id=client_order_id)
+            live = self._by_id[rec["id"]][1]
+            live["filled_avg_price"] = -abs(net_limit_price)      # Alpaca's credit convention
+            rec["filled_avg_price"] = live["filled_avg_price"]
+            return rec
+
+    eng = _engine()
+    panel, as_of, chains = _idx_setup()
+    submitted, skipped, info = cc.write_index_overwrite(
+        _FakeClient(chains=chains), _CreditBroker(), eng, {"AAA": 300},
+        settings=_idx_settings(), as_of=as_of, price_panel=panel, chase=_fast_chase())
+    rows = _lifecycle(eng)
+    assert len(rows) == 1 and rows[0]["premium"] == 2.5 * 3 * 100      # POSITIVE cash collected
+    assert submitted[0].limit_price == 2.5 and skipped == []

@@ -640,7 +640,12 @@ def write_index_overwrite(client, broker, db_engine, holdings_shares: Mapping[st
                 ch.sleep(0.5)
             filled = int(float(resp.get("filled_qty") or 0))
         if filled > 0:
-            cash += float(resp.get("filled_avg_price") or credit_r) * filled * _CONTRACT_SHARES
+            # Alpaca reports a net-CREDIT mleg fill as a NEGATIVE filled_avg_price (debit
+            # positive / credit negative). We COLLECTED |px| per share — taking the sign at
+            # face value journaled the first live overwrite (2026-07-06, +$4,368 collected)
+            # as −$4,368 in the premium ledger.
+            px = resp.get("filled_avg_price")
+            cash += (abs(float(px)) if px is not None else float(credit_r)) * filled * _CONTRACT_SHARES
             total += filled
         last_status = resp.get("status")
         if total >= n:
