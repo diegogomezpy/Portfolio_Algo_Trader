@@ -270,3 +270,52 @@ def test_effective_target_leverage_clamps_to_cap():
     eng = _eng()
     overrides.set(eng, "target_leverage", 9.9)
     assert overrides.effective_target_leverage(eng, _Settings) == 2.0   # max_leverage clamp
+
+
+# ====================================================================== #
+# Concurrency guard (2026-07-06): refuse while another execution is in-flight
+# ====================================================================== #
+def test_run_action_refuses_while_rebalance_in_flight_force_overrides():
+    from datetime import datetime, timezone
+    from sqlalchemy import insert
+    eng = _eng()
+    with eng.begin() as c:                       # a rebalance round posted seconds ago
+        c.execute(insert(db.order_events).values(
+            ts=datetime.now(timezone.utc), cycle_key="2026-07-06", round="r3",
+            symbol="AAPL", side="buy", event="post"))
+    with pytest.raises(RuntimeError, match="in-flight"):
+        manual_exec.run_action("liquidate", mode="express", client=_Client(), broker=_Broker(),
+                               db_engine=eng, settings=_Settings, pct=10)
+    res = manual_exec.run_action("liquidate", mode="express", client=_Client(), broker=_Broker(),
+                                 db_engine=eng, settings=_Settings, pct=10, force=True)
+    assert res["submitted"] == 2                 # force is the operator's override
+
+
+def test_run_action_refuses_while_another_manual_action_started():
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import insert, update
+    eng = _eng()
+    with eng.begin() as c:
+        c.execute(insert(db.manual_actions).values(
+            ts=datetime.now(timezone.utc), action="trade", mode="normal",
+            params={}, status="started", cycle_key="manual-trade-other"))
+    with pytest.raises(RuntimeError, match="still running"):
+        manual_exec.run_action("liquidate", mode="express", client=_Client(), broker=_Broker(),
+                               db_engine=eng, settings=_Settings, pct=10)
+    with eng.begin() as c:                       # a crashed run (>2h stale) must NOT block forever
+        c.execute(update(db.manual_actions).values(
+            ts=datetime.now(timezone.utc) - timedelta(hours=3)))
+    res = manual_exec.run_action("liquidate", mode="express", client=_Client(), broker=_Broker(),
+                                 db_engine=eng, settings=_Settings, pct=10)
+    assert res["submitted"] == 2
+
+
+def test_completed_manual_action_does_not_block_the_next_one():
+    # Back-to-back console actions are normal operation: the first run's manual-* telemetry and
+    # its "done" audit row must not trip the guard for the second.
+    eng = _eng()
+    manual_exec.run_action("liquidate", mode="express", client=_Client(), broker=_Broker(),
+                           db_engine=eng, settings=_Settings, pct=10)
+    res = manual_exec.run_action("liquidate", mode="express", client=_Client(), broker=_Broker(),
+                                 db_engine=eng, settings=_Settings, pct=10)
+    assert res["submitted"] == 2

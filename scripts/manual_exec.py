@@ -43,6 +43,8 @@ def main() -> None:
     ap.add_argument("--target", type=float, help="leverage: target gross (e.g. 1.5)")
     ap.add_argument("--cycle-key", help="override the run's cycle key (the dashboard sets this)")
     ap.add_argument("--preview", action="store_true", help="print the plan as JSON; trade nothing")
+    ap.add_argument("--force", action="store_true",
+                    help="override the market-closed and execution-in-flight guards")
     args = ap.parse_args()
 
     config.load_env(args.env)
@@ -66,7 +68,8 @@ def main() -> None:
     try:
         result = manual_exec.run_action(args.action, mode=args.mode, client=client, broker=broker,
                                         db_engine=db_engine, settings=settings,
-                                        cycle_key=args.cycle_key, alert=alerter, **params)
+                                        cycle_key=args.cycle_key, alert=alerter,
+                                        force=args.force, **params)
     except (ValueError, RuntimeError) as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         sys.exit(1)

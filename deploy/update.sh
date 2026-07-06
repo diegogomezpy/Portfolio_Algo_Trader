@@ -50,10 +50,18 @@ if [ "$DASH_ONLY" = "1" ]; then
 else
   # Guard: an eod restart cancels ALL open orders. Refuse mid-trade unless forced.
   OPEN=$($PY - <<'PYEOF'
+import sys
 from engine import config
 try:
     config.load_env("paper")
-    print(len(config.get_alpaca_client().get_orders(status="open", limit=50)))
+    orders = config.get_alpaca_client().get_orders(status="open", limit=50)
+    print(len(orders))
+    for o in orders:  # detail to stderr so the operator sees WHAT would be cancelled
+        coid = str(getattr(o, "client_order_id", "") or "")
+        tag = " [console]" if coid.startswith("manual-") else ""
+        print(f"   . {getattr(o, 'symbol', '?')} {getattr(o, 'side', '?')} "
+              f"{getattr(o, 'qty', '?')} {getattr(o, 'order_type', '?')} "
+              f"({getattr(o, 'status', '?')}) coid={coid}{tag}", file=sys.stderr)
 except Exception:
     print("unknown")
 PYEOF

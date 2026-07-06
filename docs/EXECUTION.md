@@ -102,13 +102,28 @@ being marketable from the first second:
 - **Round 0..k:** limit starts at (or just through) the **mid** and steps toward
   `reference × (1 ± max_cross_bps)` across rounds — capturing the half-spread on names that fill
   early, guaranteeing urgency as the session runs on.
-- Each round: submit → poll `poll_attempts × poll_interval_s` → cancel the remainder → re-price →
-  repeat. A fresh `client_order_id` per round (`…:{side}:r{n}`).
+- **Persistent orders (2026-07-06):** the resting limit is left **working across rounds while its
+  ladder price is unchanged** — it is cancelled only to move the price. (The old cancel/re-post
+  every `equity_repeg_s` surrendered queue priority at the level ~60×/session and tripled REST
+  volume.) A fresh `client_order_id` per re-price (`…:{side}:r{n}`).
+- **Settle-wait:** every cancel is followed by a bounded poll to a *terminal* state before
+  `filled_qty` is booked — Alpaca cancels are async, and booking a `pending_cancel` read raced
+  in-flight fills into an oversized re-post. Fills are credited as deltas per order id.
+- **Chase cap:** no limit is ever posted beyond `max_chase_bps` of the name's **round-1 arrival
+  reference**. The marketable cap re-anchors to the moving market each round, so in a trend the
+  give-up vs decision price was otherwise unbounded; past the cap the residual waits for §8.
+- **Adaptive rungs:** a name behind the time schedule steps up one rung early; a mid that has
+  drifted adversely past half the chase cap jumps straight to marketable (passive posting into a
+  runaway price is pure adverse selection).
+- **Batched quotes:** each round prefetches every active name's NBBO + last trade in one request
+  (`latest_nbbo_batch`/`latest_trades_batch`) — per-symbol calls at full book size ran ~2× the
+  200 req/min limit, and the resulting 429s used to become permanent rejects. Prints older than
+  `stale_trade_max_s` are discarded (the phantom-quote guard's mirror image).
 - **Close gating:** stop laddering once the session is within `close_buffer_s` of the close; the
   residual goes to the fallback (§8).
 - **Deep+tight** names skip the ladder — straight to marketable (the spread isn't worth waiting on).
 
-**Slicing (thin names only):** each child order is capped at `child_adv_pct` (**NEW**, ~10%) of the
+**Slicing (thin names only):** each child order is capped at `child_adv_pct` (~10%) of the
 name's ADV, so our own order doesn't move a thin book; the next slice goes after the prior one
 fills. Liquid names trade in a single clip.
 
@@ -119,8 +134,13 @@ fills. Liquid names trade in a single clip.
 When a name isn't filled by the close gate:
 
 - **Eligible (liquid enough) residual → the closing auction.** A **limit-on-close** at the cap
-  (Alpaca TIF `CLS`) fills at the single closing print — the day's deepest, lowest-impact
-  liquidity — instead of walking the intraday book.
+  (Alpaca TIF `CLS`, chase-cap clamped) fills at the single closing print — the day's deepest,
+  lowest-impact liquidity — instead of walking the intraday book. `close_buffer_s` is **630**
+  (stop at 15:49:30): NYSE stops accepting LOC around 15:50, so the old 15:55 route was rejected
+  for every NYSE-listed name and silently fell to cross-day. Every LOC route ALSO writes a
+  `pending_adjustments` **verify row** — if the auction print misses the limit, the next-day
+  top-up recomputes the delta from live positions (a filled LOC self-resolves as already-at-target;
+  an unfilled one no longer drifts until the next monthly rebalance).
 - **Thin / pathological names → cross-day.** The residual becomes a `pending_adjustments` row; we'd
   rather be one name short for a day than pay a blown-out spread. There is **no naked intraday
   market order** (the old behavior is retired).
@@ -136,11 +156,28 @@ monthly rebalance resets targets.
 
 The option overlay mirrors the equity philosophy (`_execute_option_leg`, driven by `OptionChase`):
 
-- **Writes** (sell-to-open) chase to the **bid**; **closes** (buy-to-close) chase to the **ask**.
-- The `options_lifecycle` row is written **only on a real fill, at the real fill price** — so
-  premium accounting can never count premium that wasn't collected.
+- **Writes** (sell-to-open) ladder from the **planned mid toward the bid** and **closes**
+  (buy-to-close) from the mid toward the **ask**, over `chase_ladder_rounds` (=2) — crossing the
+  full half-spread from round 1 gave away exactly the premium the overlay exists to collect.
+  `ladder_rounds=0` restores touch-from-round-1.
+- The **SPY spread write** is a **net-credit chase**: the spread's net limit re-pegs from the
+  planned mid credit down toward `min_credit_frac` (0.7×) of it over `spread_chase_rounds` (=3),
+  cancelling + settle-waiting between rounds. Below the floor the cycle stays unwritten (income
+  miss, not a breach). The old one-shot walked away WITHOUT cancelling — the order kept working
+  at a stale credit and late fills never reached the premium ledger.
+- The `options_lifecycle` row is written **only on a real fill, at the real fill price** (the
+  spread row carries the credit actually filled, averaged across rounds) — so premium accounting
+  can never count premium that wasn't collected.
 - **Closes** end in a final market sweep (get the risk off); **writes** leave a name uncovered
   rather than chase a bad option fill (an income miss, not a breach).
+
+**Express (console) —** `engine.execute.submit_express`, session-aware with guaranteed execution:
+RTH sends market orders but collars *pathological* spreads with a wide limit
+(`express_collar_bps`, leftover swept to market); 4:00–9:30/16:00–20:00 ET posts
+**extended-hours limits** that can execute immediately (leftover re-queued as market-at-open);
+overnight/weekend/holiday queues plain market orders for the next session. Manual actions also
+refuse (without `force`) while another execution looks in-flight — a `manual_actions` row still
+`started`, or non-manual `order_events` in the last ~3 min (the rebalance mid-chase).
 
 ---
 
@@ -175,10 +212,14 @@ the touch, so a fill inside it looks like a fake "gain" (this produced INBX's bo
 | `mid_cap_adv_threshold` | ADV ≥ this ⇒ mid-cap tier (below ⇒ thin) | 5M |
 | `spread_threshold` | Spread < this ⇒ "tight" (deep+tight ⇒ market) | 0.001 (0.1%) |
 | `marketable_limit_bps` | **Cross cap** — max cross beyond the reference | 50 (0.5%) |
-| `max_spread_bps` | **NEW** — pathological-spread guard; above this we don't cross | ~150 |
-| `ladder_start_bps` / `ladder_steps` | **NEW** — patient ladder start (from mid) + step count | tbd |
-| `child_adv_pct` | **NEW** — slice cap as a fraction of ADV (thin names) | ~0.10 |
-| `close_buffer_s` | Stop working this many seconds before the close | 300 |
+| `max_spread_bps` | Pathological-spread guard; above this we don't cross | 150 |
+| `max_chase_bps` | **Chase cap** — hard limit vs the round-1 arrival price | 150 |
+| `stale_trade_max_s` | Ignore last-trade prints older than this | 900 |
+| `express_collar_bps` | Express cost collar (RTH phantom spreads + ext-hours legs) | 200 |
+| `ladder_steps` | Patient ladder: mid→cap step count | 3 |
+| `child_adv_pct` | Slice cap as a fraction of ADV (thin names) | 0.10 |
+| `equity_repeg_s` | Re-price cadence for a resting limit (only when the price moves) | 30 |
+| `close_buffer_s` | Stop working this many seconds before the close (NYSE LOC cutoff) | 630 |
 | `poll_attempts` / `poll_interval_s` | Fill-poll cadence per round | 30 / 2s |
 | `rebalance_hour_et` / `rebalance_minute_et` | When the daily job fires | 13:00 |
 
@@ -192,9 +233,13 @@ ADV tier; it should stay consistent with the live tiers above.
 | Situation | Behavior |
 |---|---|
 | Wide / phantom quote | `max_spread_bps` guard: don't cross; post passive, defer if unfilled |
-| Not filled by the close | Closing auction (eligible) else cross-day retry |
+| Stale last print | Dropped after `stale_trade_max_s`; unpriceable names retry next round |
+| Not filled by the close | Closing auction + verify row (eligible) else cross-day retry |
 | Order rejected (permanent) | Logged + alerted, rolled to `pending_adjustments` |
+| Order rejected (transient: 429/5xx/buying power) | Retried next round (tiered) / inline ×3 (single-pass, express) |
+| Runaway price | Chase cap: nothing posts beyond `max_chase_bps` of arrival; residual → §8 |
 | Transient poll/read hiccup | Order left open, re-polled; reconcile corrects from Alpaca |
+| Console action during a rebalance chase | Refused without `force` (in-flight guard) |
 | Alpaca unreachable | `reconcile` blocks the pipeline (no trading on stale state) |
 
 ---
@@ -210,8 +255,15 @@ ADV tier; it should stay consistent with the live tiers above.
   guard (§6); the patient mid→touch ladder on `equity_repeg_s` (§7); thin-name slicing
   (`child_adv_pct`, §7); the closing-auction residual fallback (§8) — the naked intraday market
   order is **retired**. The cross-day top-up runs the same tiered executor.
-- Covered-call writes/closes chase to the touch with log-on-fill (§9), plus a **write junk-bid
+- Covered-call writes/closes chase with log-on-fill (§9), plus a **write junk-bid
   guard** (`min_bid_frac`) so a write is skipped rather than dumped into a lowball bid.
+- **2026-07-06 hardening** (execution-algo review, commits `e49de4a..`): persistent orders +
+  settle-wait + delta fill booking; transient-reject retry (429/5xx/buying power); batched
+  per-round quotes + stale-print guard; chase cap vs arrival + adaptive rungs (§7); LOC inside
+  the NYSE cutoff + auction verify rows (§8); option patience ladder + SPY-spread net-credit
+  chase (§9); session-aware express with collar + extended-hours legs; console/rebalance
+  in-flight guard (§9).
 
 Deploys touch the live trading path + start the feed thread — restart only in a no-open-orders
-window (§10), verifying `get_orders(status="open") == 0` first.
+window (§10), verifying `get_orders(status="open") == 0` first (`update.sh` now lists the
+working orders, flagging console-queued ones, before refusing).

@@ -310,6 +310,48 @@ def execute_plan(plan: dict, mode: str, *, client, broker, db_engine, settings,
     }
 
 
+def _exec_conflict(db_engine, *, window_s: float = 180.0) -> str | None:
+    """A description of another execution that looks in-flight, or ``None``.
+
+    Best-effort concurrency guard (2026-07-06 execution review): nothing stopped a console
+    action from trading the same names as the 13:00 rebalance mid-chase, each blind to the
+    other's fills. Two signals, no schema change:
+
+    * a ``manual_actions`` row still ``started`` (younger than 2 h, so a crashed run can't
+      block forever) — another console/CLI action is running;
+    * ``order_events`` telemetry from a NON-manual cycle in the last ``window_s`` — the
+      scheduled rebalance emits at least one event per repeg round (≤30 s apart) while it
+      works, so a 3-minute quiet period means it is done.
+
+    Failure-isolated: an unreadable DB returns ``None`` (the guard must never be the thing
+    that blocks trading).
+    """
+    try:
+        from sqlalchemy import select
+        from engine.db import manual_actions as ma_t, order_events as oe_t
+        now = datetime.now(timezone.utc)
+
+        def _age(ts) -> float:
+            ts = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+            return (now - ts).total_seconds()
+
+        with db_engine.connect() as conn:
+            row = conn.execute(select(ma_t.c.cycle_key, ma_t.c.ts)
+                               .where(ma_t.c.status == "started")
+                               .order_by(ma_t.c.ts.desc()).limit(1)).first()
+            if row and row[1] is not None and _age(row[1]) < 7200:
+                return f"manual action {row[0]} is still running (started {int(_age(row[1]))}s ago)"
+            ev = conn.execute(select(oe_t.c.cycle_key, oe_t.c.ts)
+                              .order_by(oe_t.c.ts.desc()).limit(1)).first()
+            if (ev and ev[1] is not None and not str(ev[0]).startswith("manual-")
+                    and _age(ev[1]) < window_s):
+                return (f"cycle {ev[0]} placed orders {int(_age(ev[1]))}s ago "
+                        f"(the scheduled rebalance is likely mid-chase)")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("exec-conflict check failed (continuing)", extra={"error": str(exc)})
+    return None
+
+
 # ====================================================================== #
 # Audit trail + top-level runner (what the CLI calls)
 # ====================================================================== #
@@ -345,10 +387,12 @@ def run_action(action: str, *, mode: str, client, broker, db_engine, settings,
     """Plan → journal → execute one manual action; returns the result summary.
 
     **Normal** mode refuses when the market is closed (the chase needs live quotes).
-    **Express** trades regardless of the clock: market orders are submitted immediately
-    and, off-hours, left queued for the next open (never cancelled — see
-    ``cancel_leftover``). The leverage action persists its sticky override *before*
-    trading, so even a partially-filled lever-move is honored by the next rebalance.
+    **Express** trades regardless of the clock: session-aware sweeps (collared limits in
+    RTH/ext-hours, queued markets otherwise) that are never cancelled. Both modes refuse —
+    unless ``force`` — while another execution looks in-flight (:func:`_exec_conflict`);
+    trading the same names as a mid-chase rebalance double-executes. The leverage action
+    persists its sticky override *before* trading, so even a partially-filled lever-move is
+    honored by the next rebalance.
     """
     if not force and mode != "express":
         try:
@@ -358,6 +402,11 @@ def run_action(action: str, *, mode: str, client, broker, db_engine, settings,
         if not clk.get("is_open"):
             raise RuntimeError(f"market closed — next open {clk.get('next_open')} "
                                f"(express mode trades any time)")
+    if not force:
+        conflict = _exec_conflict(db_engine)
+        if conflict:
+            raise RuntimeError(f"another execution appears in-flight — {conflict}. "
+                               f"Wait for it to finish, or re-run with force to override.")
 
     cycle_key = cycle_key or f"manual-{action}-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"
     plan = build_plan(action, client, db_engine, settings, **params)
