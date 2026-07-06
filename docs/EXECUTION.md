@@ -185,6 +185,10 @@ refuse (without `force`) while another execution looks in-flight — a `manual_a
 
 - **`client_order_id`** = `{cycle}:{symbol}:{side}[:round]` (equities) / `cc:{date}:{underlying}:{event}:{tag}`
   (options). Alpaca rejects duplicate ids, so re-running a cycle never double-trades.
+- **Rebalance lease (2026-07-06):** `run_cycle` holds a Postgres session advisory lock for the
+  whole cycle — the dashboard button, the 13:00 scheduler, and a terminal `--once` all funnel
+  through it, so a second trigger trades nothing and returns `already_running` (alerted +
+  surfaced in the console). Session-scoped: a crashed holder releases it automatically.
 - **A restart cancels every open order.** `graceful_shutdown` calls `broker.cancel_all_orders()` on
   SIGTERM, so `deploy/update.sh` (which restarts `sharpe-eod`) must run only when **no orders rest**
   (after the close, or before 13:00 ET). Verify with a live `get_orders(status="open")` == 0 first.
