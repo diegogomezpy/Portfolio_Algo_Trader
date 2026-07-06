@@ -645,3 +645,88 @@ def test_tiered_prefers_quote_batch_over_per_symbol():
         quote=per_symbol, adv={"AAPL": 60_000_000}, ex=_ex(), now=_Clock(),
         market_close=_T0 + timedelta(hours=3), sleep=lambda _s: None, quote_batch=qb)
     assert rep.filled == 1 and batches == [["AAPL"]]
+
+
+# ====================================================================== #
+# submit_express — session-aware express (RTH collar / ext-hours limits / queued markets)
+# ====================================================================== #
+class _ExtBroker(_FakeBroker):
+    """Records the extended_hours flag per submission (the real Broker signature)."""
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.ext_flags = []
+
+    def submit_order(self, symbol, qty, side, *, order_type="market", limit_price=None,
+                     client_order_id=None, time_in_force="day", extended_hours=False):
+        self.ext_flags.append(extended_hours)
+        return super().submit_order(symbol, qty, side, order_type=order_type,
+                                    limit_price=limit_price, client_order_id=client_order_id,
+                                    time_in_force=time_in_force)
+
+
+_EXT_EVENING = datetime(2026, 7, 6, 21, 30, tzinfo=timezone.utc)   # Mon 17:30 ET — after-hours
+_SUNDAY = datetime(2026, 7, 5, 16, 0, tzinfo=timezone.utc)         # Sun 12:00 ET — no session
+
+
+def test_express_rth_collars_pathological_spread_then_sweeps_market():
+    """During RTH a phantom-spread name posts a wide collar limit first; the unfilled residual
+    sweeps to market — the collar can only save money, never break the guarantee."""
+    eng = _engine()
+    broker = _FakeBroker(fill_plan={"BAD": [("new", 0), ("new", 0)]})
+    rep = execute.submit_express(
+        [_po("BAD", "buy", 10)], broker=broker, db_engine=eng, cycle_key="c",
+        quote=lambda s: (94.73, 108.87, 95.1), clock={"is_open": True}, ex=_ex(),
+        poll_attempts=2, poll_interval_s=0, sleep=lambda _s: None)
+    types = [(o["order_type"], o["limit_price"]) for o in broker.submitted]
+    assert types[0] == ("limit", 97.0)                    # ref 95.1 × (1 + 200 bps collar)
+    assert types[1] == ("market", None)                   # the sweep
+    assert broker.cancelled                               # collar pulled before the sweep
+    (line,) = rep.lines
+    assert line["status"] == "queued"                     # fake market never confirms — left working
+
+
+def test_express_ext_hours_posts_ext_limit_then_queues_market():
+    """Off-hours inside the ext session: a collared extended-hours limit goes out first (it can
+    EXECUTE now); the leftover queues as a market order for the open, never cancelled."""
+    eng = _engine()
+    broker = _ExtBroker(fill_plan={"AAPL": [("new", 0)]})
+    rep = execute.submit_express(
+        [_po("AAPL", "sell", 50)], broker=broker, db_engine=eng, cycle_key="c",
+        quote=lambda s: (99.99, 100.01, 100.0), clock={"is_open": False}, ex=_ex(),
+        poll_attempts=1, poll_interval_s=0, sleep=lambda _s: None, now=lambda: _EXT_EVENING)
+    assert broker.ext_flags == [True, False]              # ext limit, then a plain queued market
+    types = [(o["order_type"], o["limit_price"]) for o in broker.submitted]
+    assert types[0] == ("limit", 98.0)                    # 100 × (1 − 200 bps) on a sell
+    assert types[1] == ("market", None)
+    (line,) = rep.lines
+    assert line["status"] == "queued" and "open" in line["reason"]
+
+
+def test_express_closed_session_keeps_legacy_queued_market_path():
+    """Weekend/holiday/overnight: straight market orders left working for the next session —
+    exactly the pre-collar behaviour."""
+    eng = _engine()
+    broker = _FakeBroker(fill_plan={"AAPL": [("new", 0)]})
+    rep = execute.submit_express(
+        [_po("AAPL", "sell", 50)], broker=broker, db_engine=eng, cycle_key="c",
+        quote=lambda s: (99.99, 100.01, 100.0), clock={"is_open": False}, ex=_ex(),
+        poll_attempts=1, poll_interval_s=0, sleep=lambda _s: None, now=lambda: _SUNDAY)
+    assert len(broker.submitted) == 1
+    assert broker.submitted[0]["order_type"] == "market"
+    assert broker.cancelled == []                         # left working (the express contract)
+    (line,) = rep.lines
+    assert line["status"] == "queued"
+
+
+def test_express_ext_limit_fill_needs_no_market_leg():
+    """An ext-hours collar that fills leaves nothing to queue — express got the trade done
+    off-hours at a bounded price instead of waiting for the opening print."""
+    eng = _engine()
+    broker = _ExtBroker()                                 # default: fills on first poll
+    rep = execute.submit_express(
+        [_po("AAPL", "sell", 50)], broker=broker, db_engine=eng, cycle_key="c",
+        quote=lambda s: (99.99, 100.01, 100.0), clock={"is_open": False}, ex=_ex(),
+        poll_attempts=2, poll_interval_s=0, sleep=lambda _s: None, now=lambda: _EXT_EVENING)
+    assert rep.filled == 1 and len(broker.submitted) == 1
+    assert broker.ext_flags == [True]
+    assert sum(f["qty"] for f in _rows(eng, db.fills)) == 50.0

@@ -283,16 +283,22 @@ def execute_plan(plan: dict, mode: str, *, client, broker, db_engine, settings,
                for o in plan.get("orders") or []]
     report = None
     if planned:
-        quote_fn = quote_batch = None
-        if mode == "normal":
+        if mode == "express":
+            # Session-aware express (engine.execute.submit_express): RTH market orders with a
+            # collar on pathological spreads, ext-hours limits that EXECUTE now off-hours, and
+            # queued markets otherwise. Leftovers are never cancelled — express always executes.
+            quote_fn, _batch = _quote_fns(client, settings)
+            report = execute.submit_express(
+                planned, broker=broker, db_engine=db_engine, cycle_key=cycle_key,
+                quote=quote_fn,
+                clock=(client.market_clock if hasattr(client, "market_clock") else None),
+                ex=settings.execution, alert=alert)
+        else:
             quote_fn, quote_batch = _quote_fns(client, settings)
-        # Express never cancels its leftover: off-hours market orders stay queued and fill
-        # at the next open — that's the whole point of "express regardless of the clock".
-        report = submit_and_track(planned, broker=broker, db_engine=db_engine,
-                                  cycle_key=cycle_key, quote=quote_fn, adv={},
-                                  ex=settings.execution, market_close=_market_close(client),
-                                  alert=alert, cancel_leftover=(mode != "express"),
-                                  quote_batch=quote_batch)
+            report = submit_and_track(planned, broker=broker, db_engine=db_engine,
+                                      cycle_key=cycle_key, quote=quote_fn, adv={},
+                                      ex=settings.execution, market_close=_market_close(client),
+                                      alert=alert, quote_batch=quote_batch)
     return {
         "cycle_key": cycle_key, "mode": mode, "overlay_closed": overlay_closed,
         "submitted": report.submitted if report else 0,

@@ -158,6 +158,10 @@ execution:
   stale_trade_max_s: 900         # ignore a last-trade print older than this when anchoring the
                                  # chase (thin names on IEX can show prints hours old — the
                                  # phantom-quote guard's mirror image).
+  express_collar_bps: 200        # express mode's cost collar: RTH pathological-spread names and
+                                 # all extended-hours legs post a limit this far past the
+                                 # reference instead of a naked market order; the leftover still
+                                 # sweeps/queues to market, so execution stays guaranteed.
   # Re-price cadences (docs/EXECUTION.md §7). Fills now come from the live order feed (instant),
   # so these only govern how often a *resting* limit is re-anchored to the moving market.
   equity_repeg_s: 30             # stocks: re-anchor a resting limit to the live mid this often

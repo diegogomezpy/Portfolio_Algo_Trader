@@ -315,17 +315,22 @@ def run_cycle(
     # Tiered execution (docs/EXECUTION.md §5–§8): each name priced by liquidity tier — deep = fill
     # now, moderate/thin = patient mid→touch ladder, pathological spread = post-and-defer, thin =
     # sliced; residual at the close → closing auction or cross-day. Fills read from the live feed.
-    if express:                     # console express mode: market sweeps, no ladder
+    if express:                     # console express mode: collared/queued market sweeps, no ladder
         orders = [PlannedOrder(o.symbol, o.side, o.qty, "market", None, o.notional)
                   for o in orders]
-        quote_fn = quote_batch = None
+        quote_fn, _batch = _quote_fns(client, settings)
+        report = execute.submit_express(
+            orders, broker=broker, db_engine=db_engine, cycle_key=as_of.isoformat(),
+            pending=pending, quote=quote_fn,
+            clock=(client.market_clock if hasattr(client, "market_clock") else None),
+            ex=settings.execution, order_state=_order_state(), alert=alert)
     else:
         quote_fn, quote_batch = _quote_fns(client, settings)
-    report = submit_and_track(orders, broker=broker, db_engine=db_engine,
-                              cycle_key=as_of.isoformat(), pending=pending,
-                              quote=quote_fn, adv=plan.adv, ex=settings.execution,
-                              market_close=mkt_close, order_state=_order_state(), alert=alert,
-                              quote_batch=quote_batch)
+        report = submit_and_track(orders, broker=broker, db_engine=db_engine,
+                                  cycle_key=as_of.isoformat(), pending=pending,
+                                  quote=quote_fn, adv=plan.adv, ex=settings.execution,
+                                  market_close=mkt_close, order_state=_order_state(), alert=alert,
+                                  quote_batch=quote_batch)
 
     # Overlay (D31): write fresh calls AFTER equity settles, on the shares actually held. The
     # writes chase to the bid so they actually fill, and the lifecycle row lands only on a fill.

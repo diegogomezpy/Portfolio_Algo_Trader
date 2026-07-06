@@ -103,6 +103,7 @@ class Broker:
         limit_price: float | None = None,
         client_order_id: str | None = None,
         time_in_force: str = "day",
+        extended_hours: bool = False,
     ) -> dict:
         """Submit one equity order; return the normalized order dict.
 
@@ -111,13 +112,18 @@ class Broker:
         sets per rebalance cycle. ``time_in_force`` defaults to ``"day"`` (lapses at the close);
         pass ``"cls"`` to route the residual into the **closing auction** (limit-on-close when a
         ``limit_price`` is given, else market-on-close) — docs/EXECUTION.md §8.
+        ``extended_hours`` marks the order eligible for the 4:00–9:30 / 16:00–20:00 ET sessions —
+        Alpaca accepts it only on DAY limit orders (the express collar's off-hours leg).
 
         Raises:
-            ValueError: bad ``side`` / ``order_type`` / ``time_in_force``, or limit without a price.
+            ValueError: bad ``side`` / ``order_type`` / ``time_in_force``, limit without a price,
+                or ``extended_hours`` on anything but a day limit order.
             AlpacaAPIError: if Alpaca rejects the request.
         """
         side_enum = self._side(side)
         tif = _tif(time_in_force)
+        if extended_hours and (order_type != "limit" or time_in_force != "day"):
+            raise ValueError("extended_hours requires a day limit order")
         if order_type == "market":
             req = MarketOrderRequest(symbol=symbol, qty=qty, side=side_enum,
                                      time_in_force=tif, client_order_id=client_order_id)
@@ -126,7 +132,8 @@ class Broker:
                 raise ValueError("limit order requires limit_price")
             req = LimitOrderRequest(symbol=symbol, qty=qty, side=side_enum,
                                     time_in_force=tif, limit_price=float(limit_price),
-                                    client_order_id=client_order_id)
+                                    client_order_id=client_order_id,
+                                    extended_hours=bool(extended_hours))
         else:
             raise ValueError(f"unknown order_type {order_type!r} (want 'market' or 'limit')")
 

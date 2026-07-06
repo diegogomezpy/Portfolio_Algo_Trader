@@ -885,6 +885,233 @@ def _single_pass(orders, *, broker, db_engine, cycle_key, pending, out,
                      db_engine=db_engine, cycle_key=cycle_key)
 
 
+def _ext_session(dt_utc: datetime) -> bool:
+    """Whether US extended-hours equity trading is plausibly live: a weekday, 4:00–9:30 or
+    16:00–20:00 ET. Holidays aren't checked — an ext-hours limit on a holiday simply never
+    fills and falls through to the queued-market leg, which is the correct outcome anyway."""
+    from zoneinfo import ZoneInfo
+    et = dt_utc.astimezone(ZoneInfo("America/New_York"))
+    if et.weekday() >= 5:
+        return False
+    m = et.hour * 60 + et.minute
+    return (4 * 60 <= m < 9 * 60 + 30) or (16 * 60 <= m < 20 * 60)
+
+
+def submit_express(
+    orders: Sequence[PlannedOrder],
+    *,
+    broker,
+    db_engine,
+    cycle_key: str,
+    quote: Callable[[str], tuple] | None = None,
+    clock=None,
+    ex=None,
+    pending: list[dict] | None = None,
+    poll_attempts: int = 30,
+    poll_interval_s: float = 2.0,
+    sleep: Callable[[float], None] = time.sleep,
+    order_state: Callable[[str], dict] | None = None,
+    alert: Callable[[str], None] | None = None,
+    now: Callable[[], datetime] | None = None,
+) -> ExecReport:
+    """Express execution: fills GUARANTEED, cost collared where the session allows.
+
+    Session-aware (2026-07-06 execution review — raw market orders for everything meant paying
+    any spread during RTH and, off-hours, queuing to the gap-prone opening print even when
+    extended-hours liquidity was live):
+
+    * **RTH** — market orders for tight names; a *pathological* spread posts a wide marketable
+      limit first (``express_collar_bps`` past the reference), and any leftover sweeps to market
+      after the poll window. The collar can only save money — the market sweep keeps the
+      guarantee.
+    * **Extended hours** (4:00–9:30 / 16:00–20:00 ET weekdays) — extended-hours limit orders at
+      the collar, so express actually EXECUTES now instead of waiting for the open; the unfilled
+      remainder is re-queued as a market order for the next session (never cancelled).
+    * **Overnight / weekend / holiday** — market orders queued for the next open (the legacy
+      behaviour, unchanged).
+
+    ``clock`` is the market-clock reader (``is_open`` gates RTH); ``now`` is injectable for
+    tests. Telemetry lands on the chase board under the ``express`` tactic label.
+    """
+    pending = list(pending or [])
+    read = order_state or broker.get_order
+    now_fn = now or (lambda: datetime.now(timezone.utc))
+    out = {o.symbol: {"symbol": o.symbol, "side": o.side, "qty": int(o.qty),
+                      "filled": 0, "status": "deferred", "reason": ""} for o in orders}
+    collar = float(getattr(ex, "express_collar_bps", 200.0) or 0.0) / 1e4 if ex is not None else 0.02
+
+    is_open = False
+    if clock is not None:
+        try:
+            clk = clock() if callable(clock) else clock
+            is_open = bool(clk.get("is_open"))
+        except Exception as exc:  # noqa: BLE001 — no clock → treat as closed (queued markets)
+            log.warning("express clock read failed; assuming closed", extra={"error": str(exc)})
+    session = "rth" if is_open else ("ext" if _ext_session(now_fn()) else "closed")
+
+    if quote is None or session == "closed":
+        # No liquidity to collar against (or no quote surface): the legacy queued-market path.
+        return _single_pass(orders, broker=broker, db_engine=db_engine, cycle_key=cycle_key,
+                            pending=pending, out=out, poll_attempts=poll_attempts,
+                            poll_interval_s=poll_interval_s, sleep=sleep, read=read,
+                            alert=alert, cancel_leftover=False)
+
+    def _phase1_terms(sym: str, side: str) -> tuple[str, Optional[float], bool]:
+        """(order_type, limit_price, extended_hours) for the first pass."""
+        try:
+            bid, ask, trade = quote(sym)
+        except AlpacaAPIError:
+            bid = ask = trade = None
+        ref = arrival_reference(bid, ask, trade)
+        mult = (1.0 + collar) if side == "buy" else (1.0 - collar)
+        if session == "rth":
+            if ref is not None and ex is not None and is_pathological_spread(bid, ask, ex=ex):
+                return "limit", round(float(ref) * mult, 2), False   # collar the phantom spread
+            return "market", None, False
+        if ref is None:
+            return "market", None, False                             # unquotable → queue for open
+        return "limit", round(float(ref) * mult, 2), True            # ext-hours: executable NOW
+
+    def _submit(o: PlannedOrder, qty: int, otype: str, lp, coid: str, ext_flag: bool) -> dict:
+        for attempt in range(3):
+            try:
+                if ext_flag:
+                    try:
+                        return broker.submit_order(o.symbol, qty, o.side, order_type=otype,
+                                                   limit_price=lp, client_order_id=coid,
+                                                   extended_hours=True)
+                    except TypeError:            # a broker without the flag — still a valid limit
+                        return broker.submit_order(o.symbol, qty, o.side, order_type=otype,
+                                                   limit_price=lp, client_order_id=coid)
+                return broker.submit_order(o.symbol, qty, o.side, order_type=otype,
+                                           limit_price=lp, client_order_id=coid)
+            except AlpacaAPIError as exc:
+                if attempt < 2 and is_transient_error(exc):
+                    log.warning("transient express submit failure; retrying",
+                                extra={"symbol": o.symbol, "attempt": attempt + 1, "error": str(exc)})
+                    sleep(1.0 + attempt)
+                    continue
+                raise
+        raise AssertionError("unreachable")
+
+    submitted_n = 0
+    rejected = 0
+    live: list[tuple[str, PlannedOrder, bool]] = []      # (order_id, planned, is_limit)
+
+    def _reject(o: PlannedOrder, exc) -> None:
+        nonlocal rejected
+        rejected += 1
+        pending.append({"symbol": o.symbol, "side": o.side, "delta_usd": round(o.notional, 2),
+                        "qty": o.qty, "reason": f"rejected: {exc}"})
+        out[o.symbol].update(status="rejected", reason=f"rejected: {exc}")
+        log.error("express order rejected; deferring", extra={"symbol": o.symbol, "error": str(exc)})
+        _emit_chase_event(db_engine, cycle_key=cycle_key, rnd="x1", symbol=o.symbol, side=o.side,
+                          event="reject", tier="express", limit_price=None, qty=o.qty,
+                          filled_qty=0, target_qty=o.qty)
+        if alert:
+            alert(f"order rejected {o.symbol} {o.side} {o.qty}: {exc}")
+
+    for o in orders:
+        otype, lp, ext_flag = _phase1_terms(o.symbol, o.side)
+        try:
+            resp = _submit(o, int(o.qty), otype, lp, f"{cycle_key}:{o.symbol}:{o.side}:x1", ext_flag)
+        except AlpacaAPIError as exc:
+            _reject(o, exc)
+            continue
+        submitted_n += 1
+        _upsert_order(db_engine, cycle_key, resp)
+        _emit_chase_event(db_engine, cycle_key=cycle_key, rnd="x1", symbol=o.symbol, side=o.side,
+                          event="post", tier="express", limit_price=lp, qty=int(o.qty),
+                          filled_qty=0, target_qty=o.qty, order_id=resp["id"])
+        live.append((resp["id"], o, otype == "limit"))
+
+    def _poll(entries: list[tuple[str, PlannedOrder]], tag: str) -> set[str]:
+        """Poll to terminal; book fills + settle events. Returns the still-open order ids."""
+        open_ids = {oid for oid, _ in entries}
+        for _ in range(poll_attempts):
+            if not open_ids:
+                break
+            sleep(poll_interval_s)
+            for oid, o in entries:
+                if oid not in open_ids:
+                    continue
+                try:
+                    st = read(oid)
+                except AlpacaAPIError:
+                    continue
+                if st is None:
+                    continue
+                _upsert_order(db_engine, cycle_key, st)
+                if st["status"] in _TERMINAL:
+                    open_ids.discard(oid)
+                    fq = int(st.get("filled_qty") or 0)
+                    if fq > 0:
+                        _record_fill(db_engine, st)
+                        out[o.symbol]["filled"] += fq
+                    _emit_chase_event(db_engine, cycle_key=cycle_key, rnd=tag, symbol=o.symbol,
+                                      side=o.side, event="settle", tier="express",
+                                      limit_price=st.get("limit_price"),
+                                      filled_qty=out[o.symbol]["filled"], target_qty=o.qty,
+                                      status=st.get("status"), order_id=oid)
+        return open_ids
+
+    open1 = _poll([(oid, o) for oid, o, _lim in live], "x1")
+
+    sweep: list[tuple[str, PlannedOrder]] = []
+    for oid, o, is_limit in live:
+        if oid not in open1:
+            continue
+        if not is_limit:
+            # A market order still working (queued off-session / mid-print): leave it — that IS
+            # the guarantee. Reported queued; reconcile books the eventual fill.
+            out[o.symbol].update(status="queued", reason="market order left working")
+            continue
+        try:
+            broker.cancel_order(oid)
+        except AlpacaAPIError as exc:
+            log.warning("express collar cancel failed", extra={"id": oid, "error": str(exc)})
+        st = _settle_after_cancel(read, oid, sleep)
+        residual = int(o.qty)
+        if st is not None:
+            _upsert_order(db_engine, cycle_key, st)
+            fq = int(st.get("filled_qty") or 0)
+            if fq > 0:
+                _record_fill(db_engine, st)
+                out[o.symbol]["filled"] += fq
+            _emit_chase_event(db_engine, cycle_key=cycle_key, rnd="x1", symbol=o.symbol,
+                              side=o.side, event="settle", tier="express",
+                              limit_price=st.get("limit_price"),
+                              filled_qty=out[o.symbol]["filled"], target_qty=o.qty,
+                              status=st.get("status"), order_id=oid)
+            residual = int(o.qty) - out[o.symbol]["filled"]
+        if residual <= 0:
+            continue
+        try:
+            resp = _submit(o, residual, "market", None, f"{cycle_key}:{o.symbol}:{o.side}:x2", False)
+        except AlpacaAPIError as exc:
+            _reject(o, exc)
+            continue
+        submitted_n += 1
+        _upsert_order(db_engine, cycle_key, resp)
+        _emit_chase_event(db_engine, cycle_key=cycle_key, rnd="x2", symbol=o.symbol, side=o.side,
+                          event="post", tier="express", limit_price=None, qty=residual,
+                          filled_qty=out[o.symbol]["filled"], target_qty=o.qty, order_id=resp["id"])
+        if session == "rth":
+            sweep.append((resp["id"], o))
+        else:                                    # ext leftover → queued market for the next open
+            out[o.symbol].update(status="queued",
+                                 reason="ext-hours collar unfilled; market order queued for the open")
+
+    if sweep:
+        open2 = _poll(sweep, "x2")
+        for oid, o in sweep:
+            if oid in open2:                     # an RTH market that didn't confirm — leave working
+                out[o.symbol].update(status="queued", reason="market order left working")
+
+    return _finalize(out, orders, submitted=submitted_n, rejected=rejected, pending=pending,
+                     db_engine=db_engine, cycle_key=cycle_key)
+
+
 
 # --- DB helpers (lazy sqlalchemy import, like factors.write_factor_scores) ----------- #
 def _existing_client_ids(db_engine, cycle_key: str) -> set[str]:
