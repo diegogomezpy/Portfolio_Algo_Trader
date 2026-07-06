@@ -772,3 +772,36 @@ def test_write_index_overwrite_unfilled_cancels_and_leaves_no_ledger_row():
     assert len(broker.spread_orders) == 3
     assert len(broker.cancelled) == 3                      # every round cleaned up after itself
     assert any("unfilled after" in s["reason"] for s in skipped)
+
+
+def test_option_chase_express_finish_jumps_to_touch():
+    """Express-finish during a write chase: skip the remaining patience rungs and post at the
+    touch immediately (still one stage, flag consumed)."""
+    from engine import overrides
+    eng = _engine()
+    panel, as_of, chains = _write_setup()
+    broker = _FakeBroker()                                         # fills whatever is posted
+    overrides.set(eng, "express_finish", 1.0)
+    chase = _fast_chase(touch=lambda s, side: 1.90, ladder_rounds=4)
+    submitted, _ = cc.write_calls(_FakeClient(chains=chains), broker, eng, {"AAA": 250},
+                                  settings=_settings(), as_of=as_of, price_panel=panel, chase=chase)
+    assert [o["limit_price"] for o in broker.option_orders] == [1.90]   # touch, not the 2.0 mid
+    assert len(submitted) == 1
+    assert overrides.get(eng, "express_finish") is None
+
+
+def test_spread_write_express_finish_drops_to_credit_floor():
+    """Express-finish during the SPY spread write: one shot at the credit floor (never below),
+    instead of walking the remaining rounds."""
+    from engine import overrides
+    eng = _engine()
+    panel, as_of, chains = _idx_setup()
+    broker = _FakeSpreadBroker()                                   # fills what's submitted
+    overrides.set(eng, "express_finish", 1.0)
+    submitted, skipped, info = cc.write_index_overwrite(
+        _FakeClient(chains=chains), broker, eng, {"AAA": 300},
+        settings=_idx_settings(), as_of=as_of, price_panel=panel, chase=_fast_chase())
+    assert len(broker.spread_orders) == 1
+    assert broker.spread_orders[0]["net_limit_price"] == 1.75      # 0.7 × 2.5 planned credit
+    assert info["filled"] == 3 and skipped == []
+    assert overrides.get(eng, "express_finish") is None

@@ -266,6 +266,7 @@ def execute_plan(plan: dict, mode: str, *, client, broker, db_engine, settings,
     """
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}, got {mode!r}")
+    execute.clear_express_finish(db_engine)   # a stale press must never express a FRESH action
 
     ov = plan.get("overlay") or {}
     overlay_closed = 0

@@ -793,6 +793,11 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
         except Exception:  # noqa: BLE001
             out["leverage_override"] = out["leverage_override_since"] = None
             out["settings_target_leverage"] = None
+        try:
+            from engine import overrides as _ov
+            out["express_finish_pending"] = _ov.get(db_engine, "express_finish") is not None
+        except Exception:  # noqa: BLE001
+            out["express_finish_pending"] = False
         if client is not None:  # margin headroom for the console (spread collateral competes)
             try:
                 acct = client.account()
@@ -896,6 +901,20 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
         from engine import overrides as _ov
         _ov.clear(db_engine, "target_leverage")
         return {"cleared": True}
+
+    @app.post("/api/exec/express_finish")
+    def exec_express_finish(x_exec_token: str | None = Header(default=None)) -> dict:
+        """Arm express-finish for the stage currently chasing: the equity chase sweeps its
+        residuals at market, option closes jump to the market sweep, writes to the touch, the
+        SPY spread write to its credit floor. Consumed by ONE stage (press again for the next);
+        takes effect at the stage's next round boundary (≤30s equities / ≤60s options).
+        Cleared automatically when a fresh run starts. Token-gated."""
+        err = _exec_gate(x_exec_token)
+        if err:
+            return err
+        from engine import overrides as _ov
+        _ov.set(db_engine, "express_finish", 1.0)
+        return {"armed": True}
 
     @app.get("/api/manual_actions")
     def manual_actions_history(limit: int = 20) -> list:

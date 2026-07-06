@@ -58,6 +58,53 @@ def is_transient_error(exc) -> bool:
                                   "timeout", "timed out", "temporarily unavailable"))
 
 
+# Operator stage control (2026-07-06, Diego): the dashboard's "express-finish" button sets this
+# override; the stage CURRENTLY chasing consumes it at its next round boundary and jumps to its
+# guaranteed endgame — the equity chase sweeps residuals at market, option closes jump to the
+# market sweep, writes jump to the touch, the spread write drops to its credit floor. One press
+# finishes ONE stage (press again for the next); every fresh cycle clears it first, so a stale
+# press can never express a run that hasn't started yet.
+_XFIN_KEY = "express_finish"
+_XFIN_MAX_AGE_S = 3600.0
+
+
+def express_finish_requested(db_engine) -> bool:
+    """Whether the operator pressed express-finish. Best-effort AND freshness-gated: an
+    unreadable DB or a press older than an hour reads False — this can never break a chase."""
+    if db_engine is None:
+        return False
+    try:
+        from engine import overrides
+        rec = overrides.info(db_engine, _XFIN_KEY)
+        if not rec or not rec.get("value"):
+            return False
+        ts = rec.get("updated_at")
+        if ts:
+            try:
+                dt = datetime.fromisoformat(str(ts))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                if (datetime.now(timezone.utc) - dt).total_seconds() > _XFIN_MAX_AGE_S:
+                    return False
+            except ValueError:
+                pass
+        return True
+    except Exception:  # noqa: BLE001 — advisory control; never disturb execution
+        return False
+
+
+def clear_express_finish(db_engine) -> None:
+    """Consume (or pre-emptively clear) the express-finish press. No-op on any failure."""
+    if db_engine is None:
+        return
+    try:
+        from engine import overrides
+        if overrides.get(db_engine, _XFIN_KEY) is not None:
+            overrides.clear(db_engine, _XFIN_KEY)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _settle_after_cancel(read, order_id: str, sleep, *, attempts: int = 8,
                          interval_s: float = 0.5):
     """Post-cancel read: poll (bounded) until the order reaches a terminal state before
@@ -693,9 +740,81 @@ def _tiered(orders, *, broker, db_engine, cycle_key, pending, out, quote, adv, e
             if not working:
                 break
 
+    def _express_sweep(tag: str) -> None:
+        """Operator escape hatch (the express-finish button): stop being patient — pull every
+        resting limit and sweep the residuals with MARKET orders. A sweep that doesn't confirm
+        within ~a minute is left WORKING (status ``queued``), never cancelled — the guarantee
+        stands even if the poll misses the fill."""
+        nonlocal submitted_n, rejected
+        swept: list[tuple[str, str]] = []
+        for sym in [s for s in seq if s in active]:
+            o = by_sym[sym]
+            _pull(sym, tag)
+            residual = o.qty - out[sym]["filled"]
+            if residual <= 0:
+                active.discard(sym)
+                continue
+            coid = f"{cycle_key}:{sym}:{o.side}:{tag}"
+            try:
+                resp = broker.submit_order(sym, residual, o.side, order_type="market",
+                                           client_order_id=coid)
+            except AlpacaAPIError as exc:
+                rejected += 1
+                out[sym].update(status="rejected", reason=f"rejected: {exc}")
+                pending.append({"symbol": sym, "side": o.side, "delta_usd": None,
+                                "qty": residual, "reason": f"rejected: {exc}"})
+                log.error("express sweep rejected; deferring", extra={"symbol": sym, "error": str(exc)})
+                _emit_chase_event(db_engine, cycle_key=cycle_key, rnd=tag, symbol=sym, side=o.side,
+                                  event="reject", tier="express", limit_price=None,
+                                  qty=residual, filled_qty=out[sym]["filled"], target_qty=o.qty)
+                if alert:
+                    alert(f"order rejected {sym} {o.side} {residual}: {exc}")
+                active.discard(sym)
+                continue
+            submitted_n += 1
+            _upsert_order(db_engine, cycle_key, resp)
+            _emit_chase_event(db_engine, cycle_key=cycle_key, rnd=tag, symbol=sym, side=o.side,
+                              event="post", tier="express", limit_price=None, qty=residual,
+                              filled_qty=out[sym]["filled"], target_qty=o.qty, order_id=resp["id"])
+            booked.setdefault(resp["id"], 0)
+            swept.append((resp["id"], sym))
+        open_ids = {oid for oid, _ in swept}
+        for _ in range(max(int(60.0 / tick_s), 1)):              # markets confirm in seconds
+            if not open_ids:
+                break
+            sleep(tick_s)
+            for oid, sym in swept:
+                if oid not in open_ids:
+                    continue
+                try:
+                    st = read(oid)
+                except AlpacaAPIError:
+                    continue
+                if st is None:
+                    continue
+                _upsert_order(db_engine, cycle_key, st)
+                _book(sym, st)
+                if st.get("status") in _TERMINAL:
+                    open_ids.discard(oid)
+                    _settle_event(sym, st, tag)
+                if out[sym]["filled"] >= by_sym[sym].qty:
+                    active.discard(sym)
+        for oid, sym in swept:
+            if oid in open_ids and sym in active:                # unconfirmed → left working
+                out[sym].update(status="queued", reason="express sweep left working")
+                active.discard(sym)
+
     rnd = 0
     while active and rnd < max_rounds:
         if window_end is not None and now() >= window_end:
+            break
+        if express_finish_requested(db_engine):
+            clear_express_finish(db_engine)
+            log.warning("express-finish pressed: sweeping equity residuals at market",
+                        extra={"cycle": cycle_key, "names": len(active)})
+            if alert:
+                alert(f"express-finish: sweeping {len(active)} residual equity name(s) at market")
+            _express_sweep("xfin")
             break
         rnd += 1
         _round(f"r{rnd}")

@@ -318,6 +318,7 @@ def _run_cycle_locked(
     through the single-pass path instead of the tiered chase; option closes still sweep at
     market via ``final_market`` and writes fall back to one passive pass at the mid.
     """
+    execute.clear_express_finish(db_engine)   # a stale press must never express a FRESH run
     rec = reconcile.reconcile(client, db_engine, alert=alert)            # raises if Alpaca down
 
     if not force and not trading_day_fn(client, as_of.isoformat()):

@@ -319,3 +319,12 @@ def test_completed_manual_action_does_not_block_the_next_one():
     res = manual_exec.run_action("liquidate", mode="express", client=_Client(), broker=_Broker(),
                                  db_engine=eng, settings=_Settings, pct=10)
     assert res["submitted"] == 2
+
+
+def test_stale_express_finish_cleared_when_a_fresh_action_starts():
+    # A press left over from a finished (or never-started) run must NOT express the next one.
+    eng, broker = _eng(), _Broker()
+    overrides.set(eng, "express_finish", 1.0)
+    manual_exec.run_action("liquidate", mode="express", client=_Client(), broker=broker,
+                           db_engine=eng, settings=_Settings, pct=10)
+    assert overrides.get(eng, "express_finish") is None

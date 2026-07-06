@@ -2057,6 +2057,16 @@ async function execCancelAll(){
   refreshExecStatus();
 }
 
+async function execExpressFinish(){
+  if (!confirm("Express-finish the RUNNING stage?\n\nEquity chase -> sweep residuals at market now.\nOption close -> market sweep. Write -> post at the touch.\nSPY spread write -> drop to its credit floor.\n\nOne press finishes ONE stage (press again for the next). Takes effect at the stage's next round (<=30-60s).")) return;
+  const tok = execToken(); if (!tok) return;
+  const r = await postExec("/api/exec/express_finish", tok);
+  const ok = r && r.armed;
+  toast(ok ? "express-finish armed — the running stage completes at its next round" : (r && r.error || "express-finish failed"), !ok);
+  if ($("xMsg")) $("xMsg").textContent = ok ? "express-finish armed" : (r && r.error || "express-finish failed");
+  refreshExecStatus();
+}
+
 async function clearLevOverride(){
   const tok = execToken(); if (!tok) return;
   const r = await postExec("/api/exec/clear_override", tok);
@@ -2093,8 +2103,11 @@ async function refreshExecStatus(){
           + line("Standing leverage target", lev) + line("Cash / exposure", cash)
           + line("Buying power", bp) + line("Manual run", run);
   }
+  const xf = (st && st.express_finish_pending)
+    ? '<span class="exm-chip" style="color:var(--amber);cursor:help" data-tip="armed — the stage running now finishes express at its next round (\u226430\u201360s), then this clears automatically">\u26a1 armed</span>'
+    : '<button class="exm-btn" onclick="execExpressFinish()" style="padding:5px 10px" data-tip="Stop being patient: the stage running RIGHT NOW jumps to its guaranteed end \u2014 equity chase sweeps residuals at market, option close sweeps, write posts at the touch, spread write drops to its credit floor. One press = one stage.">\u26a1 Express-finish stage</button>';
   host.innerHTML = `<div class="ovhead"><span class="ovhk">Console status</span>
-      <span class="ovhs"><button class="exm-btn" onclick="execCancelAll()" style="padding:5px 10px">Cancel all orders</button></span></div>
+      <span class="ovhs" style="display:inline-flex;gap:8px;align-items:center">${xf}<button class="exm-btn" onclick="execCancelAll()" style="padding:5px 10px">Cancel all orders</button></span></div>
     <div style="padding:6px 16px 12px">${inner}</div>`;
 }
 // ---- logo intro: dot grid scales in → wordmark → contracts to SFI → reveals dashboard ----

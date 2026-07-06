@@ -31,7 +31,7 @@ from typing import Callable, Mapping, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from engine import factors, options, risk
+from engine import execute as execution, factors, options, risk
 from engine.alpaca_client import AlpacaAPIError
 from engine.symbols import OCC_RE as _OCC_RE
 from engine.logger import get_logger
@@ -438,6 +438,15 @@ def _execute_option_leg(broker, db_engine, orders: Sequence[CoveredCallOrder], *
         while active and rnd < chase.max_rounds:
             if chase.market_close is not None and now() >= chase.market_close - timedelta(seconds=chase.close_buffer_s):
                 break
+            if execution.express_finish_requested(db_engine):
+                # Express-finish this stage: jump straight to the guaranteed endgame — closes
+                # sweep at market (risk off NOW), writes post at the touch (still behind the
+                # min_bid_frac junk-bid guard; an unfilled write stays an income miss).
+                execution.clear_express_finish(db_engine)
+                log.warning("express-finish pressed: option chase jumping to its endgame",
+                            extra={"event": event, "names": len(active)})
+                _round("xfin", force_market=final_market, rnd=10**6)
+                break
             rnd += 1
             _round(f"r{rnd}", force_market=False, rnd=rnd)
         if active and final_market:
@@ -581,10 +590,20 @@ def write_index_overwrite(client, broker, db_engine, holdings_shares: Mapping[st
     total = 0
     cash = 0.0
     last_status = None
+    xfin = False
     for r in range(1, chase_rounds + 1):
         remaining = n - total
         credit_r = (round(net - (net - floor_credit) * (r - 1) / (chase_rounds - 1), 2)
                     if chase_rounds > 1 else round(net, 2))
+        if not xfin and execution.express_finish_requested(db_engine):
+            # Express-finish this stage: one shot at the credit FLOOR (the lowest we would
+            # ever have walked to anyway) — below it the cycle stays unwritten, as always.
+            execution.clear_express_finish(db_engine)
+            xfin = True
+            log.warning("express-finish pressed: spread write dropping to the credit floor",
+                        extra={"floor": floor_credit, "round": r})
+        if xfin:
+            credit_r = floor_credit
         try:
             resp = broker.submit_option_spread(legs, contracts=remaining, net_limit_price=credit_r,
                                                client_order_id=f"ovw:{as_of.isoformat()}:{market}:r{r}")
@@ -626,6 +645,8 @@ def write_index_overwrite(client, broker, db_engine, holdings_shares: Mapping[st
         last_status = resp.get("status")
         if total >= n:
             break
+        if xfin:
+            break                                         # the floor shot WAS the endgame
     if total < 1:
         log.info("index spread overwrite unfilled after chase",
                  extra={"status": last_status, "rounds": chase_rounds})

@@ -730,3 +730,51 @@ def test_express_ext_limit_fill_needs_no_market_leg():
     assert rep.filled == 1 and len(broker.submitted) == 1
     assert broker.ext_flags == [True]
     assert sum(f["qty"] for f in _rows(eng, db.fills)) == 50.0
+
+
+# ====================================================================== #
+# Express-finish (operator stage control): sweep the equity chase on demand
+# ====================================================================== #
+class _MarketFillsBroker(_FakeBroker):
+    """Limits follow fill_plan; MARKET orders always fill in full (the sweep's contract)."""
+    def submit_order(self, symbol, qty, side, *, order_type="market", **kw):
+        od = super().submit_order(symbol, qty, side, order_type=order_type, **kw)
+        if order_type == "market":
+            self._seq[od["id"]] = iter([("filled", float(qty))])
+        return od
+
+
+def test_tiered_express_finish_sweeps_residuals_at_market():
+    """Mid-chase press: the resting limit is pulled and the residual sweeps at market under
+    the :xfin coid; the flag is CONSUMED by the stage (one press = one stage)."""
+    from engine import overrides
+    eng = _engine()
+    broker = _MarketFillsBroker(fill_plan={"MOD": [("new", 0)]})   # the limit never fills
+    calls = {"n": 0}
+
+    def quote(_s):
+        calls["n"] += 1
+        if calls["n"] == 1:                                        # operator presses during r1
+            overrides.set(eng, "express_finish", 1.0)
+        return (49.90, 50.10, 50.0)
+
+    rep = execute.submit_and_track(
+        [_po("MOD", "buy", 100)], broker=broker, db_engine=eng, cycle_key="c",
+        quote=quote, adv={"MOD": 10_000_000}, ex=_ex(), now=_Clock(),
+        market_close=_T0 + timedelta(hours=3), sleep=lambda _s: None)
+    assert [o["order_type"] for o in broker.submitted] == ["limit", "market"]
+    assert broker.submitted[1]["client_order_id"].endswith(":xfin")
+    assert broker.cancelled                                        # resting limit was pulled first
+    assert rep.filled == 1
+    assert overrides.get(eng, "express_finish") is None            # consumed
+
+
+def test_express_finish_flag_helpers_are_defensive():
+    from engine import overrides
+    eng = _engine()
+    assert execute.express_finish_requested(None) is False
+    assert execute.express_finish_requested(eng) is False          # not set
+    overrides.set(eng, "express_finish", 1.0)
+    assert execute.express_finish_requested(eng) is True
+    execute.clear_express_finish(eng)
+    assert execute.express_finish_requested(eng) is False

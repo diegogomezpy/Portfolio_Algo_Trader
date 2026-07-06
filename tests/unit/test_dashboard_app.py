@@ -449,3 +449,28 @@ def test_last_outcome_prefers_cycle_line_over_old_traceback(tmp_path, monkeypatc
                    "===== retry =====\nCycle 2026-07-06 → executed\n")
     monkeypatch.setattr(dapp, "_EXEC_LOG", str(log))
     assert dapp._last_outcome() == {"summary": "Cycle 2026-07-06 → executed"}
+
+
+def test_exec_express_finish_arms_flag_and_status_reports_pending(monkeypatch):
+    """The express-finish button: token-gated POST arms the override; status shows it pending;
+    the engine-side clear (a stage consuming it) drops it back to False."""
+    from engine import execute as _ex, overrides as _ov
+    eng = create_engine("sqlite://")
+    db.create_all(eng)
+    _reset_manual(monkeypatch)
+    app = create_app(eng, client=_MarketClient([]), live=True)
+    xf = _route(app, "/api/exec/express_finish")
+    status = _route(app, "/api/exec/status")
+
+    monkeypatch.delenv("SEPI_EXEC_TOKEN", raising=False)      # unset → console disabled
+    assert xf(x_exec_token="whatever").get("armed") is not True
+
+    monkeypatch.setenv("SEPI_EXEC_TOKEN", "sekrit")
+    assert xf(x_exec_token="nope").get("armed") is not True   # wrong token
+    out = xf(x_exec_token="sekrit")
+    assert out == {"armed": True}
+    assert status()["express_finish_pending"] is True
+    assert _ov.get(eng, "express_finish") is not None
+
+    _ex.clear_express_finish(eng)                             # a stage consumed it
+    assert status()["express_finish_pending"] is False
