@@ -113,3 +113,14 @@ def test_pe_pb_nan_without_price():
     df = edgar.companyfacts_to_fundamentals(synthetic_facts(), price_lookup=None)
     assert df["pe_ratio"].isna().all() and df["pb_ratio"].isna().all()
     assert df["roe"].notna().any() and df["gross_margin"].notna().any()  # still derived
+
+
+def test_extract_concept_empty_units_falls_through_not_crashes():
+    """Regression (2026-07-06): a concept present with an EMPTY units dict raised StopIteration
+    and killed the entire daily ingest — and the rebalance queued behind it. It must behave
+    like an absent tag: fall through to the next tag / return empty."""
+    facts = synthetic_facts()
+    facts["facts"]["us-gaap"]["BrokenConcept"] = {"units": {}}
+    df = edgar.extract_concept(facts, ["BrokenConcept", "Revenues"])
+    assert len(df) == 7                                        # fell through to Revenues
+    assert edgar.extract_concept(facts, ["BrokenConcept"]).empty

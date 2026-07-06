@@ -680,7 +680,16 @@ def daily_job(
         return DailyResult("not_trading_day")
 
     if ingest_fn is not None:
-        ingest_fn(as_of.isoformat())
+        try:
+            ingest_fn(as_of.isoformat())
+        except Exception as exc:  # noqa: BLE001 — a failed data refresh must NOT kill the trading
+            # day: factors tolerate a day-stale panel and fundamentals lag quarters anyway. The
+            # 2026-07-06 rebalance died pre-trade on one malformed EDGAR record in the ingest.
+            log.error("daily ingest failed; continuing on existing data",
+                      extra={"date": as_of.isoformat(), "error": str(exc)})
+            if alert:
+                alert(f"system error: daily ingest {as_of.isoformat()} failed ({exc}); "
+                      f"continuing on existing data")
 
     first_of_month = first_trading_day_fn or is_first_trading_day_of_month
     done_this_month = rebalanced_this_month_fn or rebalance_established_this_month
@@ -877,7 +886,12 @@ def main() -> None:
         return
 
     if not args.skip_ingest:
-        ingest.run_daily_ingest(env=args.env, as_of=args.date.isoformat())
+        try:
+            ingest.run_daily_ingest(env=args.env, as_of=args.date.isoformat())
+        except Exception as exc:  # noqa: BLE001 — same contract as daily_job: trade on existing
+            # data rather than not at all (and say so, instead of dying before run_cycle).
+            log.error("ingest failed; continuing on existing data", extra={"error": str(exc)})
+            print(f"ingest failed ({exc}); continuing on existing data")
 
     result = run_cycle(client=client, broker=broker, db_engine=db_engine,
                        settings=settings, as_of=args.date, force=args.force,

@@ -85,7 +85,11 @@ def _market_gate(client) -> dict | None:
 
 def _spawn_manual(action: str, mode: str, params: dict, env: str, cycle_key: str) -> subprocess.Popen:
     if action == "rebalance":
-        cmd = [sys.executable, str(_ROOT / "scripts" / "run_eod.py"), "--once", "--env", env]
+        # --skip-ingest: the console button's job is to TRADE NOW on existing data — the 13:00
+        # scheduled job owns the daily data refresh. Without it the click sat through a ~40-min
+        # full fundamentals refetch before the first order (and on 2026-07-06 died inside it).
+        cmd = [sys.executable, str(_ROOT / "scripts" / "run_eod.py"), "--once", "--env", env,
+               "--skip-ingest"]
         if mode == "express":
             cmd.append("--express")
     else:
@@ -115,6 +119,11 @@ def _last_outcome() -> dict | None:
                 return json.loads(line)
         if line.startswith("Cycle ") and "→" in line:
             return {"summary": line}
+    # No structured outcome at all — a child that DIED (traceback) must surface as an error,
+    # not silence (the 2026-07-06 click "did nothing" because the crash line was unparsed).
+    if "Traceback (most recent call last):" in raw:
+        lines = [ln.strip() for ln in raw.strip().splitlines() if ln.strip()]
+        return {"error": f"run crashed: {lines[-1]}"} if lines else None
     return None
 
 # The SFI mark — a 3×3 dot grid with the middle column in teal — on a rounded navy tile.

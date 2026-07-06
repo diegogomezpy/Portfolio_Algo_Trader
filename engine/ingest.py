@@ -301,7 +301,14 @@ def make_edgar_fetcher(cikmap: dict, price_by_symbol: dict, *, fallback=fetch_fu
             return fallback(symbol)
         price = price_by_symbol.get(symbol)
         lookup = (lambda _f: price) if price else None
-        df = edgar.companyfacts_to_fundamentals(facts, price_lookup=lookup)
+        try:
+            df = edgar.companyfacts_to_fundamentals(facts, price_lookup=lookup)
+        except Exception as exc:  # noqa: BLE001 — one symbol's malformed facts must not kill
+            # the whole ingest run (the fetch above was guarded but the TRANSFORM was not — a
+            # single bad concept aborted the 2026-07-06 rebalance before any order went out).
+            log.warning("edgar transform failed, using fallback",
+                        extra={"symbol": symbol, "error": str(exc)})
+            return fallback(symbol)
         if df.empty:
             return fallback(symbol)
         latest = df.iloc[-1].to_dict()  # most recent fiscal period (sorted ascending)

@@ -133,6 +133,11 @@ def extract_concept(facts: dict, tags: list[str]) -> pd.DataFrame:
         if tag not in gaap:
             continue
         units = gaap[tag]["units"]
+        if not units:
+            # Rare but real: a concept present with an EMPTY units dict. next(iter({})) raised
+            # StopIteration here and killed the entire daily ingest — and with it the rebalance
+            # that runs after it (2026-07-06). Treat like an absent tag: try the next one.
+            continue
         unit_key = next((u for u in units if u in ("USD", "USD/shares", "shares")), None)
         if unit_key is None:
             unit_key = next(iter(units))

@@ -425,3 +425,27 @@ def test_orders_route_postgres_only_when_live_false():
                          "submitted_at": None}])
     app = create_app(eng, client=fake, live=False)
     assert _route(app, "/api/orders")() == []
+
+
+def test_last_outcome_surfaces_child_traceback(tmp_path, monkeypatch):
+    """Regression (2026-07-06): a rebalance child that CRASHED (traceback, no result line)
+    showed as silence in the UI. The outcome parser must surface the exception."""
+    from dashboard import app as dapp
+    log = tmp_path / "exec.log"
+    log.write_text("===== 2026-07-06 rebalance normal {} =====\n"
+                   "some ingest noise\n"
+                   "Traceback (most recent call last):\n"
+                   '  File "scripts/run_eod.py", line 880, in main\n'
+                   "StopIteration\n")
+    monkeypatch.setattr(dapp, "_EXEC_LOG", str(log))
+    out = dapp._last_outcome()
+    assert out and "crashed" in out.get("error", "") and "StopIteration" in out["error"]
+
+
+def test_last_outcome_prefers_cycle_line_over_old_traceback(tmp_path, monkeypatch):
+    from dashboard import app as dapp
+    log = tmp_path / "exec.log"
+    log.write_text("Traceback (most recent call last):\nStopIteration\n"
+                   "===== retry =====\nCycle 2026-07-06 → executed\n")
+    monkeypatch.setattr(dapp, "_EXEC_LOG", str(log))
+    assert dapp._last_outcome() == {"summary": "Cycle 2026-07-06 → executed"}
