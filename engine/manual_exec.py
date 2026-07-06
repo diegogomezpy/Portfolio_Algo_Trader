@@ -33,7 +33,7 @@ from __future__ import annotations
 import math
 from datetime import date, datetime, timezone
 
-from engine import covered_calls, overrides, symbols
+from engine import covered_calls, execute, overrides, symbols
 from engine.alpaca_client import AlpacaAPIError
 from engine.execute import PlannedOrder, submit_and_track
 from engine.logger import get_logger
@@ -228,18 +228,12 @@ def build_plan(action: str, client, db_engine, settings, **params) -> dict:
 # ====================================================================== #
 # Execution
 # ====================================================================== #
-def _equity_quote(client, sym: str):
-    """(bid, ask, trade) for the tiered executor — tolerant of missing sides (same contract
-    as the rebalance driver's quote fn)."""
-    try:
-        bid, ask = client.latest_nbbo(sym)
-    except AlpacaAPIError:
-        bid = ask = None
-    try:
-        trade = client.latest_trade(sym)
-    except AlpacaAPIError:
-        trade = None
-    return bid, ask, trade
+def _quote_fns(client, settings):
+    """``(quote_fn, quote_batch)`` for the tiered executor — the shared builders in
+    :mod:`engine.execute` (raw NBBO, stale-print guard, one batched sweep per round)."""
+    stale = float(getattr(settings.execution, "stale_trade_max_s", 900) or 0)
+    return (execute.quote_fn_for(client, stale_trade_max_s=stale),
+            execute.batch_quote_fn(client, stale_trade_max_s=stale))
 
 
 def _market_close(client):
@@ -288,15 +282,16 @@ def execute_plan(plan: dict, mode: str, *, client, broker, db_engine, settings,
                for o in plan.get("orders") or []]
     report = None
     if planned:
-        quote_fn = None
-        if mode == "normal" and hasattr(client, "latest_nbbo"):
-            quote_fn = lambda s: _equity_quote(client, s)   # noqa: E731
+        quote_fn = quote_batch = None
+        if mode == "normal":
+            quote_fn, quote_batch = _quote_fns(client, settings)
         # Express never cancels its leftover: off-hours market orders stay queued and fill
         # at the next open — that's the whole point of "express regardless of the clock".
         report = submit_and_track(planned, broker=broker, db_engine=db_engine,
                                   cycle_key=cycle_key, quote=quote_fn, adv={},
                                   ex=settings.execution, market_close=_market_close(client),
-                                  alert=alert, cancel_leftover=(mode != "express"))
+                                  alert=alert, cancel_leftover=(mode != "express"),
+                                  quote_batch=quote_batch)
     return {
         "cycle_key": cycle_key, "mode": mode, "overlay_closed": overlay_closed,
         "submitted": report.submitted if report else 0,

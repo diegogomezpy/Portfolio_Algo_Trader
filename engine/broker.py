@@ -133,7 +133,8 @@ class Broker:
         try:
             order = self._trading.submit_order(order_data=req)
         except APIError as exc:
-            raise AlpacaAPIError(symbol, "submit_order", str(exc)) from exc
+            raise AlpacaAPIError(symbol, "submit_order", str(exc),
+                                 status_code=getattr(exc, "status_code", None)) from exc
         out = _normalize_order(order)
         log.info("order submitted", extra={"symbol": symbol, "side": str(side).lower(),
                                            "qty": float(qty), "type": order_type,
@@ -180,7 +181,8 @@ class Broker:
         try:
             order = self._trading.submit_order(order_data=req)
         except APIError as exc:
-            raise AlpacaAPIError(option_symbol, "submit_option_order", str(exc)) from exc
+            raise AlpacaAPIError(option_symbol, "submit_option_order", str(exc),
+                                 status_code=getattr(exc, "status_code", None)) from exc
         out = _normalize_order(order)
         log.info("option order submitted",
                  extra={"symbol": option_symbol, "side": str(side).lower(),
@@ -207,7 +209,8 @@ class Broker:
         try:
             order = self._trading.submit_order(order_data=req)
         except APIError as exc:
-            raise AlpacaAPIError(_NO_SYMBOL, "submit_option_spread", str(exc)) from exc
+            raise AlpacaAPIError(_NO_SYMBOL, "submit_option_spread", str(exc),
+                                 status_code=getattr(exc, "status_code", None)) from exc
         out = _normalize_order(order)
         log.info("option spread submitted",
                  extra={"legs": len(order_legs), "contracts": int(contracts),
@@ -224,7 +227,8 @@ class Broker:
         try:
             order = self._trading.get_order_by_id(order_id)
         except APIError as exc:
-            raise AlpacaAPIError(_NO_SYMBOL, "get_order", str(exc)) from exc
+            raise AlpacaAPIError(_NO_SYMBOL, "get_order", str(exc),
+                                 status_code=getattr(exc, "status_code", None)) from exc
         return _normalize_order(order)
 
     def cancel_order(self, order_id: str) -> None:
@@ -236,7 +240,8 @@ class Broker:
         try:
             self._trading.cancel_order_by_id(order_id)
         except APIError as exc:
-            raise AlpacaAPIError(_NO_SYMBOL, "cancel_order", str(exc)) from exc
+            raise AlpacaAPIError(_NO_SYMBOL, "cancel_order", str(exc),
+                                 status_code=getattr(exc, "status_code", None)) from exc
         log.info("order cancelled", extra={"id": order_id})
 
     def cancel_all_orders(self) -> int:
@@ -250,7 +255,8 @@ class Broker:
         try:
             result = self._trading.cancel_orders()
         except APIError as exc:
-            raise AlpacaAPIError(_NO_SYMBOL, "cancel_all_orders", str(exc)) from exc
+            raise AlpacaAPIError(_NO_SYMBOL, "cancel_all_orders", str(exc),
+                                 status_code=getattr(exc, "status_code", None)) from exc
         n = len(result or [])
         log.info("cancelled all open orders", extra={"count": n})
         return n
@@ -269,7 +275,8 @@ class Broker:
         try:
             result = self._trading.close_all_positions(cancel_orders=cancel_orders)
         except APIError as exc:
-            raise AlpacaAPIError(_NO_SYMBOL, "close_all_positions", str(exc)) from exc
+            raise AlpacaAPIError(_NO_SYMBOL, "close_all_positions", str(exc),
+                                 status_code=getattr(exc, "status_code", None)) from exc
         n = len(result or [])
         log.warning("liquidated all positions", extra={"count": n, "cancel_orders": cancel_orders})
         return n

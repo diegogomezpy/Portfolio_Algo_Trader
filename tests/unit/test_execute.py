@@ -453,7 +453,10 @@ def test_tiered_pathological_posts_passive_and_defers():
 
 def test_tiered_auction_fallback_for_unfilled_liquid():
     # A moderate name that never fills intraday is routed to the closing auction as a CLS limit
-    # (limit-on-close), not a naked market order and not cross-day.
+    # (limit-on-close), not a naked market order. It ALSO writes a verify-next-day pending row:
+    # if the auction print misses the limit the order dies unfilled, and with equities re-planned
+    # only monthly nothing else would notice — the top-up recomputes the delta from live
+    # positions, so a filled LOC self-resolves as "already at target".
     eng = _engine(); broker = _FakeBroker(fill_plan={"MOD": [("accepted", 0)]})
     rep = _tier([_po("MOD", "buy", 100)], broker, eng,
                 {"MOD": (49.90, 50.10, 50.0)}, {"MOD": 10_000_000},
@@ -461,7 +464,9 @@ def test_tiered_auction_fallback_for_unfilled_liquid():
     assert rep.auctioned == 1 and rep.filled == 0
     cls = [o for o in broker.submitted if o["time_in_force"] == "cls"]
     assert len(cls) == 1 and cls[0]["limit_price"] == 50.25                # LOC at the cap
-    assert not any(p["symbol"] == "MOD" for p in _rows(eng, db.pending_adjustments))  # not cross-day
+    pend = [p for p in _rows(eng, db.pending_adjustments) if p["symbol"] == "MOD"]
+    assert len(pend) == 1 and "closing auction" in pend[0]["reason"]       # verify row, not cross-day
+    assert pend[0]["qty"] == 100
 
 
 # ====================================================================== #
@@ -515,3 +520,128 @@ def test_chase_telemetry_failure_never_breaks_execution():
     rep = _tier([_po("AAPL", "buy", 50)], broker, eng,
                 {"AAPL": (99.99, 100.01, 100.0)}, {"AAPL": 60_000_000})
     assert rep.filled == 1
+
+
+# ====================================================================== #
+# 2026-07 execution-review hardening: settle-wait, transient retry,
+# persistent orders, chase cap, adaptive ladder, batched quotes
+# ====================================================================== #
+def test_is_transient_error_classification():
+    t = AlpacaAPIError("A", "submit_order", "too many requests", status_code=429)
+    assert execute.is_transient_error(t) is True                            # rate limit
+    t2 = AlpacaAPIError("A", "submit_order", "insufficient buying power for this order")
+    assert execute.is_transient_error(t2) is True                           # resolves as sells fill
+    p = AlpacaAPIError("A", "submit_order", "asset not tradable", status_code=422)
+    assert execute.is_transient_error(p) is False                           # genuinely unplaceable
+
+
+def test_single_pass_settle_wait_books_inflight_fill_after_cancel():
+    """The overfill race: a cancel is async, so the read right after it can miss fills still
+    landing. The settle-wait polls to a terminal state — the in-flight fill is booked and only
+    the TRUE residual rolls to pending (the old immediate read rolled 10 and re-bought 4)."""
+    eng = _engine()
+    broker = _FakeBroker(fill_plan={"RACE": [("new", 0), ("pending_cancel", 0), ("canceled", 4)]})
+    rep = execute.submit_and_track([_po("RACE", "buy", 10, "limit", 100.0)], broker=broker,
+                                   db_engine=eng, cycle_key="2026-07-06",
+                                   poll_attempts=1, **_NOSLEEP)
+    fills = _rows(eng, db.fills)
+    assert len(fills) == 1 and fills[0]["qty"] == 4                         # in-flight fill booked
+    pend = _rows(eng, db.pending_adjustments)
+    assert len(pend) == 1 and pend[0]["qty"] == 6                           # true residual, not 10
+    assert rep.partial == 1
+
+
+class _FlakySubmitBroker(_FakeBroker):
+    """Raises a transient error on the first N submits of each symbol, then accepts."""
+    def __init__(self, *, transient_msg="insufficient buying power", fail_first=1, **kw):
+        super().__init__(**kw)
+        self.transient_msg = transient_msg
+        self.fail_first = fail_first
+        self.failures = {}
+
+    def submit_order(self, symbol, qty, side, **kw):
+        n = self.failures.get(symbol, 0)
+        if n < self.fail_first:
+            self.failures[symbol] = n + 1
+            raise AlpacaAPIError(symbol, "submit_order", self.transient_msg, status_code=403)
+        return super().submit_order(symbol, qty, side, **kw)
+
+
+def test_tiered_transient_reject_retries_next_round_and_fills():
+    """A buying-power reject (sells still filling) must NOT defer the name for the day — it
+    retries next round and completes."""
+    eng = _engine(); broker = _FlakySubmitBroker()
+    rep = _tier([_po("BP", "buy", 50)], broker, eng,
+                {"BP": (99.99, 100.01, 100.0)}, {"BP": 60_000_000})
+    assert rep.rejected == 0 and rep.filled == 1                            # retried, then filled
+    assert broker.failures["BP"] == 1
+    assert not _rows(eng, db.pending_adjustments)
+
+
+def test_single_pass_transient_submit_retries_inline():
+    eng = _engine()
+    broker = _FlakySubmitBroker(transient_msg="too many requests", fail_first=2)
+    rep = execute.submit_and_track([_po("RL", "buy", 10)], broker=broker, db_engine=eng,
+                                   cycle_key="c", **_NOSLEEP)
+    assert rep.rejected == 0 and rep.filled == 1                            # 2 retries absorbed
+
+
+def test_tiered_persistent_order_not_reposted_at_same_price():
+    """While the ladder price is unchanged the resting limit stays WORKING (queue priority) —
+    one submit, and the only cancel is the end-of-window teardown."""
+    eng = _engine(); broker = _FakeBroker(fill_plan={"INBX": [("accepted", 0)]})
+    _tier([_po("INBX", "buy", 106)], broker, eng,
+          {"INBX": (94.73, 108.87, 95.1)}, {"INBX": 300_000},               # patho → constant ref
+          clock_step=20, market_close=_T0 + timedelta(seconds=200))         # several rounds
+    assert len(broker.submitted) == 1                                       # never re-posted
+    assert len(broker.cancelled) == 1                                       # teardown pull only
+
+
+def test_tiered_chase_cap_clamps_runaway_price():
+    """The marketable cap re-anchors to the moving market; the chase cap does not — no limit is
+    posted beyond max_chase_bps of the round-1 arrival price."""
+    eng = _engine(); broker = _FakeBroker(fill_plan={"RUN": [("accepted", 0)]})
+    calls = {"n": 0}
+
+    def quote(_s):
+        calls["n"] += 1
+        return (99.99, 100.01, 100.0) if calls["n"] == 1 else (104.95, 105.05, 105.0)
+
+    execute.submit_and_track(
+        [_po("RUN", "buy", 50)], broker=broker, db_engine=eng, cycle_key="c",
+        quote=quote, adv={"RUN": 60_000_000}, ex=_ex(), now=_Clock(step_s=20),
+        market_close=_T0 + timedelta(seconds=200), sleep=lambda _s: None)
+    limits = [o["limit_price"] for o in broker.submitted if o["time_in_force"] != "cls"]
+    assert limits[0] == 100.5                                               # r1 marketable
+    assert len(limits) >= 2 and all(lp <= 101.5 for lp in limits[1:])       # capped at arrival×1.015
+    assert 101.5 in limits[1:]                                              # clamped, not skipped
+
+
+def test_tiered_ladder_accelerates_when_behind_schedule():
+    """Zero fill progress at f≈1/3 of the window steps the ladder one rung early
+    (level 2/3 instead of 1/3): first post at 50.17, not 50.08."""
+    eng = _engine(); broker = _FakeBroker()
+    _tier([_po("MOD", "buy", 100)], broker, eng,
+          {"MOD": (49.90, 50.10, 50.0)}, {"MOD": 10_000_000},
+          clock_step=30, market_close=_T0 + timedelta(seconds=180))
+    assert broker.submitted[0]["limit_price"] == 50.17
+
+
+def test_tiered_prefers_quote_batch_over_per_symbol():
+    """With quote_batch supplied, the per-symbol quote fn is never hit during rounds — one
+    request per round replaces N."""
+    eng = _engine(); broker = _FakeBroker()
+    batches = []
+
+    def qb(symbols):
+        batches.append(list(symbols))
+        return {s: (99.99, 100.01, 100.0) for s in symbols}
+
+    def per_symbol(_s):
+        raise AssertionError("per-symbol quote must not be called when the batch succeeds")
+
+    rep = execute.submit_and_track(
+        [_po("AAPL", "buy", 50)], broker=broker, db_engine=eng, cycle_key="c",
+        quote=per_symbol, adv={"AAPL": 60_000_000}, ex=_ex(), now=_Clock(),
+        market_close=_T0 + timedelta(hours=3), sleep=lambda _s: None, quote_batch=qb)
+    assert rep.filled == 1 and batches == [["AAPL"]]

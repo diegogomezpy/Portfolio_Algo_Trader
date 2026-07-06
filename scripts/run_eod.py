@@ -48,6 +48,7 @@ from engine import (  # noqa: E402
 )
 from engine.alpaca_client import AlpacaAPIError  # noqa: E402
 from engine.config import load_settings  # noqa: E402
+from engine import execute  # noqa: E402
 from engine.execute import ExecReport, PlannedOrder, plan_orders, submit_and_track  # noqa: E402
 from engine.logger import get_logger  # noqa: E402
 from engine.risk import RiskCheckResult  # noqa: E402
@@ -140,18 +141,12 @@ def compute_targets(settings, as_of: date, *, db_engine=None,
 # ====================================================================== #
 # Orchestrator
 # ====================================================================== #
-def _equity_quote(client, sym: str):
-    """``(bid, ask, trade)`` for the tiered executor's pricing — tolerant of a missing side or a
-    read hiccup (returns ``None`` for whatever it can't fetch; the pricer degrades gracefully)."""
-    try:
-        bid, ask = client.latest_nbbo(sym)
-    except AlpacaAPIError:
-        bid = ask = None
-    try:
-        trade = client.latest_trade(sym)
-    except AlpacaAPIError:
-        trade = None
-    return bid, ask, trade
+def _quote_fns(client, settings):
+    """``(quote_fn, quote_batch)`` for the tiered executor — the shared builders in
+    :mod:`engine.execute` (raw NBBO, stale-print guard, one batched sweep per round)."""
+    stale = float(getattr(settings.execution, "stale_trade_max_s", 900) or 0)
+    return (execute.quote_fn_for(client, stale_trade_max_s=stale),
+            execute.batch_quote_fn(client, stale_trade_max_s=stale))
 
 
 def _option_touch(client, option_symbol: str, side: str):
@@ -322,13 +317,14 @@ def run_cycle(
     if express:                     # console express mode: market sweeps, no ladder
         orders = [PlannedOrder(o.symbol, o.side, o.qty, "market", None, o.notional)
                   for o in orders]
-        quote_fn = None
+        quote_fn = quote_batch = None
     else:
-        quote_fn = (lambda s: _equity_quote(client, s)) if hasattr(client, "latest_nbbo") else None
+        quote_fn, quote_batch = _quote_fns(client, settings)
     report = submit_and_track(orders, broker=broker, db_engine=db_engine,
                               cycle_key=as_of.isoformat(), pending=pending,
                               quote=quote_fn, adv=plan.adv, ex=settings.execution,
-                              market_close=mkt_close, order_state=_order_state(), alert=alert)
+                              market_close=mkt_close, order_state=_order_state(), alert=alert,
+                              quote_batch=quote_batch)
 
     # Overlay (D31): write fresh calls AFTER equity settles, on the shares actually held. The
     # writes chase to the bid so they actually fill, and the lifecycle row lands only on a fill.
@@ -558,11 +554,11 @@ def work_pending_adjustments(client, broker, db_engine, *, settings, as_of, aler
     # Cross-day top-up runs the same tiered executor as the rebalance. ADV isn't recomputed here,
     # so names fall to the "thin" tactic (patient ladder + phantom guard) — the safe default for
     # completing a residual.
-    quote_fn = (lambda s: _equity_quote(client, s)) if hasattr(client, "latest_nbbo") else None
+    quote_fn, quote_batch = _quote_fns(client, settings)
     rep = submit_and_track(orders, broker=broker, db_engine=db_engine,
                            cycle_key=f"{as_of.isoformat()}-topup", pending=[],
                            quote=quote_fn, adv={}, ex=ex, market_close=_market_close(client),
-                           order_state=_order_state(), alert=alert)
+                           order_state=_order_state(), alert=alert, quote_batch=quote_batch)
     log.info("cross-day top-up", extra={"date": as_of.isoformat(), "names": len(orders), "filled": rep.filled})
     if alert and rep.filled:
         alert(f"cross-day top-up {as_of.isoformat()}: filled {rep.filled}/{rep.submitted} "

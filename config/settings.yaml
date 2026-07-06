@@ -139,10 +139,21 @@ execution:
   ladder_steps: 3                # patient ladder: number of mid→touch steps for moderate/thin
                                  # names before reaching the marketable cap (deep+tight skip it).
   child_adv_pct: 0.10            # thin-name slicing: max child order = 10% of the name's ADV.
+  # Chase hardening (2026-07-06 execution review).
+  max_chase_bps: 150             # HARD cap on any limit vs the name's round-1 arrival price: the
+                                 # marketable cap re-anchors to the moving market each round, so in
+                                 # a trend the give-up vs decision price was otherwise unbounded.
+                                 # Past the cap the residual goes to the auction/cross-day instead.
+  stale_trade_max_s: 900         # ignore a last-trade print older than this when anchoring the
+                                 # chase (thin names on IEX can show prints hours old — the
+                                 # phantom-quote guard's mirror image).
   # Re-price cadences (docs/EXECUTION.md §7). Fills now come from the live order feed (instant),
   # so these only govern how often a *resting* limit is re-anchored to the moving market.
   equity_repeg_s: 30             # stocks: re-anchor a resting limit to the live mid this often
-  close_buffer_s: 300            # stop working this many seconds before 16:00; residual → auction/cross-day
+  close_buffer_s: 630            # stop working this many seconds before 16:00; residual → auction/
+                                 # cross-day. 630 (=15:49:30), NOT 300: NYSE stops accepting
+                                 # limit-on-close ~15:50, so the old 15:55 LOC route was rejected
+                                 # for every NYSE-listed name and silently fell to cross-day.
   poll_interval_s: 2             # fallback fill-check interval — only used if the live feed is down
   # When the daily EOD/rebalance job fires (America/New_York). Mid-session: tight spreads and a long
   # runway before the 16:00 close for DAY orders to fill.

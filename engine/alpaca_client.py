@@ -74,12 +74,16 @@ class AlpacaAPIError(AlpacaError):
     """Raised when an API request fails.
 
     The message always includes the symbol and the method name so a failure
-    can be traced without the call site.
+    can be traced without the call site. ``status_code`` (when the underlying
+    SDK error carries one) lets the execution layer classify transient failures
+    (429 rate limit, 5xx) as retry-next-round instead of reject-for-the-day.
     """
 
-    def __init__(self, symbol: str, method: str, message: str) -> None:
+    def __init__(self, symbol: str, method: str, message: str, *,
+                 status_code: int | None = None) -> None:
         self.symbol = symbol
         self.method = method
+        self.status_code = status_code
         super().__init__(
             f"Alpaca API error [method={method!r} symbol={symbol!r}]: {message}"
         )
@@ -227,12 +231,14 @@ class AlpacaClient:
         # Quote unavailable — fall back to the most recent trade.
         return self.latest_trade(symbol)
 
-    def latest_nbbo(self, symbol: str) -> tuple[float, float]:
+    def latest_nbbo(self, symbol: str, *, fallback_to_trade: bool = True) -> tuple[float, float]:
         """Return ``(bid, ask)`` from the latest NBBO quote for ``symbol``.
 
-        Each side falls back to the latest trade price when it is absent or non-positive
-        (e.g. outside market hours on the IEX feed). Used by the execution chaser to cross
-        to the touch: lift the ask on a buy, hit the bid on a sell.
+        With ``fallback_to_trade`` (the default), each side falls back to the latest trade
+        price when it is absent or non-positive (e.g. outside market hours on the IEX feed).
+        The execution chaser passes ``False``: its spread/staleness guards need the RAW quote —
+        a missing side silently replaced by a (possibly stale) print would masquerade as a
+        tight two-sided market.
 
         Raises:
             AlpacaAPIError: If both the quote and the fallback trade fetch fail.
@@ -241,17 +247,74 @@ class AlpacaClient:
         try:
             result = self._data.get_stock_latest_quote(request)
         except APIError as exc:
-            raise AlpacaAPIError(symbol, "latest_nbbo", str(exc)) from exc
+            raise AlpacaAPIError(symbol, "latest_nbbo", str(exc),
+                                 status_code=getattr(exc, "status_code", None)) from exc
         quote = result.get(symbol) if isinstance(result, dict) else None
         bid = getattr(quote, "bid_price", None) if quote is not None else None
         ask = getattr(quote, "ask_price", None) if quote is not None else None
         bid = float(bid) if bid is not None and float(bid) > 0 else None
         ask = float(ask) if ask is not None and float(ask) > 0 else None
-        if bid is None or ask is None:
+        if (bid is None or ask is None) and fallback_to_trade:
             last = self.latest_trade(symbol)
             bid = bid if bid is not None else last
             ask = ask if ask is not None else last
         return bid, ask
+
+    def latest_nbbo_batch(self, symbols) -> dict[str, tuple[float | None, float | None]]:
+        """Latest NBBO for many symbols in ONE request — the tiered chase's per-round sweep.
+
+        Per-symbol quote calls at full book size (~40–60 names × quote+post+cancel every 30 s)
+        ran ~2× Alpaca's 200 req/min limit; one batched call replaces N of them. Sides are
+        ``None`` when absent or non-positive, and there is **no trade fallback** (see
+        :meth:`latest_nbbo` — the executor's guards want the raw quote).
+
+        Raises:
+            AlpacaAPIError: If the batched request itself fails.
+        """
+        syms = [str(s) for s in symbols]
+        if not syms:
+            return {}
+        request = StockLatestQuoteRequest(symbol_or_symbols=syms, feed=self.feed)
+        try:
+            result = self._data.get_stock_latest_quote(request)
+        except APIError as exc:
+            raise AlpacaAPIError(",".join(syms[:5]), "latest_nbbo_batch", str(exc),
+                                 status_code=getattr(exc, "status_code", None)) from exc
+        out: dict[str, tuple[float | None, float | None]] = {}
+        for s in syms:
+            q = result.get(s) if isinstance(result, dict) else None
+            bid = getattr(q, "bid_price", None) if q is not None else None
+            ask = getattr(q, "ask_price", None) if q is not None else None
+            out[s] = (float(bid) if bid is not None and float(bid) > 0 else None,
+                      float(ask) if ask is not None and float(ask) > 0 else None)
+        return out
+
+    def latest_trades_batch(self, symbols) -> dict[str, tuple[float, "datetime | None"]]:
+        """Latest trade ``(price, timestamp)`` for many symbols in one request.
+
+        Names with no usable trade are omitted. The timestamp lets the execution layer drop
+        stale prints (a last trade from hours ago anchoring a chase is the INBX phantom-quote
+        lesson in mirror image).
+
+        Raises:
+            AlpacaAPIError: If the batched request itself fails.
+        """
+        syms = [str(s) for s in symbols]
+        if not syms:
+            return {}
+        request = StockLatestTradeRequest(symbol_or_symbols=syms, feed=self.feed)
+        try:
+            result = self._data.get_stock_latest_trade(request)
+        except APIError as exc:
+            raise AlpacaAPIError(",".join(syms[:5]), "latest_trades_batch", str(exc),
+                                 status_code=getattr(exc, "status_code", None)) from exc
+        out: dict[str, tuple[float, "datetime | None"]] = {}
+        for s in syms:
+            t = result.get(s) if isinstance(result, dict) else None
+            price = getattr(t, "price", None) if t is not None else None
+            if price is not None and float(price) > 0:
+                out[s] = (float(price), getattr(t, "timestamp", None))
+        return out
 
     def latest_option_quote(self, option_symbol: str) -> tuple[float | None, float | None]:
         """Return ``(bid, ask)`` for one OCC option contract — the covered-call chaser's touch.
@@ -284,11 +347,23 @@ class AlpacaClient:
             AlpacaResponseError: If the response is missing the symbol or
                 the trade price.
         """
+        return self.latest_trade_at(symbol)[0]
+
+    def latest_trade_at(self, symbol: str) -> tuple[float, "datetime | None"]:
+        """The most recent trade as ``(price, timestamp)`` — the timestamped form of
+        :meth:`latest_trade`, so callers can reject stale prints (execution freshness guard).
+
+        Raises:
+            AlpacaAPIError: If the request fails.
+            AlpacaResponseError: If the response is missing the symbol or
+                the trade price.
+        """
         request = StockLatestTradeRequest(symbol_or_symbols=symbol, feed=self.feed)
         try:
             result = self._data.get_stock_latest_trade(request)
         except APIError as exc:
-            raise AlpacaAPIError(symbol, "latest_trade", str(exc)) from exc
+            raise AlpacaAPIError(symbol, "latest_trade", str(exc),
+                                 status_code=getattr(exc, "status_code", None)) from exc
 
         trade = self._extract(result, symbol, "latest_trade")
         price = getattr(trade, "price", None)
@@ -296,7 +371,7 @@ class AlpacaClient:
             raise AlpacaResponseError(
                 symbol, "latest_trade", ("price",), self._obj_fields(trade)
             )
-        return float(price)
+        return float(price), getattr(trade, "timestamp", None)
 
 
 
