@@ -1539,13 +1539,20 @@ function renderPOverlay(s,ov){
   const legRow=(side,strike,col)=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--line-soft)">`
     +`<span style="display:flex;align-items:center;gap:9px">${tkrChip(ov.market||"SPY","ETF")}<span style="font:600 10px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:${col}">${side}</span></span>`
     +`<span class="pmono" style="font-size:13px;color:var(--fg)">${strike==null?"–":fmt(strike,0)+"C"}</span></div>`;
-  const kv=(k,v,c)=>`<div style="display:flex;flex-direction:column;gap:3px"><span style="font:600 10px 'Space Grotesk';letter-spacing:.07em;text-transform:uppercase;color:var(--muted)">${k}</span><span class="pmono" style="font-size:13px;color:${c||'var(--fg-dim)'}">${v}</span></div>`;
+  const kv=(k,v,c,tip)=>`<div style="display:flex;flex-direction:column;gap:3px"><span style="font:600 10px 'Space Grotesk';letter-spacing:.07em;text-transform:uppercase;color:var(--muted)${tip?';border-bottom:1px dotted var(--line);cursor:help;width:max-content':''}"${tip?` data-tip="${tip}"`:""}>${k}</span><span class="pmono" style="font-size:13px;color:${c||'var(--fg-dim)'}">${v}</span></div>`;
+  const upnl=ov.unrealized_pnl;
   const grid=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 12px;padding:14px 16px">`
     +kv("Expiry",`${expShort(ov.expiration)} · ${d==null?"–":d+"d"}`)
     +kv("Spreads",fmt(ov.contracts))
     +kv("Short Δ",ov.short_delta==null?"–":ov.short_delta.toFixed(2))
     +kv("Net credit",ov.net_credit!=null?"$"+ov.net_credit.toFixed(2)+" / spread":"–","var(--green)")
-    +kv("Credit collected",ov.premium_total!=null?usd(ov.premium_total):"–","var(--green)")
+    +kv("Credit banked",ov.premium_total!=null?usd(ov.premium_total):"–","var(--green)",
+        "Cash already COLLECTED when the spread was sold — it is in the account regardless of what the marks do. This is the premium; it can’t go negative.")
+    +kv("Cost to close (mark)",ov.cost_to_close!=null?usd(ov.cost_to_close):"–","#cf9a5f",
+        "What unwinding the spread NOW would cost: buy back the short call, sell the wing. A sold option shows as a NEGATIVE market value on the position ledger because it’s an obligation — that mark is this cost, not premium lost.")
+    +kv("Overlay P&L (unreal.)",upnl!=null?((upnl>=0?"+":"")+usd(upnl).replace("$-","−$")):"–",
+        upnl!=null?(upnl>=0?"var(--green)":"var(--red)"):undefined,
+        "Credit banked minus cost to close. Realizes as time decay grinds the mark toward zero — the full credit is kept if SPY finishes below the short strike at expiry; it only becomes a real loss if the spread is bought back for more than it was sold.")
     +kv("Max risk (defined)",ov.max_risk!=null?usd(ov.max_risk):"–","#cf9a5f")
     +kv(`<span style="text-transform:none">β</span> overwritten`,ov.beta_overwritten!=null?ov.beta_overwritten.toFixed(2):"–")
     +kv("Gross overwritten",(ov.beta_overwritten!=null&&ov.gross_equity!=null)?usd(ov.contracts*100*(ov.spot||0)):"–")

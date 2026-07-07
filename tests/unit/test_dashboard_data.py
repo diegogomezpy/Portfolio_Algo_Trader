@@ -771,3 +771,16 @@ def test_rolling_beta_flat_vs_tracking():
         bench.append(px)
     assert data.rolling_beta(list(bench), bench, window=10)[-1] == 1.0
     assert data.rolling_beta([100.0] * 30, bench, window=10)[-1] == 0.0
+
+
+def test_api_overlay_cost_to_close_and_unrealized_pnl():
+    """The banked-premium vs liability-mark distinction: the short leg's negative market value
+    is a cost-to-close (netted with the wing), and unrealized P&L = credit banked − that cost."""
+    eng = _engine()
+    _seed_index_overlay(eng)
+    ov = data.api_overlay(eng, market="SPY")
+    # Seed: nav 1M; short weight −0.02 → mv −20,000; long weight +0.01 → mv +10,000.
+    assert ov["short_market_value"] == -20_000.0
+    assert ov["long_market_value"] == 10_000.0
+    assert ov["cost_to_close"] == 10_000.0                      # pay 20k back, receive 10k
+    assert ov["unrealized_pnl"] == round(1638.0 - 10_000.0, 2)  # banked credit − cost to close

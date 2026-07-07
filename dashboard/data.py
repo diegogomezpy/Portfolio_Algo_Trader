@@ -306,11 +306,23 @@ def api_overlay(db_engine, *, market: str = "SPY") -> dict:
     max_risk = (round((width - (net_credit or 0.0)) * 100 * contracts, 2)
                 if (width is not None) else None)
     mv = (float(weights.get(ssym, 0.0)) * nav) if nav is not None else None
+    long_mv = (float(weights.get(long_leg[0], 0.0)) * nav) if (long_leg and nav is not None) else None
+    # The banked-premium vs liability-mark distinction (Diego, 2026-07-06): the short leg's
+    # NEGATIVE market value is the cost of the obligation, not premium lost — the credit is
+    # already cash. cost_to_close nets both legs (pay |short|, receive the wing); unrealized
+    # P&L = credit collected − cost to close, realizing as theta grinds the mark to zero.
+    cost_to_close = None
+    if mv is not None:
+        cost_to_close = round(abs(mv) - (long_mv or 0.0), 2)
+    unrealized = (round(premium_total - cost_to_close, 2)
+                  if (premium_total is not None and cost_to_close is not None) else None)
     return {"active": True, "market": market, "contracts": contracts,
             "short_symbol": ssym, "short_strike": short_strike, "long_strike": long_strike,
             "width": width, "expiration": socc["expiration"], "short_delta": m.get("delta"),
             "net_credit": net_credit, "premium_total": premium_total, "max_risk": max_risk,
-            "short_market_value": round(mv, 2) if mv is not None else None}
+            "short_market_value": round(mv, 2) if mv is not None else None,
+            "long_market_value": round(long_mv, 2) if long_mv is not None else None,
+            "cost_to_close": cost_to_close, "unrealized_pnl": unrealized}
 
 
 def api_chase(db_engine, *, cycle_key: str | None = None) -> dict:
