@@ -309,14 +309,44 @@ def _correlation_map(client, db_engine) -> dict:
     return _CORR_CACHE["data"] or {"available": False, "symbols": [], "matrix": []}
 
 
-def _latest_snapshot_age_s(db_engine) -> float | None:
-    """Seconds since the newest ``snapshots`` row (any writer), or ``None`` when empty."""
+def _latest_snapshot_age_s(db_engine, account: str = PRIMARY_ACCOUNT) -> float | None:
+    """Seconds since ``account``'s newest ``snapshots`` row, or ``None`` when it has none.
+    Account-scoped so a fresh secondary snapshot can't make the primary look fresh (and skip
+    the primary write) — the dedup must reason per book."""
     from sqlalchemy import desc, select
     from engine.db import snapshots
     with db_engine.connect() as conn:
-        row = conn.execute(select(snapshots.c.ts).order_by(desc(snapshots.c.ts)).limit(1)).first()
+        row = conn.execute(select(snapshots.c.ts).where(snapshots.c.account == account)
+                           .order_by(desc(snapshots.c.ts)).limit(1)).first()
     ts = data._as_utc(row[0]) if row and row[0] is not None else None
     return (datetime.now(timezone.utc) - ts).total_seconds() if ts else None
+
+
+def _monitor_secondary_accounts(db_engine, interval: int) -> None:
+    """Snapshot every enabled credstore account (tracked-sleeves). The engine only trades the
+    primary, so the dashboard is the SOLE snapshotter for these — always write (subject to a
+    freshness guard in case two dashboards ever run). One account's bad creds / API error is
+    logged and skipped so it can't stall the others or the loop."""
+    from engine import credstore, monitor
+    from engine.alpaca_client import AlpacaClient
+    try:
+        accounts = credstore.list_accounts(db_engine)
+    except Exception as exc:  # noqa: BLE001 — store unreadable → nothing to monitor this pass
+        log.warning("secondary-account list failed: %s", exc)
+        return
+    for a in accounts:
+        slug = a.get("slug")
+        if not slug or not a.get("enabled"):
+            continue
+        try:
+            age = _latest_snapshot_age_s(db_engine, slug)
+            if age is not None and age < interval * 0.75:
+                continue                                  # already fresh this cycle
+            creds = credstore.get_credentials(db_engine, slug)
+            c = AlpacaClient(api_key=creds["api_key"], secret_key=creds["api_secret"])
+            monitor.monitor_once(c, db_engine, account=slug)
+        except Exception as exc:  # noqa: BLE001 — bad key / API hiccup: skip this account only
+            log.warning("secondary-account monitor failed (%s): %s", slug, exc)
 
 
 async def _monitor_loop(client, db_engine, interval: int, price_feed=None) -> None:
@@ -336,10 +366,13 @@ async def _monitor_loop(client, db_engine, interval: int, price_feed=None) -> No
     log.info("dashboard monitor loop started (every %ss)", interval)
     while True:
         try:
-            age = await asyncio.to_thread(_latest_snapshot_age_s, db_engine)
+            age = await asyncio.to_thread(_latest_snapshot_age_s, db_engine, PRIMARY_ACCOUNT)
             if age is None or age >= interval * 0.75:      # engine's monitor quiet → we write
                 tw = await asyncio.to_thread(monitor.last_target_weights, db_engine)
-                await asyncio.to_thread(monitor.monitor_once, client, db_engine, target_weights=tw)
+                await asyncio.to_thread(monitor.monitor_once, client, db_engine,
+                                        target_weights=tw, account=PRIMARY_ACCOUNT)
+            # Tracked sleeves: snapshot every other account too (dashboard is their sole writer).
+            await asyncio.to_thread(_monitor_secondary_accounts, db_engine, interval)
             if price_feed is not None:
                 price_feed.set_symbols(await asyncio.to_thread(_held_equities, db_engine))
                 pos = await asyncio.to_thread(client.all_positions)

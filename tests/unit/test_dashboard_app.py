@@ -529,3 +529,34 @@ def test_accounts_routes_registered():
     paths = {r.path for r in create_app(eng, live=False).routes}
     assert {"/api/accounts", "/api/accounts/add", "/api/accounts/remove",
             "/api/accounts/{slug}/state"} <= paths
+
+
+def test_monitor_secondary_accounts_snapshots_each_enabled_account(monkeypatch):
+    """The per-account monitor sweep (tracked sleeves): each enabled credstore account gets a
+    snapshot tagged with its slug, built from its own creds. A bad account is skipped, not fatal."""
+    from cryptography.fernet import Fernet
+    from dashboard import app as dapp, data
+    from engine import credstore, alpaca_client
+    monkeypatch.setenv("SEPI_CRED_KEK", Fernet.generate_key().decode())
+    eng = create_engine("sqlite://")
+    db.create_all(eng)
+    credstore.add_account(eng, slug="trend", api_key="PKGOOD1", api_secret="s")
+    credstore.add_account(eng, slug="bad", api_key="PKBAD1", api_secret="s")
+
+    class _FakeClient:
+        def __init__(self, api_key, secret_key, **kw):
+            if api_key == "PKBAD1":
+                raise RuntimeError("unauthorized")          # bad creds blow up on construction/use
+            self._eq = 250_000.0
+        def account(self):
+            return {"equity": self._eq, "cash": 10_000.0, "last_equity": self._eq}
+        def all_positions(self):
+            return [{"symbol": "IWM", "qty": 100, "market_value": 240_000.0}]
+
+    monkeypatch.setattr(alpaca_client, "AlpacaClient", _FakeClient)
+    dapp._monitor_secondary_accounts(eng, 60)
+
+    from sqlalchemy import select
+    accts = {r[0] for r in eng.connect().execute(select(db.snapshots.c.account)).all()}
+    assert "trend" in accts and "bad" not in accts          # good written, bad skipped
+    assert data.api_state(eng, account="trend")["nav"] == 250_000.0
