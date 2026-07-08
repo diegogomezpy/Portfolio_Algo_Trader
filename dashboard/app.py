@@ -36,6 +36,7 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from dashboard import data
+from engine.monitor import PRIMARY_ACCOUNT   # tracked-sleeves: the engine-traded book's account id
 
 log = logging.getLogger("dashboard")
 
@@ -729,15 +730,16 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
         return {**meta, "live": client is not None, "monitor_interval": monitor_interval}
 
     @app.get("/api/state")
-    def state() -> dict:
-        s = data.api_state(db_engine)
-        if price_feed is not None:                         # sub-second overlay of live trade prices + day %
+    def state(account: str = PRIMARY_ACCOUNT) -> dict:
+        s = data.api_state(db_engine, account)
+        # The live-price feed is the PRIMARY book's stream, so only overlay it on the primary.
+        if price_feed is not None and account == PRIMARY_ACCOUNT:
             s = data.apply_live_prices(s, price_feed.snapshot(), price_feed.prev_close())
         return s
 
     @app.get("/api/nav_history")
-    def nav_history(limit: int = 120) -> list:
-        return data.api_nav_history(db_engine, limit)
+    def nav_history(limit: int = 120, account: str = PRIMARY_ACCOUNT) -> list:
+        return data.api_nav_history(db_engine, limit, account=account)
 
     @app.get("/api/orders")
     def orders(limit: int = 50) -> list:
@@ -1084,13 +1086,14 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
         return data.api_alerts(db_engine, limit)
 
     @app.get("/api/track_record")
-    def track_record(start: str | None = None) -> dict:
+    def track_record(start: str | None = None, account: str = PRIMARY_ACCOUNT) -> dict:
         """Realized paper performance + SPY/covered-call-ETF benchmarks.
 
         ``start`` (ISO date) windows the curve and re-bases everything — including the
         benchmarks, which align to the (now windowed) ``dates`` and base at ``inception``.
+        ``account`` selects the sleeve (default the engine-traded primary).
         """
-        tr = data.api_track_record(db_engine, start=start)
+        tr = data.api_track_record(db_engine, start=start, account=account)
         if not tr.get("available"):
             return {**tr, "benchmarks": {}}
         benchmarks = _benchmark_curves(meta.get("live_benchmarks", []), tr["inception"], tr["dates"])
@@ -1189,14 +1192,14 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
         return {"events": out, "earnings_loading": loading, "as_of": str(today)}
 
     @app.get("/api/risk")
-    def risk(start: str | None = None) -> dict:
+    def risk(start: str | None = None, account: str = PRIMARY_ACCOUNT) -> dict:
         """Drawdown / volatility / VaR analytics from the equity curve (Postgres-only).
 
         ``start`` (ISO date) windows the curve to match the Performance start-date picker.
         Rolling realized β vs SPY is layered on when there's enough curve (needs the
         benchmark closes — cached; failure just omits the series).
         """
-        r = data.api_risk(db_engine, start=start)
+        r = data.api_risk(db_engine, start=start, account=account)
         if r.get("available") and r.get("days", 0) >= 12:
             try:
                 from engine import benchmarks as _bm

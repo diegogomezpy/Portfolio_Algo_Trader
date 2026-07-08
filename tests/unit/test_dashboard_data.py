@@ -784,3 +784,24 @@ def test_api_overlay_cost_to_close_and_unrealized_pnl():
     assert ov["long_market_value"] == 10_000.0
     assert ov["cost_to_close"] == 10_000.0                      # pay 20k back, receive 10k
     assert ov["unrealized_pnl"] == round(1638.0 - 10_000.0, 2)  # banked credit − cost to close
+
+
+def test_reads_are_segregated_by_account():
+    """Tracked sleeves: one account's snapshots must never leak into another's reads."""
+    from datetime import datetime
+    eng = _engine()
+    with eng.begin() as c:
+        c.execute(insert(db.snapshots).values(
+            ts=datetime(2026, 7, 8, 15), account="primary", nav=1_000_000.0, cash=0.0,
+            last_equity=1_000_000.0, weights={"AAPL": 1.0}, positions={"AAPL": 100}, drift=0.0))
+        c.execute(insert(db.snapshots).values(
+            ts=datetime(2026, 7, 8, 16), account="trend", nav=250_000.0, cash=0.0,
+            last_equity=250_000.0, weights={"IWM": 1.0}, positions={"IWM": 50}, drift=0.0))
+    # api_state per account sees only its own latest snapshot — even though 'trend' wrote last.
+    assert data.api_state(eng)["nav"] == 1_000_000.0                        # default primary
+    assert data.api_state(eng, account="primary")["nav"] == 1_000_000.0
+    assert data.api_state(eng, account="trend")["nav"] == 250_000.0
+    assert {r["symbol"] for r in data.api_state(eng, "trend")["positions"]} == {"IWM"}
+    # nav_history is likewise segregated.
+    assert all(r["nav"] == 1_000_000.0 for r in data.api_nav_history(eng))
+    assert all(r["nav"] == 250_000.0 for r in data.api_nav_history(eng, account="trend"))

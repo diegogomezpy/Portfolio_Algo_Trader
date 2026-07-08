@@ -16,6 +16,7 @@ from sqlalchemy import desc, func, select
 from engine import db, symbols
 from engine.alerts import severity as alert_severity
 from engine.execute import arrival_reference        # shared with the execution pricer (one truth)
+from engine.monitor import PRIMARY_ACCOUNT          # tracked-sleeves: the engine-traded book's id
 
 _TRADING_DAYS = 252.0
 
@@ -39,8 +40,9 @@ _DRIFT_NAME_EPS = 0.005
 _is_option = symbols.is_option        # canonical option test (engine.symbols)
 
 
-def _latest_snapshot(conn) -> dict | None:
-    row = conn.execute(select(db.snapshots).order_by(desc(db.snapshots.c.ts)).limit(1)).mappings().first()
+def _latest_snapshot(conn, account: str = PRIMARY_ACCOUNT) -> dict | None:
+    row = conn.execute(select(db.snapshots).where(db.snapshots.c.account == account)
+                       .order_by(desc(db.snapshots.c.ts)).limit(1)).mappings().first()
     return dict(row) if row else None
 
 
@@ -49,7 +51,7 @@ def _latest_rebalance(conn) -> dict | None:
     return dict(row) if row else None
 
 
-def api_state(db_engine) -> dict:
+def api_state(db_engine, account: str = PRIMARY_ACCOUNT) -> dict:
     """Current portfolio state: NAV/cash/drift, leverage, positions vs target, risk gate, P&L, premium.
 
     ``leverage`` = Σ **equity** position weights = equity gross / account equity (each weight is
@@ -60,12 +62,16 @@ def api_state(db_engine) -> dict:
     ``market_value`` (= weight × NAV).
     """
     with db_engine.connect() as conn:
-        snap = _latest_snapshot(conn)
+        snap = _latest_snapshot(conn, account)
         reb = _latest_rebalance(conn)
         prev_nav = conn.execute(
-            select(db.snapshots.c.nav).order_by(desc(db.snapshots.c.ts)).offset(1).limit(1)).scalar()
+            select(db.snapshots.c.nav).where(db.snapshots.c.account == account)
+            .order_by(desc(db.snapshots.c.ts)).offset(1).limit(1)).scalar()
+        # Premium is options_lifecycle (not account-tagged until per-account trading) — a real
+        # figure only for the engine-traded book; other accounts show 0 until they trade.
         premium = conn.execute(
-            select(func.coalesce(func.sum(db.options_lifecycle.c.premium), 0.0))).scalar()
+            select(func.coalesce(func.sum(db.options_lifecycle.c.premium), 0.0))
+        ).scalar() if account == PRIMARY_ACCOUNT else 0.0
 
     premium = float(premium or 0.0)
     if snap is None:
@@ -174,7 +180,8 @@ def held_symbols(db_engine) -> list[str]:
     return sorted(s for s in syms if s and not _is_option(s))
 
 
-def api_nav_history(db_engine, limit: int = 120, *, intraday_hours: int = 24) -> list[dict]:
+def api_nav_history(db_engine, limit: int = 120, *, intraday_hours: int = 24,
+                    account: str = PRIMARY_ACCOUNT) -> list[dict]:
     """NAV (and cash) curve, oldest-first: full 60s resolution for the trailing
     ``intraday_hours``, then **one snapshot per day** (each day's last) beyond that.
 
@@ -186,13 +193,14 @@ def api_nav_history(db_engine, limit: int = 120, *, intraday_hours: int = 24) ->
     """
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=intraday_hours)
     cols = (db.snapshots.c.ts, db.snapshots.c.nav, db.snapshots.c.cash)
+    acct = db.snapshots.c.account == account
     with db_engine.connect() as conn:
         recent = conn.execute(
-            select(*cols).where(db.snapshots.c.ts >= cutoff)
+            select(*cols).where(acct, db.snapshots.c.ts >= cutoff)
             .order_by(desc(db.snapshots.c.ts)).limit(limit)).all()
         # One row per calendar day before the cutoff: the day's final snapshot (its close).
         daily_last = (select(func.max(db.snapshots.c.ts))
-                      .where(db.snapshots.c.ts < cutoff)
+                      .where(acct, db.snapshots.c.ts < cutoff)
                       .group_by(func.date(db.snapshots.c.ts))).scalar_subquery()
         older = conn.execute(
             select(*cols).where(db.snapshots.c.ts.in_(daily_last))
@@ -654,7 +662,8 @@ def _monthly_returns(dates: list[str], navs: list[float]) -> list[dict]:
     return out
 
 
-def api_track_record(db_engine, *, start: str | None = None) -> dict:
+def api_track_record(db_engine, *, start: str | None = None,
+                     account: str = PRIMARY_ACCOUNT) -> dict:
     """Realized paper performance since inception, from the ``snapshots`` equity curve.
 
     ``start`` (ISO ``YYYY-MM-DD``) windows the curve to snapshots on/after that date and re-bases
@@ -668,9 +677,11 @@ def api_track_record(db_engine, *, start: str | None = None) -> dict:
     with db_engine.connect() as conn:
         raw = conn.execute(
             select(db.snapshots.c.ts, db.snapshots.c.nav, db.snapshots.c.positions)
+            .where(db.snapshots.c.account == account)
             .order_by(db.snapshots.c.ts)).all()
         premium = conn.execute(
-            select(func.coalesce(func.sum(db.options_lifecycle.c.premium), 0.0))).scalar()
+            select(func.coalesce(func.sum(db.options_lifecycle.c.premium), 0.0))
+        ).scalar() if account == PRIMARY_ACCOUNT else 0.0
     raw = [(ts, nav, pos) for ts, nav, pos in raw if nav is not None]
     # The comparison starts at EXPOSURE, not at the first snapshot: cash-only days before the
     # first rebalance are not the strategy (they'd dilute every stat and shift the benchmark
@@ -792,7 +803,8 @@ def _rolling_sharpe(rets: list[float], window: int) -> list[float | None]:
     return out
 
 
-def api_risk(db_engine, *, window: int = 10, start: str | None = None) -> dict:
+def api_risk(db_engine, *, window: int = 10, start: str | None = None,
+             account: str = PRIMARY_ACCOUNT) -> dict:
     """Risk analytics from the ``snapshots`` equity curve (Postgres-only, unit-testable).
 
     Everything derives from the daily NAV series: an underwater (drawdown) curve with the current
@@ -804,6 +816,7 @@ def api_risk(db_engine, *, window: int = 10, start: str | None = None) -> dict:
     with db_engine.connect() as conn:
         raw = conn.execute(
             select(db.snapshots.c.ts, db.snapshots.c.nav, db.snapshots.c.positions)
+            .where(db.snapshots.c.account == account)
             .order_by(db.snapshots.c.ts)).all()
     raw = [(ts, nav, pos) for ts, nav, pos in raw if nav is not None]
     # Same window rule as the track record (Returns and Risk must describe the SAME period):
