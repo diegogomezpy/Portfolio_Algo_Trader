@@ -104,3 +104,13 @@ def test_key_from_env(monkeypatch):
     credstore.add_account(eng, slug="a", api_key="PKAAAA1111", api_secret="env-secret")
     assert credstore.get_credentials(eng, "a")["api_secret"] == "env-secret"
     assert credstore.get_credentials(eng, "a", key=_KEY)["api_secret"] == "env-secret"  # same key
+
+
+def test_add_strips_whitespace_from_pasted_creds():
+    # Pasting from another tab commonly drags a trailing newline/space — Alpaca then 401s. The
+    # store must strip so a working paste isn't rejected as "unauthorized".
+    eng = _engine()
+    credstore.add_account(eng, slug="a", api_key="  PKAAAA1111\n", api_secret="\tsecret-val ",
+                          key=_KEY)
+    creds = credstore.get_credentials(eng, "a", key=_KEY)
+    assert creds["api_key"] == "PKAAAA1111" and creds["api_secret"] == "secret-val"

@@ -92,7 +92,7 @@ if (matchMedia("(hover: none)").matches) document.addEventListener("click", e=>{
 });
 
 // ---- two-level nav: top tabs + sub-tabs -----------------------------------
-const VIEWS = ["overview","portfolio","performance","execute"];
+const VIEWS = ["overview","portfolio","performance","execute","accounts"];
 const SUBS  = {portfolio:["holdings","activity"], performance:["returns","risk","attribution","execution"]};
 let activeView = "overview";
 const activeSub = {portfolio:"holdings", performance:"returns"};
@@ -119,6 +119,7 @@ function loadActive(){
   else if (activeView === "portfolio") loadPortfolio();
   else if (activeView === "performance") loadPerformance();
   else if (activeView === "execute") loadExecute();
+  else if (activeView === "accounts") loadAccounts();
 }
 
 async function get(p){ try { const r = await fetch(p); return r.ok ? await r.json() : null; } catch { return null; } }
@@ -1875,11 +1876,19 @@ async function loadExecute(){
   pollExec();                                  // the live run panel lives on this tab now
   renderManualActions(await get("/api/manual_actions"), "x-history");
   renderConfigPanel(await get("/api/config"));
-  renderAccounts(await get("/api/accounts"));
   schedulePlan(0);
 }
 
-// ---- Accounts: dashboard-managed encrypted broker credentials (Phase C) ----
+// ---- Accounts tab: dashboard-managed encrypted broker credentials (Phase C) ----
+async function loadAccounts(){
+  const rows = await get("/api/accounts");
+  renderAccounts(rows);
+  // Auto-check each account once (so you SEE its status without clicking), cached in _ACCT_STATE
+  // so the governed re-render doesn't re-hit Alpaca every tick.
+  (Array.isArray(rows) ? rows : []).forEach(a => {
+    if (a && a.slug && !_ACCT_STATE[a.slug]) viewAccount(a.slug);
+  });
+}
 async function postJSON(path, tok, body){
   try {
     const r = await fetch(path, { method: "POST",
@@ -1888,6 +1897,9 @@ async function postJSON(path, tok, body){
     return r.ok ? await r.json() : null;
   } catch { return null; }
 }
+
+// Last connection-check result per slug, so a governed re-render redraws it instead of blanking it.
+const _ACCT_STATE = {};
 
 function renderAccounts(rows){
   const host = $("x-accounts"); if (!host) return;
@@ -1909,9 +1921,9 @@ function renderAccounts(rows){
       <span style="font:400 10px var(--mono);color:var(--muted)"> · ${esc(a.slug)}</span></span>
     <span class="pmono" style="font-size:11.5px;color:var(--fg-dim)" title="masked API key">${esc(a.key_fingerprint||"–")}</span>
     <span class="pmono" style="font-size:11px;color:var(--muted)">${(a.base_url||"").includes("paper")?"paper":"live"}${a.capital?` · ${usd(a.capital)}`:""}${a.leverage?` · ${(+a.leverage).toFixed(2)}×`:""}</span>
-    <span id="acs-${esc(a.slug)}" style="font:500 11px var(--mono);color:var(--muted)">—</span>
+    <span id="acs-${esc(a.slug)}" style="font:500 11px var(--mono);color:${(_ACCT_STATE[a.slug]||{}).color||'var(--muted)'}" title="${esc((_ACCT_STATE[a.slug]||{}).title||'')}">${esc((_ACCT_STATE[a.slug]||{}).text||'—')}</span>
     <span style="display:inline-flex;gap:6px">
-      <button class="exm-chip" onclick="viewAccount('${esc(a.slug)}')" data-tip="check this account's live connection (read-only)">check</button>
+      <button class="exm-chip" onclick="viewAccount('${esc(a.slug)}')" data-tip="re-check this account's live connection (read-only)">check</button>
       <button class="exm-chip" onclick="removeAccount('${esc(a.slug)}')" data-tip="forget this account (deletes its stored credentials)">remove</button></span></div>`;
   const list = rows.length
     ? rows.map(acctRow).join("")
@@ -1955,20 +1967,30 @@ async function addAccount(){
   if (ok){ ["acKey","acSecret","acCapital","acLev","acLabel","acSlug"].forEach(id => { if ($(id)) $(id).value = ""; }); }
   toast(ok ? `account ${r.slug} added` : (r && r.error || "add failed"), !ok);
   renderAccounts(await get("/api/accounts"));
+  if (ok){ delete _ACCT_STATE[r.slug]; viewAccount(r.slug); }   // auto-check the new account
 }
 
 async function viewAccount(slug){
-  const cell = $("acs-"+slug); if (cell){ cell.textContent = "checking…"; cell.style.color = "var(--muted)"; }
+  const paint = (st) => { _ACCT_STATE[slug] = st; const cell = $("acs-"+slug);
+    if (cell){ cell.textContent = st.text; cell.style.color = st.color; cell.title = st.title || ""; } };
+  paint({ text: "checking…", color: "var(--muted)" });
   const s = await get(`/api/accounts/${encodeURIComponent(slug)}/state`);
-  if (!cell) return;
-  if (s && s.ok){ cell.textContent = `${usd(s.equity)} · ${s.positions}p · ${s.open_orders}o`; cell.style.color = "var(--green)"; }
-  else { cell.textContent = (s && s.error) ? "error" : "unreachable"; cell.style.color = "var(--red)"; }
+  if (s && s.ok){
+    paint({ text: `${usd(s.equity)} · ${s.positions}p · ${s.open_orders}o`, color: "var(--green)",
+            title: `equity ${usd(s.equity)} · ${s.positions} positions · ${s.open_orders} open orders` });
+  } else {
+    // Surface the ACTUAL reason — "unauthorized" almost always means a mistyped/wrong key or secret.
+    const raw = (s && s.error) ? String(s.error) : "unreachable";
+    const short = /unauthor/i.test(raw) ? "bad key/secret" : (/forbidden/i.test(raw) ? "forbidden" : "unreachable");
+    paint({ text: short, color: "var(--red)", title: raw.slice(0, 200) });
+  }
 }
 
 async function removeAccount(slug){
   if (!confirm(`Forget account "${slug}"? This deletes its stored credentials.`)) return;
   const tok = execToken(); if (!tok) return;
   await postJSON("/api/accounts/remove", tok, { slug });
+  delete _ACCT_STATE[slug];
   toast(`account ${slug} removed`);
   renderAccounts(await get("/api/accounts"));
 }

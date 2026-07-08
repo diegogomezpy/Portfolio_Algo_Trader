@@ -84,6 +84,10 @@ def add_account(db_engine, *, slug: str, api_key: str, api_secret: str,
     never written except as ciphertext.
     """
     slug = str(slug or "").strip().lower()
+    # Strip the key/secret: pasting from another tab commonly drags a trailing newline/space, which
+    # Alpaca rejects as "unauthorized" — the exact symptom of a working store with bad-looking creds.
+    api_key = str(api_key or "").strip()
+    api_secret = str(api_secret or "").strip()
     if not slug:
         raise ValueError("slug is required")
     if not (api_key and api_secret):
