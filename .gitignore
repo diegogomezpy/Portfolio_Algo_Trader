@@ -2,6 +2,7 @@
 .env
 .env.paper
 .env.live
+.cred_kek          # Fernet key for the encrypted per-account credential store (engine.credstore)
 
 # Regenerable / large artifacts
 data/

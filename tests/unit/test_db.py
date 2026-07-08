@@ -24,6 +24,7 @@ EXPECTED_TABLES = {
     "order_events",
     "manual_actions",
     "overrides",
+    "account_credentials",
 }
 
 

@@ -31,12 +31,14 @@ from sqlalchemy import (
     DateTime,
     Float,
     Integer,
+    LargeBinary,
     MetaData,
     String,
     Table,
     create_engine,
     false,
     func,
+    true,
 )
 from sqlalchemy.engine import Engine
 
@@ -218,6 +220,27 @@ factor_scores = Table(
     Column("lowvol_score", Float),
     Column("stale", Boolean, server_default=false()),
     Column("created_at", DateTime, server_default=func.now()),
+)
+
+
+# Per-account broker credentials, dashboard-managed (ADR-001 / D37 Phase C). The key + secret
+# are Fernet-encrypted into ``ciphertext`` (engine.credstore) — NEVER stored in cleartext, and
+# the encryption key lives in a file/env off the DB, so a leaked pg_dump reveals nothing. Only
+# non-secret metadata (label, base_url, a masked key fingerprint, sizing) is in the clear.
+account_credentials = Table(
+    "account_credentials",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("slug", String, nullable=False, unique=True, index=True),   # short id, e.g. "trend"
+    Column("label", String),                                           # human label for the UI
+    Column("base_url", String),                                        # paper/live API base
+    Column("ciphertext", LargeBinary, nullable=False),                 # Fernet({api_key, api_secret})
+    Column("key_fingerprint", String),                                 # masked api-key id, safe to show
+    Column("capital", Float),                                          # deployable base for this account
+    Column("leverage", Float),
+    Column("enabled", Boolean, server_default=true()),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime),
 )
 
 

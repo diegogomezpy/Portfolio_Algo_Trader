@@ -35,5 +35,9 @@ fastapi==0.137.2
 uvicorn[standard]==0.49.0  # [standard] = uvloop + httptools: the 1s polling loop shouldn't
                            # run on the pure-Python event loop (audit W7)
 
+# Credential store (ADR-001 Phase C) — Fernet (AES-128-CBC + HMAC) encrypts the dashboard-managed
+# per-account broker keys at rest in Postgres; keys never stored in cleartext or in the backups.
+cryptography==49.0.0
+
 # Testing
 pytest==9.1.0
