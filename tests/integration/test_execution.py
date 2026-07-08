@@ -467,3 +467,47 @@ def test_rebalance_lease_is_noop_off_postgres():
         assert got is True
     with rebalance_lease(None) as got:
         assert got is True
+
+
+# ====================================================================== #
+# Strategy plugin routing (ADR-001 / D37 A3) — run_cycle drives off a TargetBook
+# ====================================================================== #
+def test_run_cycle_accepts_an_injected_strategy():
+    """run_cycle drives off a Strategy plugin: an injected strategy's TargetBook weights become
+    the cycle's orders. Proves the registry/plugin route, not just the legacy targets_fn seam."""
+    from engine import strategy as S
+
+    class _FakeStrategy:
+        name = "fake"
+        def generate(self, ctx, as_of):
+            return S.TargetBook(
+                weights=pd.Series({"AAPL": 0.05, "MSFT": 0.04}),
+                inputs=S.PlanInputs(prices={"AAPL": 100.0, "MSFT": 200.0},
+                                    universe={"AAPL", "MSFT"},
+                                    sector_map=pd.Series({"AAPL": "Information Technology",
+                                                          "MSFT": "Information Technology"})))
+
+    eng = _engine()
+    broker = _FakeBroker()
+    res = run_eod.run_cycle(
+        client=_FakeClient(), broker=broker, db_engine=eng, settings=load_settings(),
+        as_of=date(2026, 7, 1), force=True, strategy=_FakeStrategy())
+
+    assert res.status == "executed"
+    orders = _rows(eng, db.orders)
+    assert {o["symbol"] for o in orders} == {"AAPL", "MSFT"}
+    assert {o["qty"] for o in orders} == {100.0, 40.0}      # same 2.0× sizing as the targets_fn path
+
+
+def test_run_cycle_empty_targetbook_is_no_targets():
+    from engine import strategy as S
+
+    class _EmptyStrategy:
+        name = "empty"
+        def generate(self, ctx, as_of):
+            return S.TargetBook(weights=pd.Series(dtype=float))
+
+    res = run_eod.run_cycle(
+        client=_FakeClient(), broker=_FakeBroker(), db_engine=_engine(), settings=load_settings(),
+        as_of=date(2026, 7, 1), force=True, strategy=_EmptyStrategy())
+    assert res.status == "no_targets"

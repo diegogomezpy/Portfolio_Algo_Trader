@@ -50,6 +50,8 @@ from engine import (  # noqa: E402
 from engine.alpaca_client import AlpacaAPIError  # noqa: E402
 from engine.config import load_settings  # noqa: E402
 from engine import execute  # noqa: E402
+from engine import strategy as strategy_mod  # noqa: E402
+from engine import strategies as strat_pkg  # noqa: E402
 from engine.execute import ExecReport, PlannedOrder, plan_orders, submit_and_track  # noqa: E402
 from engine.logger import get_logger  # noqa: E402
 from engine.risk import RiskCheckResult  # noqa: E402
@@ -60,6 +62,10 @@ log = get_logger(__name__)
 # imports scripts.backtest for them, audit E2).
 PRICES_DIR = str(ingest.DEFAULT_PRICES_DIR)
 FUNDAMENTALS_DIR = str(ingest.DEFAULT_FUNDAMENTALS_DIR)
+
+# The strategy the live book runs (ADR-001 / D37 A3). One strategy today; config-driven
+# naming per strategy arrives with the account-per-strategy plumbing (Phase B).
+_STRATEGY_NAME = "low_beta_overwrite"
 
 
 @dataclass
@@ -290,7 +296,8 @@ def _run_cycle_locked(
     as_of: date,
     force: bool = False,
     trigger: str = "monthly",
-    targets_fn: Callable[..., TargetPlan] = compute_targets,
+    targets_fn: Callable[..., TargetPlan] | None = None,
+    strategy: strategy_mod.Strategy | None = None,
     trading_day_fn: Callable[[object, str], bool] = ingest.is_trading_day,
     overlay: bool = False,
     close_calls_fn: Callable[..., object] = covered_calls.close_calls,
@@ -303,8 +310,13 @@ def _run_cycle_locked(
     """Run one rebalance cycle (the body; callers use :func:`run_cycle`, which holds the
     lease). Returns a :class:`CycleResult`.
 
-    Order: reconcile (block if Alpaca down) → holiday gate (unless ``force``) → compute
-    targets → pre-trade risk gate (logged to ``rebalance_log``; blocks on failure) →
+    Targets come from the **Strategy plugin** (ADR-001 / D37): the registered
+    ``low_beta_overwrite`` book by default, or ``strategy`` when injected. ``targets_fn`` (tests /
+    overrides) is threaded *into* the default strategy so the legacy injection seam still works —
+    the plugin wraps the same ``compute_targets``, so targets are identical to the pre-A3 path.
+
+    Order: reconcile (block if Alpaca down) → holiday gate (unless ``force``) → strategy targets
+    → pre-trade risk gate (logged to ``rebalance_log``; blocks on failure) →
     [overlay: close the existing option leg] → plan + submit + track equity orders →
     [overlay: write the fresh option leg] → monitor snapshot.
 
@@ -325,11 +337,23 @@ def _run_cycle_locked(
         log.info("not a trading day; skipping cycle", extra={"date": as_of.isoformat()})
         return CycleResult("not_trading_day")
 
-    plan = targets_fn(settings, as_of, db_engine=db_engine)
-    weights = plan.weights
-    if weights is None or weights.empty:
+    # Targets via the Strategy plugin. `strategy` injected → use it; else the registered book,
+    # with `targets_fn` (tests/overrides) threaded into it. The context carries no dirs, so the
+    # plugin calls the producer exactly as before (`targets_fn(settings, as_of, db_engine=...)`)
+    # and `compute_targets` uses its own PRICES_DIR/FUNDAMENTALS_DIR defaults.
+    strat = strategy
+    if strat is None:
+        strat_pkg.register_all()
+        strat = (strat_pkg.LowBetaOverwrite(targets_fn=targets_fn) if targets_fn is not None
+                 else strategy_mod.get(_STRATEGY_NAME))
+    ctx = strategy_mod.StrategyContext(settings=settings, db_engine=db_engine,
+                                       positions=rec.live_positions)
+    book = strat.generate(ctx, as_of)
+    weights = book.weights
+    if book.is_empty:
         log.warning("no target weights produced; nothing to do")
         return CycleResult("no_targets")
+    plan = book.inputs          # PlanInputs — same fields as TargetPlan; downstream plan.* unchanged
 
     # Sticky dashboard override first (clamped to max_leverage), else settings.yaml.
     leverage = overrides.effective_target_leverage(db_engine, settings)
@@ -645,7 +669,7 @@ def daily_job(
     settings,
     as_of: date,
     ingest_fn: Callable[[str], None] | None = None,
-    targets_fn: Callable[..., TargetPlan] = compute_targets,
+    targets_fn: Callable[..., TargetPlan] | None = None,   # None → the registered strategy (A3)
     trading_day_fn: Callable[[object, str], bool] = ingest.is_trading_day,
     first_trading_day_fn: Callable[[object, date], bool] | None = None,
     rebalanced_this_month_fn: Callable[[object, date], bool] | None = None,
