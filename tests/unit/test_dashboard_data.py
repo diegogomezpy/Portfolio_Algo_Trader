@@ -805,3 +805,21 @@ def test_reads_are_segregated_by_account():
     # nav_history is likewise segregated.
     assert all(r["nav"] == 1_000_000.0 for r in data.api_nav_history(eng))
     assert all(r["nav"] == 250_000.0 for r in data.api_nav_history(eng, account="trend"))
+
+def test_nav_history_daily_branch_segregates_shared_timestamps():
+    """Regression: the daily-sampled (older-than-intraday) branch must filter by account even when
+    two accounts share timestamps — else one book's daily closes leak into the other's curve."""
+    from datetime import datetime, timedelta, timezone
+    eng = _engine()
+    base = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=5)
+    with eng.begin() as c:
+        for d in range(5):                                  # all older than the 24h intraday window
+            t = base + timedelta(days=d)
+            c.execute(insert(db.snapshots).values(
+                ts=t, account="primary", nav=1_000_000.0 + d, cash=0.0, last_equity=1_000_000.0,
+                weights={}, positions={}, drift=0.0))
+            c.execute(insert(db.snapshots).values(          # SAME timestamp as primary
+                ts=t, account="trend", nav=250_000.0 + d, cash=0.0, last_equity=250_000.0,
+                weights={}, positions={}, drift=0.0))
+    assert all(r["nav"] >= 1_000_000.0 for r in data.api_nav_history(eng))                 # primary only
+    assert all(r["nav"] < 300_000.0 for r in data.api_nav_history(eng, account="trend"))   # trend only

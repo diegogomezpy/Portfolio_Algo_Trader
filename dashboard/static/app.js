@@ -122,7 +122,37 @@ function loadActive(){
   else if (activeView === "accounts") loadAccounts();
 }
 
-async function get(p){ try { const r = await fetch(p); return r.ok ? await r.json() : null; } catch { return null; } }
+// Tracked-sleeves account switcher: which account the account-aware panels show. The listed
+// endpoints accept ?account=; get() appends the selection for a non-primary sleeve so the whole
+// dashboard re-points from one place. Other endpoints (options/execution/premium) stay primary.
+let SELECTED_ACCOUNT = localStorage.getItem("sepi_account") || "primary";
+const _ACCT_AWARE = ["/api/state", "/api/nav_history", "/api/track_record", "/api/risk"];
+async function get(p){
+  if (SELECTED_ACCOUNT !== "primary" && _ACCT_AWARE.some(a => p === a || p.startsWith(a + "?"))){
+    p += (p.includes("?") ? "&" : "?") + "account=" + encodeURIComponent(SELECTED_ACCOUNT);
+  }
+  try { const r = await fetch(p); return r.ok ? await r.json() : null; } catch { return null; }
+}
+
+async function populateAccountSwitcher(){
+  const sel = $("acctSwitcher"); if (!sel) return;
+  const accts = await get("/api/accounts");
+  const opts = [{slug: "primary", label: "Primary book"}].concat(
+    (Array.isArray(accts) ? accts : []).filter(a => a && a.slug)
+      .map(a => ({slug: a.slug, label: a.label || a.slug})));
+  sel.innerHTML = opts.map(o => `<option value="${esc(o.slug)}">${esc(o.label)}</option>`).join("");
+  if (!opts.some(o => o.slug === SELECTED_ACCOUNT)) SELECTED_ACCOUNT = "primary";  // removed → reset
+  sel.value = SELECTED_ACCOUNT;
+  sel.style.display = opts.length > 1 ? "" : "none";        // only show once there's more than one
+}
+
+function onAccountSwitch(slug){
+  SELECTED_ACCOUNT = slug || "primary";
+  localStorage.setItem("sepi_account", SELECTED_ACCOUNT);
+  const sel = $("acctSwitcher"); if (sel) sel.value = SELECTED_ACCOUNT;   // keep the dropdown in sync
+  _ovS = null;                                              // drop cached primary state
+  loadActive();                                             // re-render the current view for the account
+}
 
 // ---- Track record (live paper performance vs benchmarks + slippage) -------
 const cssv = (n,f) => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || f;
@@ -1805,6 +1835,7 @@ async function boot(){
   eb.title = live ? "LIVE trading — real money" : "paper trading — simulated";
   seedSparklines();          // hydrate row sparklines with an intraday window (live ticks extend it)
   loadQuotes();              // quote detail for the ticker hover-card
+  populateAccountSwitcher(); // tracked-sleeves: header account selector (hidden until >1 account)
   loadActive();
 }
 $("refreshbtn").onclick = () => { $("refreshbtn").classList.add("spin"); setTimeout(()=>$("refreshbtn").classList.remove("spin"),700); loadActive(); };
@@ -1967,7 +1998,7 @@ async function addAccount(){
   if (ok){ ["acKey","acSecret","acCapital","acLev","acLabel","acSlug"].forEach(id => { if ($(id)) $(id).value = ""; }); }
   toast(ok ? `account ${r.slug} added` : (r && r.error || "add failed"), !ok);
   renderAccounts(await get("/api/accounts"));
-  if (ok){ delete _ACCT_STATE[r.slug]; viewAccount(r.slug); }   // auto-check the new account
+  if (ok){ delete _ACCT_STATE[r.slug]; viewAccount(r.slug); populateAccountSwitcher(); }  // auto-check + add to switcher
 }
 
 async function viewAccount(slug){
@@ -1991,8 +2022,10 @@ async function removeAccount(slug){
   const tok = execToken(); if (!tok) return;
   await postJSON("/api/accounts/remove", tok, { slug });
   delete _ACCT_STATE[slug];
+  if (SELECTED_ACCOUNT === slug) onAccountSwitch("primary");   // was viewing it → fall back to primary
   toast(`account ${slug} removed`);
   renderAccounts(await get("/api/accounts"));
+  populateAccountSwitcher();
 }
 
 function setExecAction(a){ EXEC.tab = a; EXEC.plan = null; EXEC.planQS = ""; renderTicketPanel(); schedulePlan(0); }

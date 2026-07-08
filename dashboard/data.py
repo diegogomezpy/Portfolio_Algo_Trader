@@ -203,7 +203,7 @@ def api_nav_history(db_engine, limit: int = 120, *, intraday_hours: int = 24,
                       .where(acct, db.snapshots.c.ts < cutoff)
                       .group_by(func.date(db.snapshots.c.ts))).scalar_subquery()
         older = conn.execute(
-            select(*cols).where(db.snapshots.c.ts.in_(daily_last))
+            select(*cols).where(acct, db.snapshots.c.ts.in_(daily_last))
             .order_by(desc(db.snapshots.c.ts)).limit(limit)).all()
     rows = list(reversed(older)) + list(reversed(recent))
     return [{"ts": str(ts), "nav": nav, "cash": cash} for ts, nav, cash in rows]

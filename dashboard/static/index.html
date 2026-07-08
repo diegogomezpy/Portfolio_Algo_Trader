@@ -42,6 +42,9 @@
     <button class="tab" data-view="accounts">Accounts</button>
   </nav>
   <div class="right">
+    <select id="acctSwitcher" title="view account — switch which sleeve the dashboard shows"
+      onchange="onAccountSwitch(this.value)"
+      style="display:none;background:var(--panel-2);color:var(--fg);border:1px solid var(--line);border-radius:7px;padding:4px 8px;font:600 11px var(--sans);cursor:pointer"></select>
     <span class="etclock" id="etclock" title="New York time (US market timezone)"></span>
     <span class="se-pill neutral" id="envbadge" title="trading environment">— </span>
     <span class="upd"><span class="live-dot down" id="dot"></span><span id="upd">connecting…</span></span>
@@ -192,6 +195,6 @@
 </div>
 
 
-<script src="/static/app.js?v=16" defer></script>
+<script src="/static/app.js?v=17" defer></script>
 </body>
 </html>
