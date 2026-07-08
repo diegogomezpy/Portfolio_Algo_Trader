@@ -76,11 +76,15 @@ def last_target_weights(db_engine) -> Optional[dict[str, float]]:
     return {k: float(v) for k, v in row[0].items()}
 
 
+PRIMARY_ACCOUNT = "primary"          # the engine-traded book; other sleeves use their credstore id
+
+
 def monitor_once(
     client,
     db_engine=None,
     *,
     target_weights: Mapping[str, float] | None = None,
+    account: str = PRIMARY_ACCOUNT,
 ) -> MonitorResult:
     """Read live state, compute NAV/weights/drift, write a snapshot.
 
@@ -88,6 +92,10 @@ def monitor_once(
     :func:`last_target_weights`); when ``None`` (before the first rebalance) drift is
     ``None``. Drift is recorded for the dashboard only — it never triggers a rebalance
     (DECISIONS D31; monthly is the sole cadence).
+
+    ``account`` tags the snapshot (tracked-sleeves): the dashboard's per-account monitor loop
+    passes each sleeve's id so every account accrues its own NAV history; the default keeps the
+    engine-traded book on ``primary``.
     """
     acct = client.account()
     nav, cash, last_equity = acct.get("equity"), acct.get("cash"), acct.get("last_equity")
@@ -98,17 +106,18 @@ def monitor_once(
     drift: Optional[float] = l1_drift(weights, target_weights) if target_weights is not None else None
 
     if db_engine is not None:
-        _write_snapshot(db_engine, nav, cash, weights, pos_qty, drift, last_equity)
-    log.info("monitor pass", extra={"nav": nav, "n_positions": len(pos_qty), "drift": drift})
+        _write_snapshot(db_engine, nav, cash, weights, pos_qty, drift, last_equity, account)
+    log.info("monitor pass", extra={"nav": nav, "n_positions": len(pos_qty), "drift": drift,
+                                    "account": account})
     return MonitorResult(nav, cash, weights, pos_qty, drift)
 
 
 def _write_snapshot(db_engine, nav, cash, weights: pd.Series, positions: dict, drift,
-                    last_equity=None) -> None:
+                    last_equity=None, account: str = PRIMARY_ACCOUNT) -> None:
     from sqlalchemy import insert
     from engine.db import snapshots
     with db_engine.begin() as conn:
         conn.execute(insert(snapshots).values(
-            ts=datetime.now(timezone.utc), nav=nav, cash=cash, last_equity=last_equity,
-            weights={k: float(v) for k, v in weights.items()},
+            ts=datetime.now(timezone.utc), account=account, nav=nav, cash=cash,
+            last_equity=last_equity, weights={k: float(v) for k, v in weights.items()},
             positions=positions, drift=drift))

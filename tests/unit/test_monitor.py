@@ -69,6 +69,15 @@ def test_monitor_once_writes_snapshot():
     assert snaps[0]["positions"] == {"AAPL": 100.0, "MSFT": 50.0}
     assert snaps[0]["weights"]["AAPL"] == pytest.approx(0.5)
     assert snaps[0]["drift"] is None                     # no target supplied
+    assert snaps[0]["account"] == "primary"              # tracked-sleeves: default to the primary book
+
+
+def test_monitor_once_tags_the_account():
+    # A per-account monitor pass tags its snapshot with that account (tracked sleeves).
+    eng = _engine()
+    client = _FakeClient({"AAPL": (100, 50_000.0)})
+    monitor.monitor_once(client, eng, account="trend")
+    assert _snapshots(eng)[0]["account"] == "trend"
 
 
 def test_monitor_once_computes_drift_as_telemetry():

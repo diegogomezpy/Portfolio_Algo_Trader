@@ -84,6 +84,11 @@ snapshots = Table(
     metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("ts", DateTime, nullable=False, index=True),
+    # Which account this snapshot belongs to (tracked-sleeves, ADR-001 Phase B). The engine-traded
+    # book is "primary"; other accounts use their credstore short-id. server_default makes existing
+    # rows AND untagged writers (eod's monitor tick) fall to "primary" automatically — so no eod
+    # code change or restart is needed to keep the primary book correct.
+    Column("account", String, nullable=False, server_default="primary", index=True),
     Column("nav", Float),
     Column("cash", Float),
     Column("last_equity", Float),  # Alpaca prior-trading-day close equity → true intraday P&L basis
