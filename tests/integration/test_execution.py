@@ -511,3 +511,55 @@ def test_run_cycle_empty_targetbook_is_no_targets():
         client=_FakeClient(), broker=_FakeBroker(), db_engine=_engine(), settings=load_settings(),
         as_of=date(2026, 7, 1), force=True, strategy=_EmptyStrategy())
     assert res.status == "no_targets"
+
+
+def test_overlay_follows_the_strategy_spec_not_settings():
+    """A3b: the overlay mode comes from TargetBook.overlay. A strategy that declares NO overlay
+    runs none even with overlay=True and settings.covered_calls.overlay_mode='index'."""
+    from engine import strategy as S
+
+    class _NoOverlayStrategy:
+        name = "no_overlay"
+        def generate(self, ctx, as_of):
+            return S.TargetBook(
+                weights=pd.Series({"AAPL": 0.05}),
+                inputs=S.PlanInputs(prices={"AAPL": 100.0}, universe={"AAPL"},
+                                    sector_map=pd.Series({"AAPL": "Information Technology"})),
+                overlay=None)            # no overlay declared
+
+    settings = load_settings()
+    assert settings.covered_calls.overlay_mode == "index"     # settings WOULD say index
+    fired = []
+    res = run_eod.run_cycle(
+        client=_FakeClient(), broker=_FakeBroker(), db_engine=_engine(), settings=settings,
+        as_of=date(2026, 7, 1), force=True, overlay=True, strategy=_NoOverlayStrategy(),
+        close_index_fn=lambda *a, **k: fired.append("close") or [],
+        write_index_fn=lambda *a, **k: fired.append("write") or ([], [], {}))
+    assert res.status == "executed"
+    assert fired == []                    # spec None → no option legs, despite the flag + settings
+    assert res.calls_closed == 0 and res.calls_written == 0
+
+
+def test_overlay_index_spec_still_runs_the_spread_legs():
+    """The declared index spec drives the close/write index legs (behaviour-preserving path)."""
+    from engine import strategy as S
+
+    class _IndexStrategy:
+        name = "idx"
+        def generate(self, ctx, as_of):
+            return S.TargetBook(
+                weights=pd.Series({"AAPL": 0.05}),
+                inputs=S.PlanInputs(prices={"AAPL": 100.0}, universe={"AAPL"},
+                                    sector_map=pd.Series({"AAPL": "Information Technology"}),
+                                    panel=None),
+                overlay=S.OverlaySpec(mode="index", market="SPY"))
+
+    fired = []
+    res = run_eod.run_cycle(
+        client=_FakeClient(positions={"AAPL": (100, 10_000.0)}), broker=_FakeBroker(),
+        db_engine=_engine(), settings=load_settings(), as_of=date(2026, 7, 1), force=True,
+        overlay=True, strategy=_IndexStrategy(),
+        close_index_fn=lambda *a, **k: fired.append("close") or ["c"],
+        write_index_fn=lambda *a, **k: fired.append("write") or (["w"], [], {}))
+    assert res.status == "executed" and fired == ["close", "write"]
+    assert res.calls_closed == 1 and res.calls_written == 1

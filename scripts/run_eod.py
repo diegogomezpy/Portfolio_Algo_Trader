@@ -320,11 +320,12 @@ def _run_cycle_locked(
     [overlay: close the existing option leg] → plan + submit + track equity orders →
     [overlay: write the fresh option leg] → monitor snapshot.
 
-    ``overlay`` (Phase 4) turns on the option legs, dispatched by
-    :func:`covered_calls.overlay_mode`: **index** closes/writes the SPY beta-overwrite spread
-    (close = buy back the short leg FIRST, then sell the wing — order matters, Alpaca has no
-    naked tier); **per_name** is the classic covered-call close-all + rewrite (D31). All four
-    leg functions are injectable for testing the sequencing.
+    ``overlay`` (Phase 4) turns on the option legs; the **mode comes from the strategy's declared
+    ``TargetBook.overlay`` spec** (ADR-001 A3b), not from settings — a strategy with no spec runs no
+    overlay even with the flag on. **index** closes/writes the SPY beta-overwrite spread (close = buy
+    back the short leg FIRST, then sell the wing — order matters, Alpaca has no naked tier);
+    **per_name** is the classic covered-call close-all + rewrite (D31). All four leg functions are
+    injectable for testing the sequencing.
 
     ``express`` (the console's impatient mode) sends the equity legs as **market orders**
     through the single-pass path instead of the tiered chase; option closes still sweep at
@@ -378,13 +379,23 @@ def _run_cycle_locked(
     # chase, and the fresh writes — so every option order crosses to the touch until it fills.
     mkt_close = _market_close(client)
     opt_chase = None if express else _option_chase(client, mkt_close, settings)
-    index_mode = covered_calls.overlay_mode(settings) == "index"
-    beta_market = str(getattr(getattr(settings, "factors", None), "beta_market", "SPY"))
+    # Overlay routed off the strategy's declared spec (ADR-001 A3b): the STRATEGY owns the overlay
+    # decision (mode + market) via TargetBook.overlay, not the orchestrator reaching into settings.
+    # The `overlay` run flag still gates whether we act; a strategy that declares no overlay (spec
+    # None) runs none, even with the flag on. Behaviour-identical for low_beta_overwrite, whose spec
+    # is built from covered_calls.overlay_mode(settings) — the same source as before.
+    spec = book.overlay
+    do_overlay = overlay and spec is not None
+    if overlay and spec is None:
+        log.info("overlay requested but the strategy declares none; skipping option legs")
+    index_mode = do_overlay and spec.mode == "index"
+    beta_market = (str(spec.market) if spec is not None
+                   else str(getattr(getattr(settings, "factors", None), "beta_market", "SPY")))
 
     # Overlay (D31): close the existing option leg BEFORE equity trades. Index mode closes the
     # SPY spread (short leg first, then the wing); per-name closes every open short call.
     n_closed = 0
-    if overlay:
+    if do_overlay:
         if index_mode:
             closed = close_index_fn(client, broker, db_engine, as_of=as_of, market=beta_market,
                                     chase=opt_chase, alert=alert)
@@ -424,7 +435,7 @@ def _run_cycle_locked(
     # Overlay (D31): write fresh calls AFTER equity settles, on the shares actually held. The
     # writes chase to the bid so they actually fill, and the lifecycle row lands only on a fill.
     n_written, written, skipped = 0, [], []
-    if overlay:
+    if do_overlay:
         held = _equity_shares(client)
         # Index mode: one portfolio-level SPY call-spread overwrite sized to the book's market
         # beta — the low-beta book's single-name options are too illiquid to write. "per_name"
