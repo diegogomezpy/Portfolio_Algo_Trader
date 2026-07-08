@@ -1933,7 +1933,7 @@ function renderAccounts(rows){
   const form = `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line)">
     <div style="font:600 11px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Add account</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      ${f("acLabel","Label (e.g. Trend sleeve)")}${f("acSlug","slug (e.g. trend)")}
+      ${f("acLabel","Label (e.g. Trend sleeve)")}${f("acSlug","Short ID — lowercase, no spaces (e.g. trend)")}
       ${f("acKey","API key ID","password")}${f("acSecret","API secret","password")}
       ${f("acCapital","Capital $ (optional)")}${f("acLev","Leverage (optional, e.g. 2.0)")}
     </div>
@@ -1957,7 +1957,7 @@ async function addAccount(){
     leverage: parseFloat(($("acLev")||{}).value) || null,
   };
   if (!body.slug || !body.api_key || !body.api_secret){
-    if ($("acMsg")){ $("acMsg").textContent = "slug, key and secret are required"; $("acMsg").style.color = "var(--red)"; }
+    if ($("acMsg")){ $("acMsg").textContent = "Short ID, key and secret are required"; $("acMsg").style.color = "var(--red)"; }
     return;
   }
   const r = await postJSON("/api/accounts/add", tok, body);
