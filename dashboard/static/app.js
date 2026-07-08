@@ -1891,6 +1891,18 @@ async function postJSON(path, tok, body){
 
 function renderAccounts(rows){
   const host = $("x-accounts"); if (!host) return;
+  // Never rebuild while you're filling the Add-account form. The 1s tick AND the tab-return
+  // (visibilitychange) both re-run this — without the guard, switching to another browser tab to
+  // copy a key and coming back would wipe what's typed. Busy = an input here is focused, or any
+  // field has content. (A focused *button* — e.g. right after Add — is not busy, so the list still
+  // refreshes then.)
+  if (host._built){
+    const el = document.activeElement;
+    const focusedInput = el && el.tagName === "INPUT" && host.contains(el);
+    const dirty = [...host.querySelectorAll("input")].some(i => (i.value || "").trim() !== "");
+    if (focusedInput || dirty) return;
+  }
+  host._built = true;
   rows = Array.isArray(rows) ? rows : [];
   const acctRow = (a) => `<div style="display:grid;grid-template-columns:1.4fr .8fr .9fr .7fr auto;gap:10px;align-items:center;padding:9px 0;border-top:1px solid var(--line-soft)">
     <span><span style="font:600 12px var(--sans);color:var(--fg)">${esc(a.label||a.slug)}</span>
