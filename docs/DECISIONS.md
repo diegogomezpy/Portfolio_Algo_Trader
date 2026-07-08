@@ -994,3 +994,26 @@ which on top of ~0.8 GB of services overflows 2 GB.
 ~$98/mo vs ~$14 for e2-small; acceptable for a paper/research book, with headroom for the overlay and
 universe growth. deploy/DEPLOY.md's provision command now creates e2-standard-4 (resize is stop →
 `set-machine-type` → start, instance must be stopped).
+
+---
+
+## D37 — Multi-strategy platform: pluggable strategies, account-per-strategy, Secret-Manager creds
+
+**Decision (2026-07-08).** Evolve the single-strategy engine into a platform that runs *N*
+strategies on shared infrastructure. Three linked choices, specified in full in
+[adr/ADR-001-multi-strategy-platform.md](adr/ADR-001-multi-strategy-platform.md):
+
+1. **Strategy as a first-class plugin** — a `Strategy` protocol emitting a `TargetBook`, a registry,
+   and the current low-beta+overlay book refactored into the first plugin. The pipeline (reconcile →
+   risk → execute → monitor) and the backtest run *around* `strategy.generate()`, so backtest↔live
+   parity holds by construction.
+2. **Account-per-strategy** — each strategy runs in its own Alpaca account with its own key pair.
+   Attribution is native (account = sleeve; no virtual ledger). Accepted trade-offs: no
+   cross-margining, N× operational surface, capital moves are real transfers — taken for isolation
+   and simplicity of attribution.
+3. **Per-strategy credentials in GCP Secret Manager** — one JSON secret per strategy, swap = new
+   version, dashboard-managed behind the **same `SEPI_EXEC_TOKEN`** as the Execute console, write-only,
+   never in Postgres/backups. The engine reads at run time; the assistant is never in the value path.
+
+**Build order (ADR):** A keystone (Strategy interface + registry + current strategy as first plugin)
+→ B per-account plumbing → C credentials → D platform dashboard. Status 2026-07-08: **A in progress.**
