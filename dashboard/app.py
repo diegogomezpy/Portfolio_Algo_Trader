@@ -31,7 +31,7 @@ import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, Header
+from fastapi import Body, FastAPI, Header
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -915,6 +915,71 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
         from engine import overrides as _ov
         _ov.set(db_engine, "express_finish", 1.0)
         return {"armed": True}
+
+    # ------------------------------------------------------------------ #
+    # Accounts — dashboard-managed, encrypted-at-rest broker credentials (Phase C).
+    # Add/remove are token-gated (same SEPI_EXEC_TOKEN as the console); the server
+    # never logs or echoes the key/secret — only a masked fingerprint surfaces.
+    # ------------------------------------------------------------------ #
+    @app.get("/api/accounts")
+    def accounts_list() -> list:
+        """Registered accounts as non-secret metadata (slug, label, masked fingerprint, …)."""
+        from engine import credstore
+        try:
+            return credstore.list_accounts(db_engine)
+        except Exception as exc:  # noqa: BLE001 — a store hiccup shouldn't 500 the panel
+            return [{"error": str(exc)}]
+
+    @app.post("/api/accounts/add")
+    def accounts_add(body: dict = Body(...),  # noqa: B008
+                     x_exec_token: str | None = Header(default=None)) -> dict:
+        """Store a new account's credentials (encrypted). Body: slug, api_key, api_secret,
+        [label, base_url, capital, leverage]. Token-gated; the secret is never logged/echoed."""
+        err = _exec_gate(x_exec_token)
+        if err:
+            return err
+        from engine import credstore
+        try:
+            info = credstore.add_account(
+                db_engine, slug=str(body.get("slug", "")),
+                api_key=str(body.get("api_key", "")), api_secret=str(body.get("api_secret", "")),
+                label=body.get("label"),
+                base_url=str(body.get("base_url") or "https://paper-api.alpaca.markets"),
+                capital=body.get("capital"), leverage=body.get("leverage"))
+        except ValueError as exc:
+            return {"error": str(exc)}
+        return {"added": True, **info}
+
+    @app.post("/api/accounts/remove")
+    def accounts_remove(body: dict = Body(...),  # noqa: B008
+                        x_exec_token: str | None = Header(default=None)) -> dict:
+        err = _exec_gate(x_exec_token)
+        if err:
+            return err
+        from engine import credstore
+        return {"removed": credstore.remove_account(db_engine, str(body.get("slug", "")))}
+
+    @app.get("/api/accounts/{slug}/state")
+    def accounts_state(slug: str) -> dict:
+        """Read-only snapshot of one account (NAV / #positions / #open orders) by building a
+        throwaway client from its stored creds. Never returns credentials."""
+        if client is None:
+            return {"error": "dashboard is Postgres-only (no broker client)"}
+        from engine import credstore
+        from engine.alpaca_client import AlpacaClient
+        try:
+            creds = credstore.get_credentials(db_engine, slug)
+        except KeyError:
+            return {"error": f"unknown account {slug!r}"}
+        try:
+            c = AlpacaClient(api_key=creds["api_key"], secret_key=creds["api_secret"])
+            acct = c.account()
+            return {"slug": slug, "ok": True, "equity": acct.get("equity"),
+                    "cash": acct.get("cash"), "buying_power": acct.get("buying_power"),
+                    "positions": len(c.all_positions()),
+                    "open_orders": len(c.get_orders(status="open", limit=100))}
+        except Exception as exc:  # noqa: BLE001 — bad/expired keys → surface unhealthy, don't 500
+            return {"slug": slug, "ok": False, "error": str(exc)}
 
     @app.get("/api/manual_actions")
     def manual_actions_history(limit: int = 20) -> list:

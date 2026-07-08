@@ -30,7 +30,10 @@ from engine.logger import get_logger
 
 log = get_logger(__name__)
 
-_DEFAULT_KEK_FILE = ".cred_kek"          # app-dir file (git-ignored); auto-created 0600 on first use
+# App-dir file (git-ignored), anchored to the repo root off this module — NOT cwd-relative, so the
+# dashboard and eod processes resolve the SAME key regardless of their working directory. Auto-
+# created 0600 on first use.
+_DEFAULT_KEK_FILE = str(Path(__file__).resolve().parent.parent / ".cred_kek")
 
 
 # ---------------------------------------------------------------------------- #

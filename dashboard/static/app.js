@@ -1875,7 +1875,90 @@ async function loadExecute(){
   pollExec();                                  // the live run panel lives on this tab now
   renderManualActions(await get("/api/manual_actions"), "x-history");
   renderConfigPanel(await get("/api/config"));
+  renderAccounts(await get("/api/accounts"));
   schedulePlan(0);
+}
+
+// ---- Accounts: dashboard-managed encrypted broker credentials (Phase C) ----
+async function postJSON(path, tok, body){
+  try {
+    const r = await fetch(path, { method: "POST",
+      headers: Object.assign({ "Content-Type": "application/json" }, tok ? { "X-Exec-Token": tok } : {}),
+      body: JSON.stringify(body || {}) });
+    return r.ok ? await r.json() : null;
+  } catch { return null; }
+}
+
+function renderAccounts(rows){
+  const host = $("x-accounts"); if (!host) return;
+  rows = Array.isArray(rows) ? rows : [];
+  const acctRow = (a) => `<div style="display:grid;grid-template-columns:1.4fr .8fr .9fr .7fr auto;gap:10px;align-items:center;padding:9px 0;border-top:1px solid var(--line-soft)">
+    <span><span style="font:600 12px var(--sans);color:var(--fg)">${esc(a.label||a.slug)}</span>
+      <span style="font:400 10px var(--mono);color:var(--muted)"> · ${esc(a.slug)}</span></span>
+    <span class="pmono" style="font-size:11.5px;color:var(--fg-dim)" title="masked API key">${esc(a.key_fingerprint||"–")}</span>
+    <span class="pmono" style="font-size:11px;color:var(--muted)">${(a.base_url||"").includes("paper")?"paper":"live"}${a.capital?` · ${usd(a.capital)}`:""}${a.leverage?` · ${(+a.leverage).toFixed(2)}×`:""}</span>
+    <span id="acs-${esc(a.slug)}" style="font:500 11px var(--mono);color:var(--muted)">—</span>
+    <span style="display:inline-flex;gap:6px">
+      <button class="exm-chip" onclick="viewAccount('${esc(a.slug)}')" data-tip="check this account's live connection (read-only)">check</button>
+      <button class="exm-chip" onclick="removeAccount('${esc(a.slug)}')" data-tip="forget this account (deletes its stored credentials)">remove</button></span></div>`;
+  const list = rows.length
+    ? rows.map(acctRow).join("")
+    : `<div style="padding:12px 0;color:var(--muted);font-size:12px">No accounts added yet — add one below to trade or view it from here.</div>`;
+  const f = (id, ph, type) => `<input id="${id}" placeholder="${ph}" ${type?`type="${type}"`:""} autocomplete="off"
+    style="background:var(--panel-2);border:1px solid var(--line);border-radius:7px;padding:7px 9px;font:400 12px var(--mono);color:var(--fg);min-width:0;width:100%">`;
+  const form = `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line)">
+    <div style="font:600 11px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Add account</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      ${f("acLabel","Label (e.g. Trend sleeve)")}${f("acSlug","slug (e.g. trend)")}
+      ${f("acKey","API key ID","password")}${f("acSecret","API secret","password")}
+      ${f("acCapital","Capital $ (optional)")}${f("acLev","Leverage (optional, e.g. 2.0)")}
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:9px">
+      <button class="exm-btn" onclick="addAccount()" style="padding:6px 14px">Add account</button>
+      <span style="font:400 10.5px var(--mono);color:var(--muted)">paper endpoint · keys are encrypted at rest, never shown again</span>
+      <span id="acMsg" style="font:500 11.5px var(--mono);margin-left:auto"></span>
+    </div></div>`;
+  host.innerHTML = `<div class="ovhead"><span class="ovhk">Accounts</span>
+      <span class="ovhs">encrypted broker credentials · add &amp; manage from here
+        <span class="srcinfo" data-tip="Keys you enter are Fernet-encrypted into the database and never displayed again — only a masked fingerprint. The dashboard never logs them. Gated by your execution token.">ⓘ</span></span></div>
+    <div style="padding:6px 16px 14px">${list}${form}</div>`;
+}
+
+async function addAccount(){
+  const tok = execToken(); if (!tok) return;
+  const body = {
+    label: ($("acLabel")||{}).value || "", slug: ($("acSlug")||{}).value || "",
+    api_key: ($("acKey")||{}).value || "", api_secret: ($("acSecret")||{}).value || "",
+    capital: parseFloat(($("acCapital")||{}).value) || null,
+    leverage: parseFloat(($("acLev")||{}).value) || null,
+  };
+  if (!body.slug || !body.api_key || !body.api_secret){
+    if ($("acMsg")){ $("acMsg").textContent = "slug, key and secret are required"; $("acMsg").style.color = "var(--red)"; }
+    return;
+  }
+  const r = await postJSON("/api/accounts/add", tok, body);
+  const ok = r && r.added;
+  if ($("acMsg")){ $("acMsg").textContent = ok ? `added ${r.slug} (${r.key_fingerprint})` : (r && r.error || "add failed"); $("acMsg").style.color = ok ? "var(--green)" : "var(--red)"; }
+  // Clear the secret material from the DOM immediately on success.
+  if (ok){ ["acKey","acSecret","acCapital","acLev","acLabel","acSlug"].forEach(id => { if ($(id)) $(id).value = ""; }); }
+  toast(ok ? `account ${r.slug} added` : (r && r.error || "add failed"), !ok);
+  renderAccounts(await get("/api/accounts"));
+}
+
+async function viewAccount(slug){
+  const cell = $("acs-"+slug); if (cell){ cell.textContent = "checking…"; cell.style.color = "var(--muted)"; }
+  const s = await get(`/api/accounts/${encodeURIComponent(slug)}/state`);
+  if (!cell) return;
+  if (s && s.ok){ cell.textContent = `${usd(s.equity)} · ${s.positions}p · ${s.open_orders}o`; cell.style.color = "var(--green)"; }
+  else { cell.textContent = (s && s.error) ? "error" : "unreachable"; cell.style.color = "var(--red)"; }
+}
+
+async function removeAccount(slug){
+  if (!confirm(`Forget account "${slug}"? This deletes its stored credentials.`)) return;
+  const tok = execToken(); if (!tok) return;
+  await postJSON("/api/accounts/remove", tok, { slug });
+  toast(`account ${slug} removed`);
+  renderAccounts(await get("/api/accounts"));
 }
 
 function setExecAction(a){ EXEC.tab = a; EXEC.plan = null; EXEC.planQS = ""; renderTicketPanel(); schedulePlan(0); }

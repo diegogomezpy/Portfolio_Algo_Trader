@@ -474,3 +474,58 @@ def test_exec_express_finish_arms_flag_and_status_reports_pending(monkeypatch):
 
     _ex.clear_express_finish(eng)                             # a stage consumed it
     assert status()["express_finish_pending"] is False
+
+
+# ====================================================================== #
+# Accounts — dashboard-managed encrypted credential store (ADR-001 Phase C)
+# ====================================================================== #
+def test_accounts_add_is_token_gated_then_stores_masked(monkeypatch):
+    from cryptography.fernet import Fernet
+    monkeypatch.setenv("SEPI_CRED_KEK", Fernet.generate_key().decode())
+    eng = create_engine("sqlite://")
+    db.create_all(eng)
+    app = create_app(eng, client=_MarketClient([]), live=True)
+    add = _route(app, "/api/accounts/add")
+    lst = _route(app, "/api/accounts")
+
+    monkeypatch.delenv("SEPI_EXEC_TOKEN", raising=False)          # console disabled
+    assert add(body={"slug": "trend", "api_key": "PKX1", "api_secret": "s"},
+               x_exec_token="whatever").get("disabled") is True
+
+    monkeypatch.setenv("SEPI_EXEC_TOKEN", "sekrit")
+    assert add(body={"slug": "trend", "api_key": "PKX1", "api_secret": "s"},
+               x_exec_token="nope").get("unauthorized") is True   # wrong token
+
+    out = add(body={"slug": "trend", "api_key": "PKLIVE9999ZZZZ", "api_secret": "s3cr3t",
+                    "label": "Trend", "capital": 250000, "leverage": 1.0}, x_exec_token="sekrit")
+    assert out["added"] is True and out["key_fingerprint"] == "PKL…ZZZZ"
+    assert "api_secret" not in out and "api_key" not in out       # no secret echoed
+
+    accts = lst()
+    assert len(accts) == 1 and accts[0]["slug"] == "trend"
+    assert accts[0]["label"] == "Trend" and accts[0]["capital"] == 250000
+    assert "api_secret" not in accts[0] and "api_key" not in accts[0]
+
+
+def test_accounts_add_validates_and_remove(monkeypatch):
+    from cryptography.fernet import Fernet
+    monkeypatch.setenv("SEPI_CRED_KEK", Fernet.generate_key().decode())
+    monkeypatch.setenv("SEPI_EXEC_TOKEN", "sekrit")
+    eng = create_engine("sqlite://")
+    db.create_all(eng)
+    app = create_app(eng, client=_MarketClient([]), live=True)
+    add = _route(app, "/api/accounts/add")
+    rm = _route(app, "/api/accounts/remove")
+
+    assert "error" in add(body={"slug": "", "api_key": "k", "api_secret": "s"}, x_exec_token="sekrit")
+    add(body={"slug": "a", "api_key": "PKAAAA1111", "api_secret": "s"}, x_exec_token="sekrit")
+    assert rm(body={"slug": "a"}, x_exec_token="sekrit") == {"removed": True}
+    assert _route(app, "/api/accounts")() == []
+
+
+def test_accounts_routes_registered():
+    eng = create_engine("sqlite://")
+    db.create_all(eng)
+    paths = {r.path for r in create_app(eng, live=False).routes}
+    assert {"/api/accounts", "/api/accounts/add", "/api/accounts/remove",
+            "/api/accounts/{slug}/state"} <= paths
