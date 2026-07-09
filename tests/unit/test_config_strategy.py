@@ -40,13 +40,13 @@ def _loader(panel, universe, fpit=None):
     return lambda ctx, as_of, needs: (panel, fpit, universe)
 
 
-def test_construct_weights_topn_caps_and_leverage():
+def test_construct_weights_topn_caps_and_normalizes():
     comp = pd.Series({"A": 3.0, "B": 2.0, "C": 1.0, "D": 0.5, "E": -1.0})
-    spec = CS.StrategySpec(name="x", signals={"low_vol": 1.0}, max_names=3, max_weight=0.5, leverage=2.0)
+    spec = CS.StrategySpec(name="x", signals={"low_vol": 1.0}, max_names=3, max_weight=0.5)
     w = CS.construct_weights(comp, spec)
     assert set(w.index) == {"A", "B", "C"}                   # top 3 by score, E (negative) excluded
-    assert w.max() <= 0.5 * 2.0 + 1e-9                       # cap × leverage
-    assert w.sum() == pytest.approx(2.0)                     # gross scaled to leverage
+    assert w.max() <= 0.5 + 1e-9                             # per-name cap (fraction of base)
+    assert w.sum() == pytest.approx(1.0)                     # fractions; leverage applied at sizing
     assert w["A"] > w["C"]                                   # score-weighted
 
 

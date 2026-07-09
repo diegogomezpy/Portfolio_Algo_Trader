@@ -45,7 +45,11 @@ class StrategySpec:
 
 def construct_weights(composite: pd.Series, spec: StrategySpec) -> pd.Series:
     """Top-``max_names`` by composite score, weighted ∝ (positive) score, each capped at
-    ``max_weight``, then scaled so gross = ``leverage``. Long-only; empty if nothing qualifies."""
+    ``max_weight``, normalized to sum 1.0. Long-only; empty if nothing qualifies.
+
+    Weights are **fractions of the deployable base** (like ``optimize.optimize_portfolio``); the
+    runner applies ``spec.leverage`` at sizing (``nav = equity × leverage``), matching the live
+    convention — so ``leverage`` is NOT baked into the weights here."""
     s = composite.dropna()
     s = s[s > spec.min_score]
     if s.empty:
@@ -56,7 +60,7 @@ def construct_weights(composite: pd.Series, spec: StrategySpec) -> pd.Series:
     w = (top / top.sum()).clip(upper=spec.max_weight)
     if w.sum() <= 0:
         return pd.Series(dtype=float)
-    return w / w.sum() * float(spec.leverage)    # scale gross exposure to the target leverage
+    return w / w.sum()                            # fractions of the base; leverage applied at sizing
 
 
 def _default_load(ctx: _strategy.StrategyContext, as_of: date, needs: set[str]):
