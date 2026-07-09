@@ -952,6 +952,47 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
         return {"armed": True}
 
     # ------------------------------------------------------------------ #
+    # Strategy builder — author a config strategy (signals + weights + caps) and PREVIEW the book
+    # it would trade on an account (dry-run, no orders). The "select traits + how to trade" UI on
+    # the on-the-fly engine (engine.config_strategy + engine.account_runner). Preview is read-only;
+    # actually trading a spec stays on the CLI / execute-console spawn path for now.
+    # ------------------------------------------------------------------ #
+    @app.get("/api/signals")
+    def signals_list() -> list:
+        """The signal palette for the builder: name + data needs."""
+        from engine import signals as _sig
+        _sig.register_builtins()
+        return [{"name": n, "needs": list(getattr(s, "needs", ()))}
+                for n, s in sorted(_sig.all_signals().items())]
+
+    @app.post("/api/strategy/preview")
+    async def strategy_preview(body: dict = Body(...),  # noqa: B008
+                               x_exec_token: str | None = Header(default=None)) -> dict:
+        """Dry-run a config spec on an account → the sized order plan it WOULD trade. Token-gated
+        (it reads the account's live positions/equity via its creds); places NO orders."""
+        err = _exec_gate(x_exec_token)
+        if err:
+            return err
+        from engine import account_runner, config_strategy
+        try:
+            sigs = {str(k): float(v) for k, v in (body.get("signals") or {}).items()}
+            if not sigs:
+                return {"error": "pick at least one signal"}
+            spec = config_strategy.StrategySpec(
+                name=str(body.get("name") or f"cfg-{body.get('account')}"), signals=sigs,
+                construction=str(body.get("construction") or "optimizer"),
+                max_names=int(body.get("max_names") or 20),
+                max_weight=float(body.get("max_weight") or 0.05),
+                leverage=float(body.get("leverage") or 1.0),
+                min_score=float(body.get("min_score") or 0.0))
+            strat = config_strategy.ConfigStrategy(spec)
+            return await asyncio.to_thread(
+                account_runner.run_strategy_on_account, str(body.get("account")), strat,
+                db_engine=db_engine, settings=settings, dry_run=True)
+        except Exception as exc:  # noqa: BLE001 — surface the reason to the builder
+            return {"error": str(exc)}
+
+    # ------------------------------------------------------------------ #
     # Accounts — dashboard-managed, encrypted-at-rest broker credentials (Phase C).
     # Add/remove are token-gated (same SEPI_EXEC_TOKEN as the console); the server
     # never logs or echoes the key/secret — only a masked fingerprint surfaces.

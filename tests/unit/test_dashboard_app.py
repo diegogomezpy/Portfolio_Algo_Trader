@@ -560,3 +560,51 @@ def test_monitor_secondary_accounts_snapshots_each_enabled_account(monkeypatch):
     accts = {r[0] for r in eng.connect().execute(select(db.snapshots.c.account)).all()}
     assert "trend" in accts and "bad" not in accts          # good written, bad skipped
     assert data.api_state(eng, account="trend")["nav"] == 250_000.0
+
+
+def test_signals_endpoint_lists_the_builtin_palette():
+    eng = create_engine("sqlite://"); db.create_all(eng)
+    app = create_app(eng, live=False)
+    out = _route(app, "/api/signals")()
+    names = {s["name"] for s in out}
+    assert names == {"quality", "value", "low_beta", "low_vol"}
+    assert all("needs" in s for s in out)
+
+
+def test_strategy_preview_token_gated_and_wires_spec(monkeypatch):
+    import asyncio
+    from engine import account_runner
+    eng = create_engine("sqlite://"); db.create_all(eng)
+    _reset_manual(monkeypatch)
+    app = create_app(eng, client=_MarketClient([]), live=True)
+    preview = _route(app, "/api/strategy/preview")
+
+    monkeypatch.delenv("SEPI_EXEC_TOKEN", raising=False)                 # unset → disabled
+    out = asyncio.run(preview(body={"account": "trend", "signals": {"value": 1.0}}, x_exec_token="x"))
+    assert out.get("disabled") is True
+
+    monkeypatch.setenv("SEPI_EXEC_TOKEN", "sekrit")
+    seen = {}
+    def fake_run(account, strat, *, db_engine, settings, dry_run):
+        seen["account"] = account
+        seen["dry_run"] = dry_run
+        seen["signals"] = dict(strat.spec.signals)
+        seen["construction"] = strat.spec.construction
+        return {"status": "dry_run", "account": account, "n_orders": 2, "orders": []}
+    monkeypatch.setattr(account_runner, "run_strategy_on_account", fake_run)
+
+    out = asyncio.run(preview(body={"account": "trend", "signals": {"quality": 0.5, "value": 0.5},
+                                    "construction": "optimizer", "leverage": 1.0}, x_exec_token="sekrit"))
+    assert out["status"] == "dry_run" and seen["account"] == "trend" and seen["dry_run"] is True
+    assert seen["signals"] == {"quality": 0.5, "value": 0.5} and seen["construction"] == "optimizer"
+
+
+def test_strategy_preview_requires_a_signal(monkeypatch):
+    import asyncio
+    eng = create_engine("sqlite://"); db.create_all(eng)
+    _reset_manual(monkeypatch)
+    monkeypatch.setenv("SEPI_EXEC_TOKEN", "sekrit")
+    app = create_app(eng, client=_MarketClient([]), live=True)
+    out = asyncio.run(_route(app, "/api/strategy/preview")(
+        body={"account": "trend", "signals": {}}, x_exec_token="sekrit"))
+    assert "error" in out and "signal" in out["error"]

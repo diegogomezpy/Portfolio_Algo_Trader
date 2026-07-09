@@ -1914,11 +1914,97 @@ async function loadExecute(){
 async function loadAccounts(){
   const rows = await get("/api/accounts");
   renderAccounts(rows);
+  renderStrategyBuilder(Array.isArray(rows) ? rows : []);
   // Auto-check each account once (so you SEE its status without clicking), cached in _ACCT_STATE
   // so the governed re-render doesn't re-hit Alpaca every tick.
   (Array.isArray(rows) ? rows : []).forEach(a => {
     if (a && a.slug && !_ACCT_STATE[a.slug]) viewAccount(a.slug);
   });
+}
+
+// ---- Strategy builder: compose a config strategy (signals + weights + caps) and PREVIEW the
+// book it would trade on an account (dry-run, no orders). The "on-the-fly strategy" UI. ----
+let _SIGNAL_PALETTE = null;
+async function renderStrategyBuilder(accts){
+  const host = $("x-builder"); if (!host) return;
+  if (host._built){                                   // don't wipe a spec you're editing (1s tick)
+    const el = document.activeElement;
+    if (el && (el.tagName === "INPUT" || el.tagName === "SELECT") && host.contains(el)) return;
+  }
+  if (_SIGNAL_PALETTE === null) _SIGNAL_PALETTE = (await get("/api/signals")) || [];
+  const sel = accts.filter(a => a && a.slug).map(a =>
+    `<option value="${esc(a.slug)}">${esc(a.label || a.slug)}</option>`).join("");
+  if (!sel){
+    host.innerHTML = `<div class="ovhead"><span class="ovhk">Strategy builder</span></div>
+      <div style="padding:14px 16px;color:var(--muted);font-size:12px">Add an account above first — the builder previews a strategy against one of your accounts.</div>`;
+    host._built = true; return;
+  }
+  host._built = true;
+  const sigRow = (s) => `<label style="display:flex;align-items:center;gap:8px;padding:5px 0;font:500 12px var(--sans);color:var(--fg-dim)">
+    <input type="checkbox" class="sb-sig" value="${esc(s.name)}">
+    <span style="min-width:80px">${esc(s.name)}</span>
+    <span style="font:400 10px var(--mono);color:var(--muted);min-width:88px">${(s.needs||[]).join("+")||"—"}</span>
+    <input class="sb-w" data-sig="${esc(s.name)}" type="number" step="0.05" value="0.5"
+      style="width:66px;background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:4px 6px;font:400 12px var(--mono);color:var(--fg)"></label>`;
+  const num = (id, val, step) => `<input id="${id}" type="number" step="${step}" value="${val}"
+    style="width:80px;background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:5px 7px;font:400 12px var(--mono);color:var(--fg)">`;
+  const lbl = (t) => `<span style="font:600 10px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">${t}</span>`;
+  host.innerHTML = `<div class="ovhead"><span class="ovhk">Strategy builder</span>
+      <span class="ovhs">compose a config strategy · preview the book it would trade (no orders)
+        <span class="srcinfo" data-tip="Pick signals + weights and constraints; Preview runs the strategy against the chosen account and shows the sized order plan WITHOUT trading. Trading a spec is still CLI (run_config_strategy.py without --dry-run).">ⓘ</span></span></div>
+    <div style="padding:10px 16px 14px">
+      <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end">
+        <div style="display:flex;flex-direction:column;gap:4px">${lbl("Account")}
+          <select id="sb-acct" style="background:var(--panel-2);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:5px 8px;font:500 12px var(--sans)">${sel}</select></div>
+        <div style="display:flex;flex-direction:column;gap:4px">${lbl("Construction")}
+          <select id="sb-constr" style="background:var(--panel-2);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:5px 8px;font:500 12px var(--sans)">
+            <option value="optimizer">optimizer (cap-respecting)</option><option value="topn">top-N (simple)</option></select></div>
+        <div style="display:flex;flex-direction:column;gap:4px">${lbl("Leverage")}${num("sb-lev", "1.0", "0.1")}</div>
+        <div style="display:flex;flex-direction:column;gap:4px">${lbl("Max names")}${num("sb-maxn", "20", "1")}</div>
+        <div style="display:flex;flex-direction:column;gap:4px">${lbl("Max weight")}${num("sb-maxw", "0.05", "0.01")}</div>
+      </div>
+      <div style="margin-top:12px">${lbl("Signals (check + weight)")}
+        <div style="margin-top:4px">${_SIGNAL_PALETTE.map(sigRow).join("")}</div></div>
+      <div style="display:flex;align-items:center;gap:12px;margin-top:10px">
+        <button class="exm-btn" onclick="previewStrategy()" style="padding:6px 14px">Preview</button>
+        <span id="sb-msg" style="font:500 11.5px var(--mono);color:var(--muted)"></span></div>
+      <div id="sb-result" style="margin-top:12px"></div>
+    </div>`;
+}
+
+async function previewStrategy(){
+  const tok = execToken(); if (!tok) return;
+  const signals = {};
+  document.querySelectorAll(".sb-sig:checked").forEach(cb => {
+    const w = document.querySelector(`.sb-w[data-sig="${cb.value}"]`);
+    signals[cb.value] = parseFloat((w && w.value) || "0") || 0;
+  });
+  if (!Object.keys(signals).length){ $("sb-msg").textContent = "pick at least one signal"; $("sb-msg").style.color = "var(--red)"; return; }
+  const body = { account: ($("sb-acct")||{}).value, signals,
+    construction: ($("sb-constr")||{}).value, leverage: parseFloat(($("sb-lev")||{}).value) || 1.0,
+    max_names: parseInt(($("sb-maxn")||{}).value) || 20, max_weight: parseFloat(($("sb-maxw")||{}).value) || 0.05 };
+  $("sb-msg").textContent = "previewing…"; $("sb-msg").style.color = "var(--muted)";
+  const r = await postJSON("/api/strategy/preview", tok, body);
+  const res = $("sb-result");
+  if (!r || r.error){ $("sb-msg").textContent = (r && r.error) || "preview failed"; $("sb-msg").style.color = "var(--red)"; res.innerHTML = ""; return; }
+  if (r.status === "blocked_risk"){ $("sb-msg").textContent = "risk gate would block"; $("sb-msg").style.color = "var(--amber)";
+    res.innerHTML = `<div class="exm-err" style="color:var(--amber)">${esc(r.reason||"blocked")}</div>`; return; }
+  if (r.status !== "dry_run"){ $("sb-msg").textContent = r.status || "no plan"; $("sb-msg").style.color = "var(--muted)"; res.innerHTML = ""; return; }
+  const orders = r.orders || [];
+  const gross = orders.reduce((a, o) => a + (o.notional || 0), 0);
+  $("sb-msg").innerHTML = `<span style="color:var(--green)">would trade ${orders.length} names · ${usd(gross)} gross · ${(+r.leverage).toFixed(2)}× on ${usd(r.equity)}</span>`;
+  const rows = orders.map(o => `<tr>
+    <td style="padding:3px 10px 3px 0;font:600 11.5px var(--mono)">${esc(o.symbol)}</td>
+    <td style="padding:3px 10px;font:500 10px 'Space Grotesk';text-transform:uppercase;color:${o.side==='buy'?'var(--green)':'var(--red)'}">${esc(o.side)}</td>
+    <td style="padding:3px 10px;text-align:right;font:400 11.5px var(--mono);color:var(--fg-dim)">${fmt(o.qty)}</td>
+    <td style="padding:3px 0 3px 10px;text-align:right;font:400 11.5px var(--mono);color:var(--fg-dim)">${usd(o.notional)}</td></tr>`).join("");
+  res.innerHTML = `<div style="max-height:340px;overflow:auto"><table style="width:100%;border-collapse:collapse">
+    <thead><tr style="border-bottom:1px solid var(--line)">
+      <th style="text-align:left;padding:0 10px 5px 0;font:600 9.5px 'Space Grotesk';letter-spacing:.06em;color:var(--muted)">SYMBOL</th>
+      <th style="text-align:left;padding:0 10px 5px;font:600 9.5px 'Space Grotesk';letter-spacing:.06em;color:var(--muted)">SIDE</th>
+      <th style="text-align:right;padding:0 10px 5px;font:600 9.5px 'Space Grotesk';letter-spacing:.06em;color:var(--muted)">QTY</th>
+      <th style="text-align:right;padding:0 0 5px 10px;font:600 9.5px 'Space Grotesk';letter-spacing:.06em;color:var(--muted)">NOTIONAL</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
 }
 async function postJSON(path, tok, body){
   try {
