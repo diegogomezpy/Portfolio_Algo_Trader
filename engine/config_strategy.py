@@ -26,6 +26,9 @@ import pandas as pd
 
 from engine import signals as _signals
 from engine import strategy as _strategy
+from engine.logger import get_logger
+
+log = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -35,6 +38,7 @@ class StrategySpec:
     is the optional derivatives overlay (an :class:`~engine.strategy.OverlaySpec`)."""
     name: str
     signals: Mapping[str, float]
+    construction: str = "topn"                   # "topn" (self-contained) | "optimizer" (cap-respecting)
     max_names: int = 20
     max_weight: float = 0.05
     leverage: float = 1.0
@@ -96,6 +100,26 @@ class ConfigStrategy:
         self.name = spec.name
         self._load = load_data or _default_load
 
+    def _construct(self, composite: pd.Series, ctx: _strategy.StrategyContext) -> pd.Series:
+        """Turn composite scores into weights. ``optimizer`` uses the live constrained optimizer
+        (respects the SAME sector/name/min-position caps the risk gate enforces → tradeable books);
+        ``topn`` is the self-contained score-weighted top-N. Optimizer degrades to topn if the full
+        settings.portfolio/optimizer config or sector map is unavailable."""
+        if self.spec.construction != "optimizer":
+            return construct_weights(composite, self.spec)
+        try:
+            from engine import optimize, sectors
+            try:
+                smap = sectors.load_sector_map()["sector"]
+            except Exception:  # noqa: BLE001 — no sector map → optimizer runs without the sector cap
+                smap = pd.Series(dtype=object)
+            res = optimize.optimize_portfolio(composite, pd.DataFrame(), smap, settings=ctx.settings)
+            return res.weights
+        except Exception as exc:  # noqa: BLE001 — missing optimizer config → fall back to top-N
+            log.warning("optimizer construction unavailable; using top-N",
+                        extra={"strategy": self.name, "error": str(exc)})
+            return construct_weights(composite, self.spec)
+
     def _needs(self) -> set[str]:
         out: set[str] = set()
         _signals.register_builtins()
@@ -110,7 +134,7 @@ class ConfigStrategy:
                                       price_panel=panel, fundamentals_pit=fpit)
         scores = {name: _signals.get(name).compute(sctx, universe) for name in self.spec.signals}
         composite = _signals.compose(scores, self.spec.signals)
-        weights = construct_weights(composite, self.spec)
+        weights = self._construct(composite, ctx)
         prices = {}
         if panel is not None and len(panel):
             last = panel.iloc[-1]

@@ -106,3 +106,30 @@ def test_fundamentals_signal_triggers_fundamental_load():
     CS.ConfigStrategy(spec, load_data=loader).generate(S.StrategyContext(settings=_settings()),
                                                        date(2026, 1, 8))
     assert seen["needs"] == {"fundamentals"}                 # only fundamental signals selected
+
+
+def test_optimizer_construction_dispatches_to_optimize_portfolio(monkeypatch):
+    # construction='optimizer' routes to the live constrained optimizer (cap-respecting → tradeable);
+    # 'topn' stays self-contained. Here we just assert the dispatch.
+    from engine import optimize
+    seen = {}
+    def fake_opt(scores, sigma, smap, *, settings, **kw):
+        seen["called"] = True
+        return SimpleNamespace(weights=pd.Series({"AAA": 0.05, "BBB": 0.05}))
+    monkeypatch.setattr(optimize, "optimize_portfolio", fake_opt)
+    syms = ["AAA", "BBB", "CCC"]
+    spec = CS.StrategySpec(name="opt", signals={"low_vol": 1.0}, construction="optimizer")
+    strat = CS.ConfigStrategy(spec, load_data=_loader(_panel(syms), syms))
+    book = strat.generate(S.StrategyContext(settings=_settings()), date(2026, 1, 8))
+    assert seen.get("called") is True
+    assert set(book.weights.index) == {"AAA", "BBB"}
+
+
+def test_optimizer_construction_falls_back_to_topn_without_config(monkeypatch):
+    # _settings() has no portfolio/optimizer sections → optimizer errors → graceful top-N fallback.
+    syms = ["AAA", "BBB", "CCC"]
+    spec = CS.StrategySpec(name="opt", signals={"low_vol": 1.0}, construction="optimizer",
+                           max_names=3, max_weight=0.5)
+    strat = CS.ConfigStrategy(spec, load_data=_loader(_panel(syms), syms))
+    book = strat.generate(S.StrategyContext(settings=_settings()), date(2026, 1, 8))
+    assert not book.is_empty and (book.weights <= 0.5 + 1e-9).all()   # fell back to capped top-N

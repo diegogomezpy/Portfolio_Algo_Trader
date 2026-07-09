@@ -61,6 +61,8 @@ def main() -> None:
     ap.add_argument("--max-weight", type=float, default=0.05)
     ap.add_argument("--leverage", type=float, default=1.0)
     ap.add_argument("--min-score", type=float, default=0.0)
+    ap.add_argument("--construction", choices=("optimizer", "topn"), default="optimizer",
+                    help="optimizer = respects sector/name caps (tradeable); topn = simple score-weighted")
     ap.add_argument("--mode", choices=("normal", "express"), default="normal")
     ap.add_argument("--dry-run", action="store_true", help="print the sized plan; trade nothing")
     args = ap.parse_args()
@@ -73,8 +75,9 @@ def main() -> None:
     db_engine = db.get_engine()
 
     spec = config_strategy.StrategySpec(
-        name=args.name or f"cfg-{args.account}", signals=sig_weights, max_names=args.max_names,
-        max_weight=args.max_weight, leverage=args.leverage, min_score=args.min_score)
+        name=args.name or f"cfg-{args.account}", signals=sig_weights, construction=args.construction,
+        max_names=args.max_names, max_weight=args.max_weight, leverage=args.leverage,
+        min_score=args.min_score)
     strat = config_strategy.ConfigStrategy(spec)
 
     result = account_runner.run_strategy_on_account(
