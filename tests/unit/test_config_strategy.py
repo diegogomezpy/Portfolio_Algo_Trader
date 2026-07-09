@@ -133,3 +133,29 @@ def test_optimizer_construction_falls_back_to_topn_without_config(monkeypatch):
     strat = CS.ConfigStrategy(spec, load_data=_loader(_panel(syms), syms))
     book = strat.generate(S.StrategyContext(settings=_settings()), date(2026, 1, 8))
     assert not book.is_empty and (book.weights <= 0.5 + 1e-9).all()   # fell back to capped top-N
+
+
+def test_generate_via_formula_builds_a_book():
+    """A spec defined by a FORMULA (not a signal blend) runs through the same construction."""
+    syms = ["AAA", "BBB", "CCC", "DDD"]
+    panel = _panel(syms)
+    spec = CS.StrategySpec(name="f", formula="0.5*low_vol + 0.5*low_beta",
+                           max_names=2, max_weight=0.5)
+    strat = CS.ConfigStrategy(spec, load_data=_loader(panel, syms))
+    book = strat.generate(S.StrategyContext(settings=_settings()), panel.index[-1].date())
+    assert not book.is_empty and len(book.weights) <= 2
+    assert book.metadata["formula"] == "0.5*low_vol + 0.5*low_beta" and "signals" not in book.metadata
+
+
+def test_formula_over_raw_field_triggers_fundamentals_load():
+    seen = {}
+    def loader(ctx, as_of, needs):
+        seen["needs"] = needs
+        return _panel(["AAA", "BBB"]), pd.DataFrame(
+            {"pe_ratio": [10.0, 20.0], "pb_ratio": [1.0, 2.0], "roe": [0.2, 0.1],
+             "gross_margin": [0.4, 0.3]}, index=["AAA", "BBB"]), ["AAA", "BBB"]
+    spec = CS.StrategySpec(name="f", formula="z(raw_ep) - 0.3*z(raw_beta)")
+    book = CS.ConfigStrategy(spec, load_data=loader).generate(
+        S.StrategyContext(settings=_settings()), date(2026, 1, 8))
+    assert seen["needs"] == {"fundamentals", "prices"}       # both sources the formula references
+    assert isinstance(book, S.TargetBook)

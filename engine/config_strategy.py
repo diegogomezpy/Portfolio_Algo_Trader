@@ -24,6 +24,7 @@ from typing import Callable, Mapping, Optional, Sequence
 
 import pandas as pd
 
+from engine import formula as _formula
 from engine import signals as _signals
 from engine import strategy as _strategy
 from engine.logger import get_logger
@@ -33,11 +34,17 @@ log = get_logger(__name__)
 
 @dataclass(frozen=True)
 class StrategySpec:
-    """A strategy as data. ``signals`` maps signal name → weight (the traits + their blend).
-    ``max_names``/``max_weight``/``leverage``/``min_score`` are the construction knobs; ``overlay``
-    is the optional derivatives overlay (an :class:`~engine.strategy.OverlaySpec`)."""
+    """A strategy as data. The score is defined one of two ways:
+
+    * ``signals`` — a signal name → weight blend (the simple, one-click composition), OR
+    * ``formula`` — a free-form expression over the same vocabulary + raw fields (:mod:`engine.formula`).
+      When ``formula`` is set it takes precedence over ``signals``.
+
+    ``construction``/``max_names``/``max_weight``/``leverage``/``min_score`` are the construction
+    knobs; ``overlay`` is the optional derivatives overlay (an :class:`~engine.strategy.OverlaySpec`)."""
     name: str
-    signals: Mapping[str, float]
+    signals: Mapping[str, float] = field(default_factory=dict)
+    formula: Optional[str] = None
     construction: str = "topn"                   # "topn" (self-contained) | "optimizer" (cap-respecting)
     max_names: int = 20
     max_weight: float = 0.05
@@ -121,19 +128,44 @@ class ConfigStrategy:
             return construct_weights(composite, self.spec)
 
     def _needs(self) -> set[str]:
-        out: set[str] = set()
+        """Which data sources to load — union of the referenced signals'/fields' needs. A formula
+        drives off the names it references; the blend drives off its selected signals."""
         _signals.register_builtins()
+        out: set[str] = set()
+        if self.spec.formula:
+            known = _signals.all_signals()
+            for name in _formula.referenced_names(self.spec.formula):
+                if name in known:
+                    out.update(getattr(known[name], "needs", ()))
+                elif name in _signals.FIELD_META:
+                    out.add(_signals.FIELD_META[name][0])
+            return out
         for name in self.spec.signals:
             out.update(getattr(_signals.get(name), "needs", ()))
         return out
+
+    def _composite(self, sctx: _signals.SignalContext, universe: Sequence[str]) -> pd.Series:
+        """The per-symbol composite score: evaluate the formula over the referenced signals + raw
+        fields if a formula is set, else the weighted signal blend."""
+        if self.spec.formula:
+            known = _signals.all_signals()
+            fields = _signals.raw_fields(sctx, universe)
+            ns: dict = {}
+            for name in _formula.referenced_names(self.spec.formula):
+                if name in known:
+                    ns[name] = known[name].compute(sctx, universe)
+                elif name in fields:
+                    ns[name] = fields[name]
+            return _formula.evaluate(self.spec.formula, ns)
+        scores = {name: _signals.get(name).compute(sctx, universe) for name in self.spec.signals}
+        return _signals.compose(scores, self.spec.signals)
 
     def generate(self, ctx: _strategy.StrategyContext, as_of: date) -> _strategy.TargetBook:
         _signals.register_builtins()
         panel, fpit, universe = self._load(ctx, as_of, self._needs())
         sctx = _signals.SignalContext(as_of=as_of, settings=ctx.settings,
                                       price_panel=panel, fundamentals_pit=fpit)
-        scores = {name: _signals.get(name).compute(sctx, universe) for name in self.spec.signals}
-        composite = _signals.compose(scores, self.spec.signals)
+        composite = self._composite(sctx, universe)
         weights = self._construct(composite, ctx)
         prices = {}
         if panel is not None and len(panel):
@@ -141,9 +173,13 @@ class ConfigStrategy:
             prices = {s: float(last[s]) for s in weights.index
                       if s in last.index and pd.notna(last[s])}
         inputs = _strategy.PlanInputs(prices=prices, universe=set(universe), panel=panel)
+        meta = {"strategy": self.name, "kind": "config"}
+        if self.spec.formula:
+            meta["formula"] = self.spec.formula
+        else:
+            meta["signals"] = dict(self.spec.signals)
         return _strategy.TargetBook(weights=weights, inputs=inputs, overlay=self.spec.overlay,
-                                    metadata={"strategy": self.name, "kind": "config",
-                                              "signals": dict(self.spec.signals)})
+                                    metadata=meta)
 
 
 def from_spec(spec: StrategySpec, **kw) -> ConfigStrategy:

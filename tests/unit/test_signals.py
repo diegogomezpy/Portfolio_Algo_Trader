@@ -107,10 +107,61 @@ def test_signal_declares_data_needs():
 
 def test_registry_register_get_all_and_builtins():
     S.register_builtins()
-    assert set(S.all_signals()) == {"quality", "value", "low_beta", "low_vol"}
+    assert set(S.all_signals()) == {"quality", "value", "low_beta", "low_vol",
+                                    "roe", "gross_margin", "earnings_yield", "book_yield", "momentum"}
     assert isinstance(S.get("value"), S.ValueSignal)
+    n = len(S.all_signals())
     S.register_builtins()                                    # idempotent
-    assert len(S.all_signals()) == 4
+    assert len(S.all_signals()) == n
+
+
+def test_single_metric_signals_are_zscored_and_oriented():
+    """The finer building blocks (roe/gross_margin/earnings_yield/book_yield/momentum) return a
+    z-scored, higher = better series over the cross-section."""
+    st = _settings()
+    syms, snap, fpit, panel = _fixtures()
+    ctx = S.SignalContext(as_of=panel.index[-1].date(), settings=st,
+                          price_panel=panel, fundamentals_pit=fpit)
+    S.register_builtins()
+    for name in ("roe", "gross_margin", "earnings_yield", "book_yield", "momentum"):
+        out = S.get(name).compute(ctx, syms)
+        assert list(out.index) == syms and out.notna().any()
+        assert abs(float(out.mean())) < 1e-6                 # z-scored → ~zero mean
+    # ROE orientation: AAA has the highest ROE (0.22) → highest z; CCC the lowest (0.05) → lowest.
+    roe = S.get("roe").compute(ctx, syms)
+    assert roe["AAA"] == roe.max() and roe["CCC"] == roe.min()
+
+
+def test_momentum_helper_ranks_by_trailing_return():
+    idx = pd.bdate_range("2026-01-01", periods=8)
+    panel = pd.DataFrame({"UP": np.linspace(100, 130, 8),      # strong up-trend
+                          "FLAT": [100.0] * 8,                  # no move
+                          "DN": np.linspace(100, 80, 8)}, index=idx)
+    mom = S._momentum(panel, idx[-1].date(), lookback=6, skip=1)
+    assert mom["UP"] > mom["FLAT"] > mom["DN"]
+
+
+def test_raw_fields_returns_native_values_by_source():
+    st = _settings()
+    syms, snap, fpit, panel = _fixtures()
+    ctx = S.SignalContext(as_of=panel.index[-1].date(), settings=st,
+                          price_panel=panel, fundamentals_pit=fpit)
+    rf = S.raw_fields(ctx, syms)
+    assert set(rf) == set(S.FIELD_META)                       # all documented fields present
+    assert rf["raw_roe"]["AAA"] == pytest.approx(0.22)        # raw, un-z-scored
+    assert rf["raw_ep"]["AAA"] == pytest.approx(1.0 / 8.0)    # E/P = 1/PE
+    # fundamentals-only context omits price fields
+    rf2 = S.raw_fields(S.SignalContext(as_of=panel.index[-1].date(), settings=st,
+                                       price_panel=None, fundamentals_pit=fpit), syms)
+    assert "raw_beta" not in rf2 and "raw_roe" in rf2
+
+
+def test_signal_and_field_specs_carry_metadata():
+    specs = {s["name"]: s for s in S.signal_specs()}
+    assert specs["quality"]["label"] == "Quality" and specs["quality"]["category"]
+    assert specs["momentum"]["needs"] == ["prices"]
+    fields = {f["name"]: f for f in S.field_specs()}
+    assert fields["raw_pe"]["needs"] == ["fundamentals"] and fields["raw_pe"]["desc"]
 
 
 def test_registry_rejects_junk_and_collisions():

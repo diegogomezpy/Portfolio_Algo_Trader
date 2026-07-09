@@ -959,11 +959,21 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
     # ------------------------------------------------------------------ #
     @app.get("/api/signals")
     def signals_list() -> list:
-        """The signal palette for the builder: name + data needs."""
+        """The signal palette for the builder: name + label + category + data needs + description.
+        (Kept a bare list for backward-compatibility with the FB1 builder; raw formula fields are
+        served separately by /api/formula/vocab.)"""
         from engine import signals as _sig
-        _sig.register_builtins()
-        return [{"name": n, "needs": list(getattr(s, "needs", ()))}
-                for n, s in sorted(_sig.all_signals().items())]
+        return _sig.signal_specs()
+
+    @app.get("/api/formula/vocab")
+    def formula_vocab() -> dict:
+        """The full vocabulary a formula can reference: z-scored signals (bare names, higher =
+        better), raw fields (raw_* names), and the functions available. Drives the builder's
+        formula editor + validation hints."""
+        from engine import formula as _f
+        from engine import signals as _sig
+        return {"signals": _sig.signal_specs(), "fields": _sig.field_specs(),
+                "functions": _f.function_specs()}
 
     @app.post("/api/strategy/preview")
     async def strategy_preview(body: dict = Body(...),  # noqa: B008
@@ -973,13 +983,19 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
         err = _exec_gate(x_exec_token)
         if err:
             return err
-        from engine import account_runner, config_strategy
+        from engine import account_runner, config_strategy, formula, signals as _sig
         try:
             sigs = {str(k): float(v) for k, v in (body.get("signals") or {}).items()}
-            if not sigs:
-                return {"error": "pick at least one signal"}
+            expr = (body.get("formula") or "").strip()
+            if expr:
+                vocab = ({s["name"] for s in _sig.signal_specs()}
+                         | {f["name"] for f in _sig.field_specs()})
+                formula.validate(expr, vocab)               # FormulaError → surfaced below
+            elif not sigs:
+                return {"error": "pick at least one signal, or enter a formula"}
             spec = config_strategy.StrategySpec(
-                name=str(body.get("name") or f"cfg-{body.get('account')}"), signals=sigs,
+                name=str(body.get("name") or f"cfg-{body.get('account')}"),
+                signals=sigs, formula=expr or None,
                 construction=str(body.get("construction") or "optimizer"),
                 max_names=int(body.get("max_names") or 20),
                 max_weight=float(body.get("max_weight") or 0.05),

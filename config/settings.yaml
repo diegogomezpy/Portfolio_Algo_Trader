@@ -52,6 +52,8 @@ factors:
   beta_window: 252               # trailing days for β vs the market (12 months)
   beta_market: SPY               # market proxy for β (present in the equity price panel)
   vol_window: 252
+  mom_lookback: 252              # momentum signal (on-the-fly builder only, NOT the live book):
+  mom_skip: 21                   # 12-1 construction — return from mom_lookback ago to mom_skip ago
   exclude_missing_fundamentals: false
   winsor_pct: 0.01               # winsorize each raw metric to its [1st, 99th] pct
                                  # before z-scoring — robust to fat tails, keeps the
