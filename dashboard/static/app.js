@@ -92,7 +92,7 @@ if (matchMedia("(hover: none)").matches) document.addEventListener("click", e=>{
 });
 
 // ---- two-level nav: top tabs + sub-tabs -----------------------------------
-const VIEWS = ["overview","portfolio","performance","execute","accounts"];
+const VIEWS = ["overview","portfolio","performance","execute","accounts","builder"];
 const SUBS  = {portfolio:["holdings","activity"], performance:["returns","risk","attribution","execution"]};
 let activeView = "overview";
 const activeSub = {portfolio:"holdings", performance:"returns"};
@@ -120,6 +120,7 @@ function loadActive(){
   else if (activeView === "performance") loadPerformance();
   else if (activeView === "execute") loadExecute();
   else if (activeView === "accounts") loadAccounts();
+  else if (activeView === "builder") loadBuilder();
 }
 
 // Tracked-sleeves account switcher: which account the account-aware panels show. The listed
@@ -1914,12 +1915,56 @@ async function loadExecute(){
 async function loadAccounts(){
   const rows = await get("/api/accounts");
   renderAccounts(rows);
-  renderStrategyBuilder(Array.isArray(rows) ? rows : []);
   // Auto-check each account once (so you SEE its status without clicking), cached in _ACCT_STATE
   // so the governed re-render doesn't re-hit Alpaca every tick.
   (Array.isArray(rows) ? rows : []).forEach(a => {
     if (a && a.slug && !_ACCT_STATE[a.slug]) viewAccount(a.slug);
   });
+}
+
+// ---- Builder tab: the on-the-fly strategy studio. A read-only card of what the PRIMARY book is
+// running right now (its factors/caps/overlay/cadence), then the composer that previews a config
+// strategy against a chosen account. Its own top-level tab (moved out of Accounts). ----
+async function loadBuilder(){
+  const [cfg, accts] = await Promise.all([get("/api/config"), get("/api/accounts")]);
+  renderPrimaryConfig(cfg);
+  renderStrategyBuilder(Array.isArray(accts) ? accts : []);
+}
+
+// The live strategy, shown as the builder's reference point: "here's what the primary book does —
+// compose your own below." Read-only (edit settings.yaml + deploy to change the primary).
+function renderPrimaryConfig(cfg){
+  const host = $("x-primary-config"); if (!host) return;
+  if (!cfg || !cfg.available){
+    host.innerHTML = `<div class="ovhead"><span class="ovhk">Currently running · primary book</span></div>
+      <div style="padding:14px 16px;color:var(--muted);font-size:12px">Live parameters unavailable.</div>`;
+    return;
+  }
+  const w = (cfg.factors && cfg.factors.weights) || {};
+  const pf = cfg.portfolio || {}, cc = cfg.covered_calls || {}, rb = cfg.rebalancing || {}, un = cfg.universe || {};
+  const pill = (txt, tip) => `<span class="pmono" data-tip="${esc(tip||'')}" style="display:inline-flex;align-items:center;gap:5px;background:var(--panel-2);border:1px solid var(--line);border-radius:20px;padding:4px 11px;font-size:11px;color:var(--fg)${tip?';cursor:help':''}">${txt}</span>`;
+  const factorPills = Object.keys(w).length
+    ? Object.entries(w).map(([k, v]) => pill(`<b style="color:var(--accent)">${esc(k)}</b> ${(+v*100).toFixed(0)}%`,
+        "factor weight in the composite score")).join(" ")
+    : `<span style="color:var(--muted);font-size:11.5px">—</span>`;
+  const grp = (title, inner) => `<div style="display:flex;flex-direction:column;gap:7px">
+    <span style="font:600 10px 'Space Grotesk';letter-spacing:.07em;text-transform:uppercase;color:var(--muted)">${title}</span>
+    <div style="display:flex;flex-wrap:wrap;gap:6px">${inner}</div></div>`;
+  const num = (v, suf) => (v==null ? "—" : (typeof v==="number" ? v : v) + (suf||""));
+  const overlay = cc.overlay_mode
+    ? `${pill(esc(cc.overlay_mode)+" overlay","SPY call-spread overwrite mode")} ${pill((+cc.target_delta).toFixed(2)+"Δ / "+(+cc.wing_delta).toFixed(2)+"Δ wing","short strike delta / long wing delta")} ${pill((cc.min_dte_entry||"?")+"–"+(cc.max_dte_entry||"?")+" DTE","days-to-expiry entry window")} ${pill(((cc.overwrite_coverage!=null?+cc.overwrite_coverage*100:100)).toFixed(0)+"% coverage","fraction of book beta overwritten")}`
+    : `${pill("no overlay")}`;
+  host.innerHTML = `<div class="ovhead"><span class="ovhk">Currently running · primary book</span>
+      <span class="ovhs">the live strategy, for reference — compose your own below
+        <span class="srcinfo" data-tip="Read-only snapshot of settings.yaml as the engine runs it. The primary book (low-beta + SPY overwrite) is changed by editing settings.yaml and deploying, not from this screen.">ⓘ</span></span></div>
+    <div style="padding:12px 16px 15px;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px 30px">
+      ${grp("Signals · equal-weight composite", factorPills)}
+      ${grp("Construction", `${pill("optimizer","constrained mean-variance / cap-respecting")} ${pill("≤ "+((pf.max_single_name_pct!=null?+pf.max_single_name_pct*100:5)).toFixed(0)+"% / name","max single-name weight")} ${pill("≥ "+((pf.min_position_pct!=null?+pf.min_position_pct*100:4)).toFixed(0)+"% floor","min position or zero")} ${pill("≤ "+((pf.max_sector_pct!=null?+pf.max_sector_pct*100:30)).toFixed(0)+"% / sector","max sector weight")}`)}
+      ${grp("Leverage", `${pill((pf.target_leverage!=null?(+pf.target_leverage).toFixed(1):"1.0")+"× gross","target gross exposure")} ${pill("cap "+(pf.max_leverage!=null?(+pf.max_leverage).toFixed(1):"?")+"×","hard leverage cap")}`)}
+      ${grp("Overlay", overlay)}
+      ${grp("Rebalance", `${pill(esc(rb.primary||"monthly"),"rebalance cadence")}`)}
+      ${grp("Universe", `${pill("≥ $"+num(un.min_price)+" px","minimum share price")} ${pill("≥ $"+(un.min_adv_usd!=null?(un.min_adv_usd/1e6).toFixed(0)+"M":"?")+" ADV","minimum average dollar volume")} ${un.require_edgar_fundamentals?pill("EDGAR filers only","US-GAAP SEC filers only"):""}`)}
+    </div>`;
 }
 
 // ---- Strategy builder: compose a config strategy (signals + weights + caps) and PREVIEW the

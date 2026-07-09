@@ -40,6 +40,7 @@
     <button class="tab" data-view="performance">Performance</button>
     <button class="tab" data-view="execute">Execute</button>
     <button class="tab" data-view="accounts">Accounts</button>
+    <button class="tab" data-view="builder">Builder</button>
   </nav>
   <div class="right">
     <select id="acctSwitcher" title="view account — switch which sleeve the dashboard shows"
@@ -191,11 +192,17 @@
 <div id="accounts-view" style="display:none">
   <div class="wrap flexcol" style="gap:14px;padding-top:16px">
     <div class="ovpanel" id="x-accounts"></div>
+  </div>
+</div>
+
+<div id="builder-view" style="display:none">
+  <div class="wrap flexcol" style="gap:14px;padding-top:16px">
+    <div class="ovpanel" id="x-primary-config"></div>
     <div class="ovpanel" id="x-builder"></div>
   </div>
 </div>
 
 
-<script src="/static/app.js?v=18" defer></script>
+<script src="/static/app.js?v=19" defer></script>
 </body>
 </html>

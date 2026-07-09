@@ -1080,6 +1080,13 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
             s = getattr(settings, section, None)
             return {k: getattr(s, k) for k in keys if getattr(s, k, None) is not None}
 
+        # Factor weights are a nested namespace (settings.factors.weights.<factor>) — flatten the
+        # four sub-scores the live book blends so the builder can show "what's running right now".
+        fac = getattr(settings, "factors", None)
+        w = getattr(fac, "weights", None) if fac is not None else None
+        weights = ({k: getattr(w, k) for k in ("quality", "value", "low_beta", "low_vol")
+                    if getattr(w, k, None) is not None} if w is not None else {})
+
         return {"available": True,
                 "portfolio": grab("portfolio", ["target_leverage", "max_leverage",
                                                 "min_position_pct", "max_sector_pct",
@@ -1090,7 +1097,14 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
                                                         "min_bid_frac", "iv_window"]),
                 "execution": grab("execution", ["min_trade_usd", "marketable_limit_bps",
                                                 "equity_repeg_s", "close_buffer_s",
-                                                "ladder_steps", "rebalance_hour_et"])}
+                                                "ladder_steps", "rebalance_hour_et"]),
+                # Extra sections for the Builder's "currently running — primary book" card.
+                "factors": {"weights": weights,
+                            **grab("factors", ["beta_window", "vol_window", "winsor_pct",
+                                               "beta_market"])},
+                "rebalancing": grab("rebalancing", ["primary", "incumbent_bonus"]),
+                "universe": grab("universe", ["min_price", "min_adv_usd",
+                                             "require_edgar_fundamentals"])}
 
     # Today's booked FEE activities, cached 5 min (they land next-morning; no need to hammer).
     _ATTR_FEES = {"ts": 0.0, "total": 0.0}
