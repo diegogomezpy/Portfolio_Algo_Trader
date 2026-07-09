@@ -163,6 +163,15 @@ def write_fundamentals_parquet(
     for col in FUNDAMENTAL_COLUMNS:
         if col not in out.columns:
             out[col] = np.nan
+    # Sanitize numeric fields before the parquet write. yfinance/EDGAR occasionally yield the
+    # STRING 'Infinity' (or a float inf) for a ratio when the denominator is ~0 — e.g. pe_ratio at
+    # near-zero EPS. That makes the column `object` dtype, pyarrow can't cast object→double, and the
+    # ENTIRE daily fundamentals ingest aborts (2026-07-08 prod incident). Coerce to float (junk →
+    # NaN) and map ±inf → NaN (inf is a valid double but meaningless for factor scoring).
+    for col in ("pe_ratio", "pb_ratio", "roe", "gross_margin"):
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+    out = out.replace([np.inf, -np.inf], np.nan)
     extras = [c for c in out.columns if c not in FUNDAMENTAL_COLUMNS]
     out[FUNDAMENTAL_COLUMNS + extras].to_parquet(path)
     return path

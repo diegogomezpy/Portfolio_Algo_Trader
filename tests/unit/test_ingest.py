@@ -183,3 +183,26 @@ def test_ingest_fundamentals_writes_and_caches(tmp_path):
     # Second run: quarter already cached → no new fetches.
     ingest.ingest_fundamentals(["AAPL", "MSFT"], quarter, tmp_path, fetch_one=fake_fetch)
     assert calls["n"] == 2
+
+
+def test_write_fundamentals_sanitizes_infinity_and_junk(tmp_path):
+    """Regression (2026-07-08 prod): a STRING 'Infinity' (or float inf) in a numeric ratio made the
+    column object-dtype and pyarrow aborted the whole ingest. write_fundamentals_parquet must coerce
+    numeric fields (junk/inf → NaN) so the write always succeeds and the data stays clean."""
+    import numpy as np
+    import pandas as pd
+    from engine import ingest
+    frame = pd.DataFrame({
+        "symbol": ["AAA", "BBB", "CCC"],
+        "pe_ratio": ["Infinity", 15.0, "n/a"],   # str inf, real, junk — object column
+        "pb_ratio": [np.inf, 2.0, 3.0],           # float inf
+        "roe": [0.2, 0.1, 0.15], "gross_margin": [0.4, 0.5, 0.6],
+        "report_date": ["2026-06-30"] * 3, "source": ["yfinance"] * 3,
+    }).set_index("symbol")
+    path = ingest.write_fundamentals_parquet(frame, "2026Q2", tmp_path)   # must not raise
+    out = pd.read_parquet(path)
+    assert str(out["pe_ratio"].dtype).startswith("float")                 # now numeric
+    assert pd.isna(out.loc["AAA", "pe_ratio"]) and pd.isna(out.loc["CCC", "pe_ratio"])  # inf/junk → NaN
+    assert out.loc["BBB", "pe_ratio"] == 15.0                             # real value preserved
+    assert pd.isna(out.loc["AAA", "pb_ratio"])                            # float inf → NaN
+    assert out.loc["AAA", "source"] == "yfinance"                        # strings untouched
