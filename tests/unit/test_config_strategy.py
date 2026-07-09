@@ -73,7 +73,8 @@ def test_generate_uses_selected_signals_only():
     strat = CS.ConfigStrategy(spec, load_data=_loader(panel, syms))
     book = strat.generate(S.StrategyContext(settings=_settings()), panel.index[-1].date())
     assert isinstance(book, S.TargetBook) and not book.is_empty
-    assert len(book.weights) <= 2 and book.weights.sum() == pytest.approx(1.0)
+    assert len(book.weights) <= 2 and 0 < book.weights.sum() <= 1.0 + 1e-9
+    assert (book.weights <= 0.5 + 1e-9).all()               # per-name cap respected
     assert set(book.weights.index) <= set(syms)
     assert all(s in book.inputs.prices for s in book.weights.index)     # prices from the panel
     assert book.metadata["kind"] == "config" and book.metadata["signals"] == {"low_vol": 0.6, "low_beta": 0.4}
