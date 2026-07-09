@@ -46,8 +46,17 @@ def test_construct_weights_topn_caps_and_normalizes():
     w = CS.construct_weights(comp, spec)
     assert set(w.index) == {"A", "B", "C"}                   # top 3 by score, E (negative) excluded
     assert w.max() <= 0.5 + 1e-9                             # per-name cap (fraction of base)
-    assert w.sum() == pytest.approx(1.0)                     # fractions; leverage applied at sizing
+    assert w.sum() == pytest.approx(1.0)                     # feasible cap here → fully invested
     assert w["A"] > w["C"]                                   # score-weighted
+
+
+def test_construct_weights_respects_cap_and_holds_cash_when_binding():
+    # Too few names for the cap: 3 names @ 5% can't reach 100% — never breach the cap; hold cash.
+    comp = pd.Series({"A": 3.0, "B": 2.0, "C": 1.0})
+    spec = CS.StrategySpec(name="x", signals={"low_vol": 1.0}, max_names=3, max_weight=0.05)
+    w = CS.construct_weights(comp, spec)
+    assert (w <= 0.05 + 1e-9).all()                          # cap never breached (the risk-gate bug)
+    assert w.sum() == pytest.approx(0.15)                    # 3 × 5% → 15% invested, 85% cash
 
 
 def test_construct_weights_empty_when_nothing_qualifies():
@@ -60,7 +69,7 @@ def test_generate_uses_selected_signals_only():
     syms = ["AAA", "BBB", "CCC", "DDD"]
     panel = _panel(syms)
     spec = CS.StrategySpec(name="trend_test", signals={"low_vol": 0.6, "low_beta": 0.4},
-                           max_names=2, leverage=1.0)
+                           max_names=2, max_weight=0.5, leverage=1.0)   # 2 @ 50% → feasible, fully invested
     strat = CS.ConfigStrategy(spec, load_data=_loader(panel, syms))
     book = strat.generate(S.StrategyContext(settings=_settings()), panel.index[-1].date())
     assert isinstance(book, S.TargetBook) and not book.is_empty

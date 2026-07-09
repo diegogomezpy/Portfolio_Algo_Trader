@@ -57,10 +57,11 @@ def construct_weights(composite: pd.Series, spec: StrategySpec) -> pd.Series:
     top = s.nlargest(int(spec.max_names)).clip(lower=0.0)
     if top.sum() <= 0:
         return pd.Series(dtype=float)
-    w = (top / top.sum()).clip(upper=spec.max_weight)
-    if w.sum() <= 0:
-        return pd.Series(dtype=float)
-    return w / w.sum()                            # fractions of the base; leverage applied at sizing
+    # Score-proportional, normalized to 1.0, then capped at max_weight. If the cap binds (too few
+    # names for the cap, e.g. 15 names @ 5% can't reach 100%), the book holds CASH rather than
+    # breaching the cap — we never renormalize back up past the cap (that reintroduced the breach).
+    # Fully-specified strategies (>= 1/max_weight names) still invest ~100%.
+    return (top / top.sum()).clip(upper=float(spec.max_weight))
 
 
 def _default_load(ctx: _strategy.StrategyContext, as_of: date, needs: set[str]):
