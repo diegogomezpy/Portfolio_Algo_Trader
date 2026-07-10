@@ -349,7 +349,8 @@ def _monitor_secondary_accounts(db_engine, interval: int) -> None:
             log.warning("secondary-account monitor failed (%s): %s", slug, exc)
 
 
-async def _monitor_loop(client, db_engine, interval: int, price_feed=None) -> None:
+async def _monitor_loop(client, db_engine, interval: int, price_feed=None,
+                        settings=None, alert=None) -> None:
     """Every ``interval`` seconds: read Alpaca → write a snapshot (the Alpaca→Postgres bridge),
     and keep the live price feed subscribed to the current held book.
 
@@ -373,6 +374,13 @@ async def _monitor_loop(client, db_engine, interval: int, price_feed=None) -> No
                                         target_weights=tw, account=PRIMARY_ACCOUNT)
             # Tracked sleeves: snapshot every other account too (dashboard is their sole writer).
             await asyncio.to_thread(_monitor_secondary_accounts, db_engine, interval)
+            # Autonomous strategies: fire any due, auto-enabled sleeve on its cadence (opt-in,
+            # non-primary, market-open + rebalance-hour gated, once per period). Runs after the
+            # snapshots so this pass's NAV is current; awaited so a run never overlaps the next pass.
+            if settings is not None:
+                from engine import scheduler
+                await asyncio.to_thread(scheduler.run_scheduled, db_engine, settings,
+                                        client=client, alert=alert)
             if price_feed is not None:
                 price_feed.set_symbols(await asyncio.to_thread(_held_equities, db_engine))
                 pos = await asyncio.to_thread(client.all_positions)
@@ -716,13 +724,21 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
         except Exception as exc:  # noqa: BLE001
             log.warning("live price feed unavailable; headline metrics fall back to the snapshot: %s", exc)
 
+    # Alerter for autonomous strategy runs (records to the alerts table + emails per settings). If
+    # it can't build, the scheduler still runs and just logs.
+    _sched_alert = None
+    with contextlib.suppress(Exception):
+        from engine import alerts as _alerts
+        _sched_alert = _alerts.make_alerter(db_engine, settings)
+
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
         task = None
         if price_feed is not None:
             price_feed.start()
         if client is not None:
-            task = asyncio.create_task(_monitor_loop(client, db_engine, monitor_interval, price_feed))
+            task = asyncio.create_task(_monitor_loop(client, db_engine, monitor_interval, price_feed,
+                                                     settings=settings, alert=_sched_alert))
         try:
             yield
         finally:
@@ -1037,6 +1053,58 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
             return {"saved": True, **saved}
         except Exception as exc:  # noqa: BLE001 — surface the reason to the builder
             return {"error": str(exc)}
+
+    # Manual "Run now" — trade a strategy on its account LIVE (the counterpart to the read-only
+    # preview). Runs in a background thread (a chase can take minutes); the UI polls run_status.
+    # Non-primary only (account_runner refuses primary), token-gated, market-open preflight.
+    _strategy_runs: dict[str, dict] = {}
+
+    def _run_now_stamp() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    @app.post("/api/strategy/run")
+    def strategy_run(body: dict = Body(...),  # noqa: B008
+                     x_exec_token: str | None = Header(default=None)) -> dict:
+        err = _exec_gate(x_exec_token)
+        if err:
+            return err
+        from engine import account_runner, config_strategy, scheduler, specstore
+        account = str(body.get("account") or "").strip().lower()
+        if not account:
+            return {"error": "account is required"}
+        # Use the posted spec if the form carries one, else the account's saved spec.
+        try:
+            if body.get("signals") or body.get("formula"):
+                spec = _spec_from_body(body); mode = str(body.get("mode") or "normal")
+            else:
+                saved = specstore.get_spec(db_engine, account)
+                if not (saved and saved.get("spec")):
+                    return {"error": "no strategy for this account — build one and Save it first"}
+                spec = config_strategy.spec_from_dict(saved["spec"]); mode = saved.get("mode") or "normal"
+        except Exception as exc:  # noqa: BLE001
+            return {"error": str(exc)}
+        cur = _strategy_runs.get(account)
+        if cur and cur.get("status") == "running":
+            return {"error": "a run is already in progress for this account"}
+        if mode != "express" and not scheduler._market_open(client):
+            return {"error": "market is closed — use express mode or wait for the open"}
+
+        _strategy_runs[account] = {"status": "running", "ts": _run_now_stamp(), "mode": mode}
+
+        def _job():
+            try:
+                res = account_runner.run_strategy_on_account(
+                    account, config_strategy.ConfigStrategy(spec), db_engine=db_engine,
+                    settings=settings, mode=mode, alert=_sched_alert)
+                _strategy_runs[account] = {"status": "done", "ts": _run_now_stamp(), "result": res}
+            except Exception as exc:  # noqa: BLE001 — surface to the poller
+                _strategy_runs[account] = {"status": "failed", "ts": _run_now_stamp(), "error": str(exc)}
+        threading.Thread(target=_job, name=f"stratrun-{account}", daemon=True).start()
+        return {"started": True, "account": account, "mode": mode}
+
+    @app.get("/api/strategy/run_status")
+    def strategy_run_status(account: str) -> dict:
+        return _strategy_runs.get(str(account).strip().lower()) or {"status": "idle"}
 
     # ------------------------------------------------------------------ #
     # Accounts — dashboard-managed, encrypted-at-rest broker credentials (Phase C).

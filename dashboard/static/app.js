@@ -2094,9 +2094,10 @@ async function renderStrategyBuilder(accts, cfg){
         <div style="align-self:center;margin-top:14px">${check("sb-auto", "Auto-run on schedule", false, "when on, the scheduler trades this account automatically on its cadence — otherwise Preview/Run only")}</div>
       `), "when + how it trades")}
 
-      <div style="display:flex;align-items:center;gap:10px;margin-top:16px">
+      <div style="display:flex;align-items:center;gap:10px;margin-top:16px;flex-wrap:wrap">
         <button class="exm-btn" onclick="previewStrategy()" style="padding:7px 16px">Preview</button>
         <button class="exm-chip" onclick="saveStrategy()" style="padding:7px 14px">Save strategy</button>
+        <button class="exm-chip" onclick="runStrategy()" style="padding:7px 14px;border-color:var(--amber);color:var(--amber)" data-tip="trade this strategy LIVE on the account now — places real paper orders (non-primary accounts only)">Run now ▸</button>
         <span id="sb-msg" style="font:500 11.5px var(--mono);color:var(--muted);margin-left:4px"></span></div>
       <div id="sb-result" style="margin-top:12px"></div>
     </div>`;
@@ -2235,6 +2236,38 @@ async function saveStrategy(){
   if (!r || r.error){ sbMsg((r && r.error) || "save failed", "var(--red)"); return; }
   sbMsg(`saved "${r.name}" · ${r.rebalance_frequency}${r.auto_enabled ? " · auto-run ON" : ""}`, "var(--green)");
   toast(`strategy saved for ${r.account}`);
+}
+
+// Trade the strategy LIVE on its account now (the counterpart to Preview). Background run on the
+// server; poll for status. Non-primary only (the server refuses primary).
+async function runStrategy(){
+  const tok = execToken(); if (!tok) return;
+  const body = sbCollectBody();
+  const bad = sbValidateScore(body); if (bad){ sbMsg(bad, "var(--red)"); return; }
+  if (!confirm(`Run this strategy LIVE on "${body.account}" now?\n\nThis places real (paper) orders on that account — it is not a preview.`)) return;
+  sbMsg("starting run…", "var(--amber)");
+  const r = await postJSON("/api/strategy/run", tok, body);
+  if (!r || r.error){ sbMsg((r && r.error) || "run failed", "var(--red)"); return; }
+  toast(`run started on ${r.account} (${r.mode})`);
+  sbPollRun(body.account);
+}
+
+let _sbPollT = null;
+async function sbPollRun(account){
+  if (_sbPollT) clearTimeout(_sbPollT);
+  const s = await get("/api/strategy/run_status?account=" + encodeURIComponent(account));
+  if (!s || s.status === "running"){ sbMsg("running… (chasing fills — this can take a few minutes)", "var(--amber)");
+    _sbPollT = setTimeout(() => sbPollRun(account), 3000); return; }
+  if (s.status === "failed"){ sbMsg("run failed: " + (s.error || ""), "var(--red)"); return; }
+  if (s.status === "done"){
+    const res = s.result || {};
+    if (res.status === "executed") sbMsg(`done · ${res.submitted||0} submitted · ${res.filled||0} filled · ${res.rejected||0} rejected`, "var(--green)");
+    else if (res.status === "blocked_risk") sbMsg("risk gate blocked: " + (res.reason || ""), "var(--amber)");
+    else if (res.status === "no_targets") sbMsg("no targets — nothing to trade", "var(--muted)");
+    else sbMsg("done · " + (res.status || ""), "var(--muted)");
+    return;
+  }
+  sbMsg(s.status || "idle", "var(--muted)");
 }
 async function postJSON(path, tok, body){
   try {
