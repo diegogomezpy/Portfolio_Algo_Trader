@@ -249,6 +249,26 @@ account_credentials = Table(
 )
 
 
+# Per-account on-the-fly strategy spec (ADR-001 / D37 north star — the dashboard builder). One
+# active spec per account (slug): the serialized StrategySpec (signals/formula + all construction,
+# universe, factor and overlay params) plus its rebalance cadence + auto-run flag the scheduler
+# reads. No secrets here — creds stay in account_credentials.
+strategy_specs = Table(
+    "strategy_specs",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("account", String, nullable=False, unique=True, index=True),   # credstore slug
+    Column("name", String),
+    Column("spec", JSON, nullable=False),                  # serialized StrategySpec (config_strategy)
+    Column("rebalance_frequency", String),                 # monthly | weekly | daily
+    Column("mode", String),                                # normal | express
+    Column("auto_enabled", Boolean, server_default=false()),   # scheduler trades it when true
+    Column("last_run", Date),                              # last date the scheduler ran it (idempotency)
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime),
+)
+
+
 def get_engine(database_url: str | None = None) -> Engine:
     """Return a SQLAlchemy Engine for ``database_url`` (or ``DATABASE_URL`` env).
 

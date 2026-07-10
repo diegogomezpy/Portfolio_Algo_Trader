@@ -159,3 +159,46 @@ def test_formula_over_raw_field_triggers_fundamentals_load():
         S.StrategyContext(settings=_settings()), date(2026, 1, 8))
     assert seen["needs"] == {"fundamentals", "prices"}       # both sources the formula references
     assert isinstance(book, S.TargetBook)
+
+
+def _full_settings():
+    return SimpleNamespace(
+        portfolio=SimpleNamespace(max_single_name_pct=0.05, min_position_pct=0.04,
+                                  max_sector_pct=0.30, target_leverage=2.0, max_leverage=2.0,
+                                  risk_aversion_lambda=0.0),
+        factors=SimpleNamespace(beta_window=252, vol_window=252, winsor_pct=0.01,
+                                mom_lookback=252, mom_skip=21, beta_market="SPY",
+                                report_lag_days=45),
+        universe=SimpleNamespace(min_price=5.0, min_adv_usd=1_000_000,
+                                 require_edgar_fundamentals=True),
+        optimizer=SimpleNamespace(preselect_top_k=50, target_return_scale=0.15))
+
+
+def test_effective_settings_maps_spec_onto_risk_gate_leaves():
+    """The spec's caps/leverage/windows land on the SAME settings leaves the optimizer + risk gate
+    read — so an 8% cap and 3× leverage aren't vetoed by the global 5%/2× defaults; None inherits."""
+    base = _full_settings()
+    spec = CS.StrategySpec(name="x", signals={"low_vol": 1.0}, max_weight=0.08, leverage=3.0,
+                           min_position_pct=0.02, max_sector_pct=0.5, beta_window=60,
+                           min_price=10.0, require_edgar=False, preselect_top_k=80)
+    eff = CS.effective_settings(base, spec)
+    assert eff.portfolio.max_single_name_pct == 0.08
+    assert eff.portfolio.min_position_pct == 0.02
+    assert eff.portfolio.max_sector_pct == 0.5
+    assert eff.portfolio.target_leverage == 3.0
+    assert eff.portfolio.max_leverage == 3.0                 # lifted so the risk gate admits 3×
+    assert eff.factors.beta_window == 60 and eff.factors.vol_window == 252   # vol inherits (None)
+    assert eff.universe.min_price == 10.0 and eff.universe.require_edgar_fundamentals is False
+    assert eff.optimizer.preselect_top_k == 80
+    assert base.portfolio.max_single_name_pct == 0.05        # deep copy — base untouched
+
+
+def test_spec_roundtrip_serialization():
+    spec = CS.StrategySpec(name="Trend", formula="z(roe) - 0.3*z(raw_beta)", max_weight=0.07,
+                           leverage=2.5, overlay=S.OverlaySpec(mode="index", market="SPY",
+                                                               params={"coverage": 1.0}),
+                           rebalance_frequency="weekly", mode="express", beta_window=120)
+    back = CS.spec_from_dict(CS.spec_to_dict(spec))
+    assert back.formula == spec.formula and back.max_weight == 0.07 and back.leverage == 2.5
+    assert back.overlay.mode == "index" and back.overlay.params["coverage"] == 1.0
+    assert back.rebalance_frequency == "weekly" and back.mode == "express" and back.beta_window == 120

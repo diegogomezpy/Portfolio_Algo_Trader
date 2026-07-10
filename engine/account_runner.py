@@ -92,6 +92,14 @@ def run_strategy_on_account(
     client = (make_client or _make_client)(creds)
     broker = (make_broker or _make_broker)(creds)
 
+    # A config strategy carries its own parameter overrides; build the EFFECTIVE settings this
+    # sleeve runs under so the optimizer + risk gate honor its caps/leverage/windows (not the
+    # primary book's). A plain code Strategy (no .spec) just uses the global settings.
+    spec = getattr(strategy, "spec", None)
+    if spec is not None:
+        from engine import config_strategy
+        settings = config_strategy.effective_settings(settings, spec)
+
     # NB: no reconcile (see module docstring) — the sleeve trades its own isolated account.
     positions = _equity_positions(client)
     ctx = StrategyContext(settings=settings, db_engine=db_engine, prices_dir=_PRICES_DIR,

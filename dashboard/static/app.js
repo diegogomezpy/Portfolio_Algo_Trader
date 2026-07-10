@@ -1928,7 +1928,7 @@ async function loadAccounts(){
 async function loadBuilder(){
   const [cfg, accts] = await Promise.all([get("/api/config"), get("/api/accounts")]);
   renderPrimaryConfig(cfg);
-  renderStrategyBuilder(Array.isArray(accts) ? accts : []);
+  renderStrategyBuilder(Array.isArray(accts) ? accts : [], cfg);
 }
 
 // The live strategy, shown as the builder's reference point: "here's what the primary book does —
@@ -1969,74 +1969,248 @@ function renderPrimaryConfig(cfg){
 
 // ---- Strategy builder: compose a config strategy (signals + weights + caps) and PREVIEW the
 // book it would trade on an account (dry-run, no orders). The "on-the-fly strategy" UI. ----
-let _SIGNAL_PALETTE = null;
-async function renderStrategyBuilder(accts){
+// The strategy studio. Loads the full vocabulary (signals + raw fields + formula functions) once,
+// renders a thorough sectioned form (score → universe → construction → factor windows → overlay →
+// rebalance/execution), then Preview (dry-run) / Save. Blank advanced fields inherit the global
+// settings; the primary book's live values show as placeholders.
+let _VOCAB = null;               // {signals, fields, functions}
+let _SB_MODE = "blend";          // "blend" | "formula"
+let _SB_CFG = null;              // /api/config (for inherited-value placeholders)
+
+function sbMsg(t, c){ const m = $("sb-msg"); if (m){ m.textContent = t; m.style.color = c || "var(--muted)"; } }
+
+async function renderStrategyBuilder(accts, cfg){
   const host = $("x-builder"); if (!host) return;
-  if (host._built){                                   // don't wipe a spec you're editing (1s tick)
-    const el = document.activeElement;
-    if (el && (el.tagName === "INPUT" || el.tagName === "SELECT") && host.contains(el)) return;
-  }
-  if (_SIGNAL_PALETTE === null) _SIGNAL_PALETTE = (await get("/api/signals")) || [];
-  const sel = accts.filter(a => a && a.slug).map(a =>
-    `<option value="${esc(a.slug)}">${esc(a.label || a.slug)}</option>`).join("");
-  if (!sel){
+  if (cfg) _SB_CFG = cfg;
+  if (_VOCAB === null) _VOCAB = (await get("/api/formula/vocab")) || {signals: [], fields: [], functions: []};
+  const slugs = accts.filter(a => a && a.slug);
+  const sig = slugs.map(a => a.slug).join(",");
+  if (host._built && host._acctSig === sig) return;    // built + same accounts → keep edits (1s tick)
+  host._acctSig = sig; host._built = true;
+  if (!slugs.length){
     host.innerHTML = `<div class="ovhead"><span class="ovhk">Strategy builder</span></div>
-      <div style="padding:14px 16px;color:var(--muted);font-size:12px">Add an account above first — the builder previews a strategy against one of your accounts.</div>`;
-    host._built = true; return;
+      <div style="padding:14px 16px;color:var(--muted);font-size:12px">Add an account on the <b>Accounts</b> tab first — the builder composes and previews a strategy against one of your accounts.</div>`;
+    return;
   }
-  host._built = true;
-  const sigRow = (s) => `<label style="display:flex;align-items:center;gap:8px;padding:5px 0;font:500 12px var(--sans);color:var(--fg-dim)">
-    <input type="checkbox" class="sb-sig" value="${esc(s.name)}">
-    <span style="min-width:80px">${esc(s.name)}</span>
-    <span style="font:400 10px var(--mono);color:var(--muted);min-width:88px">${(s.needs||[]).join("+")||"—"}</span>
-    <input class="sb-w" data-sig="${esc(s.name)}" type="number" step="0.05" value="0.5"
-      style="width:66px;background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:4px 6px;font:400 12px var(--mono);color:var(--fg)"></label>`;
-  const num = (id, val, step) => `<input id="${id}" type="number" step="${step}" value="${val}"
-    style="width:80px;background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:5px 7px;font:400 12px var(--mono);color:var(--fg)">`;
-  const lbl = (t) => `<span style="font:600 10px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">${t}</span>`;
+  const g = (o, s, k, d) => { const sec = _SB_CFG && _SB_CFG[o]; const v = sec && sec[k]; return v==null ? d : v; };
+  const acctOpts = slugs.map(a => `<option value="${esc(a.slug)}">${esc(a.label || a.slug)}</option>`).join("");
+
+  // ---- little field builders (consistent styling) ----
+  const inp = "background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:5px 7px;font:400 12px var(--mono);color:var(--fg)";
+  const selCss = "background:var(--panel-2);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:5px 8px;font:500 12px var(--sans)";
+  const lbl = t => `<span style="font:600 9.5px 'Space Grotesk';letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">${t}</span>`;
+  const field = (id, label, {val="", ph="", step="any", w="92px", tip=""}={}) =>
+    `<label style="display:flex;flex-direction:column;gap:4px"${tip?` data-tip="${esc(tip)}"`:""}>${lbl(label)}
+      <input id="${id}" type="number" step="${step}" value="${val}" placeholder="${ph}" style="${inp};width:${w}"></label>`;
+  const select = (id, label, opts, tip="") =>
+    `<label style="display:flex;flex-direction:column;gap:4px"${tip?` data-tip="${esc(tip)}"`:""}>${lbl(label)}
+      <select id="${id}" style="${selCss}">${opts}</select></label>`;
+  const check = (id, label, on, tip="") =>
+    `<label style="display:flex;align-items:center;gap:7px;cursor:pointer;font:500 12px var(--sans);color:var(--fg-dim)"${tip?` data-tip="${esc(tip)}"`:""}>
+      <input id="${id}" type="checkbox" ${on?"checked":""}>${label}</label>`;
+  const section = (title, inner, sub="") => `<div style="margin-top:14px;padding-top:13px;border-top:1px solid var(--line)">
+      <div style="font:600 10.5px 'Space Grotesk';letter-spacing:.07em;text-transform:uppercase;color:var(--accent);margin-bottom:2px">${title}</div>
+      ${sub?`<div style="font:400 10.5px var(--sans);color:var(--muted);margin-bottom:9px">${sub}</div>`:`<div style="height:9px"></div>`}
+      ${inner}</div>`;
+  const grid = inner => `<div style="display:flex;flex-wrap:wrap;gap:12px 20px;align-items:flex-end">${inner}</div>`;
+
+  // ---- SCORE: blend (grouped signal checkboxes + weights) OR formula ----
+  const cats = {};
+  (_VOCAB.signals||[]).forEach(s => { (cats[s.category] = cats[s.category] || []).push(s); });
+  const sigRow = s => `<label style="display:flex;align-items:center;gap:8px;padding:4px 0;font:500 12px var(--sans);color:var(--fg-dim)" data-tip="${esc(s.desc||"")}">
+      <input type="checkbox" class="sb-sig" value="${esc(s.name)}">
+      <span style="min-width:118px">${esc(s.label||s.name)}</span>
+      <input class="sb-w" data-sig="${esc(s.name)}" type="number" step="0.05" value="0.5" style="${inp};width:62px">
+      <span style="font:400 10px var(--mono);color:var(--faint)">${(s.needs||[]).join("+")}</span></label>`;
+  const blendPanel = Object.entries(cats).map(([cat, arr]) =>
+    `<div style="min-width:230px"><div style="font:600 9.5px 'Space Grotesk';letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:2px 0 3px">${esc(cat)}</div>${arr.map(sigRow).join("")}</div>`).join("");
+  const chip = (t, ins) => `<button type="button" onclick="sbInsert('${esc(ins)}')" class="pmono" style="background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:3px 8px;font-size:10.5px;color:var(--fg-dim);cursor:pointer">${esc(t)}</button>`;
+  const fieldChips = (_VOCAB.fields||[]).map(f => chip(f.name, f.name)).join(" ");
+  const sigChips = (_VOCAB.signals||[]).map(s => chip(s.name, s.name)).join(" ");
+  const fnChips = (_VOCAB.functions||[]).map(f => `<span data-tip="${esc(f.desc)}">${chip(f.sig, f.name+"(")}</span>`).join(" ");
+  const formulaPanel = `<textarea id="sb-formula" rows="3" placeholder="e.g.  0.5*quality + 0.3*z(raw_ep) - 0.2*raw_beta" style="${inp};width:100%;font-family:var(--mono);resize:vertical"></textarea>
+    <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">
+      <div>${lbl("Signals — z-scored, higher = better")}<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:4px">${sigChips}</div></div>
+      <div>${lbl("Raw fields — native units")}<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:4px">${fieldChips}</div></div>
+      <div>${lbl("Functions")}<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:4px">${fnChips}</div></div>
+    </div>`;
+  const modeBtn = (m, t) => `<button type="button" onclick="sbSetMode('${m}')" id="sb-modebtn-${m}" class="exm-chip" style="padding:5px 13px${_SB_MODE===m?';background:var(--accent);color:#04121f;border-color:var(--accent)':''}">${t}</button>`;
+
   host.innerHTML = `<div class="ovhead"><span class="ovhk">Strategy builder</span>
-      <span class="ovhs">compose a config strategy · preview the book it would trade (no orders)
-        <span class="srcinfo" data-tip="Pick signals + weights and constraints; Preview runs the strategy against the chosen account and shows the sized order plan WITHOUT trading. Trading a spec is still CLI (run_config_strategy.py without --dry-run).">ⓘ</span></span></div>
-    <div style="padding:10px 16px 14px">
-      <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end">
-        <div style="display:flex;flex-direction:column;gap:4px">${lbl("Account")}
-          <select id="sb-acct" style="background:var(--panel-2);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:5px 8px;font:500 12px var(--sans)">${sel}</select></div>
-        <div style="display:flex;flex-direction:column;gap:4px">${lbl("Construction")}
-          <select id="sb-constr" style="background:var(--panel-2);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:5px 8px;font:500 12px var(--sans)">
-            <option value="optimizer">optimizer (cap-respecting)</option><option value="topn">top-N (simple)</option></select></div>
-        <div style="display:flex;flex-direction:column;gap:4px">${lbl("Leverage")}${num("sb-lev", "1.0", "0.1")}</div>
-        <div style="display:flex;flex-direction:column;gap:4px">${lbl("Max names")}${num("sb-maxn", "20", "1")}</div>
-        <div style="display:flex;flex-direction:column;gap:4px">${lbl("Max weight")}${num("sb-maxw", "0.05", "0.01")}</div>
-      </div>
-      <div style="margin-top:12px">${lbl("Signals (check + weight)")}
-        <div style="margin-top:4px">${_SIGNAL_PALETTE.map(sigRow).join("")}</div></div>
-      <div style="display:flex;align-items:center;gap:12px;margin-top:10px">
-        <button class="exm-btn" onclick="previewStrategy()" style="padding:6px 14px">Preview</button>
-        <span id="sb-msg" style="font:500 11.5px var(--mono);color:var(--muted)"></span></div>
+      <span class="ovhs">compose a config strategy · preview the book it would trade, then save it to an account
+        <span class="srcinfo" data-tip="Pick a score (a signal blend or a free-form formula) plus all the construction, universe and overlay parameters. Preview runs it against the account read-only (no orders). Save persists it; blank advanced fields inherit the live settings.">ⓘ</span></span></div>
+    <div style="padding:12px 16px 16px">
+      ${grid(`
+        ${select("sb-acct", "Account", acctOpts, "which account this strategy runs on")}
+        <label style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:180px">${lbl("Strategy name")}
+          <input id="sb-name" type="text" placeholder="e.g. Quality value tilt" style="${inp};width:100%"></label>
+      `)}
+
+      ${section("Score", `<div style="display:flex;gap:7px;margin-bottom:10px">${modeBtn("blend","Signal blend")}${modeBtn("formula","Formula")}</div>
+        <div id="sb-blend" style="display:${_SB_MODE==="blend"?"flex":"none"};flex-wrap:wrap;gap:10px 26px">${blendPanel}</div>
+        <div id="sb-formula-wrap" style="display:${_SB_MODE==="formula"?"block":"none"}">${formulaPanel}</div>`,
+        "the per-name score names are ranked on — a weighted blend of signals, or mix anything via formula")}
+
+      ${section("Construction", grid(`
+        ${select("sb-constr", "Method", '<option value="optimizer">optimizer (cap-respecting)</option><option value="topn">top-N (simple)</option>', "optimizer respects sector + name caps; top-N is a simple score-weighted cut")}
+        ${field("sb-maxn", "Max names", {val:"20", step:"1", w:"78px"})}
+        ${field("sb-maxw", "Max weight", {val:"0.05", step:"0.01", tip:"max fraction per name (maps to the risk gate's single-name cap)"})}
+        ${field("sb-minpos", "Min position", {ph:String(g("portfolio","","min_position_pct",0.04)), step:"0.01", tip:"optimizer position floor (blank = inherit)"})}
+        ${field("sb-maxsec", "Max sector", {ph:String(g("portfolio","","max_sector_pct",0.30)), step:"0.01", tip:"max weight per GICS sector (blank = inherit)"})}
+        ${field("sb-minscore", "Min score", {val:"0.0", step:"0.1", tip:"only hold names scoring above this"})}
+        ${field("sb-lev", "Leverage", {val:"1.0", step:"0.1", tip:"gross exposure = leverage × account equity"})}
+      `) + `<div id="sb-optadv" style="margin-top:9px">${grid(`
+        ${field("sb-topk", "Preselect top-K", {ph:"50", step:"1", tip:"optimizer: rank then optimize over this many names"})}
+        ${field("sb-trs", "Target-return scale", {ph:"0.15", step:"0.01"})}
+        ${field("sb-lambda", "Risk aversion λ", {ph:"0.0", step:"0.1", tip:"mean-variance risk penalty"})}
+      `)}</div>`, "how names become weights")}
+
+      ${section("Universe", grid(`
+        ${field("sb-minprice", "Min price $", {ph:String(g("universe","","min_price",5)), step:"1"})}
+        ${field("sb-minadv", "Min ADV $M", {ph:String((g("universe","","min_adv_usd",1e6))/1e6), step:"1", tip:"minimum average daily dollar volume, in $ millions"})}
+        <div style="align-self:center;margin-top:14px">${check("sb-edgar", "EDGAR filers only", true, "restrict to US-GAAP SEC filers — excludes ETFs / foreign ADRs")}</div>
+      `), "which names are eligible")}
+
+      ${section("Factor windows", grid(`
+        ${field("sb-betaw", "Beta window", {ph:String(g("factors","","beta_window",252)), step:"1"})}
+        ${field("sb-volw", "Vol window", {ph:String(g("factors","","vol_window",252)), step:"1"})}
+        ${field("sb-winsor", "Winsor pct", {ph:String(g("factors","","winsor_pct",0.01)), step:"0.005"})}
+        ${field("sb-momlb", "Momentum lookback", {ph:"252", step:"1"})}
+        ${field("sb-momsk", "Momentum skip", {ph:"21", step:"1"})}
+      `), "trailing windows the signals use — blank inherits the live values")}
+
+      ${section("Overlay", grid(`
+        ${select("sb-ovmode", "Mode", '<option value="none">none (equity only)</option><option value="index">index — SPY call spread</option><option value="per_name">per-name covered calls</option>', "captured on the spec; sleeve execution is equity-only for now (overlay trades on the primary book)")}
+        ${field("sb-ovcov", "Coverage", {ph:"1.0", step:"0.1"})}
+        ${field("sb-ovdelta", "Target Δ", {ph:"0.30", step:"0.05"})}
+        ${field("sb-ovwing", "Wing Δ", {ph:"0.05", step:"0.05"})}
+        ${field("sb-ovdte1", "Min DTE", {ph:"30", step:"1", w:"72px"})}
+        ${field("sb-ovdte2", "Max DTE", {ph:"45", step:"1", w:"72px"})}
+      `), "optional derivatives overlay")}
+
+      ${section("Rebalance & execution", grid(`
+        ${select("sb-freq", "Rebalance", '<option value="monthly">monthly (1st trading day)</option><option value="weekly">weekly (Mondays)</option><option value="daily">daily</option>', "cadence the autonomous scheduler trades this on")}
+        ${select("sb-mode", "Order mode", '<option value="normal">normal (patient)</option><option value="express">express (fast)</option>', "normal chases patiently; express crosses to fill fast")}
+        <div style="align-self:center;margin-top:14px">${check("sb-auto", "Auto-run on schedule", false, "when on, the scheduler trades this account automatically on its cadence — otherwise Preview/Run only")}</div>
+      `), "when + how it trades")}
+
+      <div style="display:flex;align-items:center;gap:10px;margin-top:16px">
+        <button class="exm-btn" onclick="previewStrategy()" style="padding:7px 16px">Preview</button>
+        <button class="exm-chip" onclick="saveStrategy()" style="padding:7px 14px">Save strategy</button>
+        <span id="sb-msg" style="font:500 11.5px var(--mono);color:var(--muted);margin-left:4px"></span></div>
       <div id="sb-result" style="margin-top:12px"></div>
     </div>`;
+
+  // prefill from a saved spec for the current account, and on account switch
+  const acctSel = $("sb-acct");
+  if (acctSel){ acctSel.onchange = () => sbLoadSaved(acctSel.value); sbLoadSaved(acctSel.value); }
+}
+
+function sbSetMode(m){
+  _SB_MODE = m;
+  const b = $("sb-blend"), f = $("sb-formula-wrap");
+  if (b) b.style.display = m === "blend" ? "flex" : "none";
+  if (f) f.style.display = m === "formula" ? "block" : "none";
+  ["blend","formula"].forEach(x => { const btn = $("sb-modebtn-"+x);
+    if (btn){ const on = x === m; btn.style.background = on ? "var(--accent)" : ""; btn.style.color = on ? "#04121f" : ""; btn.style.borderColor = on ? "var(--accent)" : ""; } });
+}
+
+// Insert a token into the formula box at the caret (chips in formula mode).
+function sbInsert(tok){
+  const ta = $("sb-formula"); if (!ta) return;
+  if (_SB_MODE !== "formula") sbSetMode("formula");
+  const s = ta.selectionStart ?? ta.value.length, e = ta.selectionEnd ?? ta.value.length;
+  ta.value = ta.value.slice(0, s) + tok + ta.value.slice(e);
+  ta.focus(); ta.selectionStart = ta.selectionEnd = s + tok.length;
+}
+
+const _setV = (id, v) => { const el = $(id); if (el && v != null) el.value = v; };
+const _setChk = (id, v) => { const el = $(id); if (el) el.checked = !!v; };
+
+// Load an account's saved spec into the form (prefill). No-op if nothing saved.
+async function sbLoadSaved(account){
+  if (!account) return;
+  const s = await get("/api/strategy/spec?account=" + encodeURIComponent(account));
+  const sp = s && s.spec;
+  if (!sp){ return; }                                   // nothing saved for this account — leave defaults
+  _setV("sb-name", sp.name);
+  if (sp.formula){ sbSetMode("formula"); _setV("sb-formula", sp.formula); }
+  else {
+    sbSetMode("blend");
+    document.querySelectorAll(".sb-sig").forEach(cb => { cb.checked = false; });
+    Object.entries(sp.signals || {}).forEach(([n, w]) => {
+      const cb = document.querySelector(`.sb-sig[value="${n}"]`); if (cb) cb.checked = true;
+      const wi = document.querySelector(`.sb-w[data-sig="${n}"]`); if (wi) wi.value = w;
+    });
+  }
+  _setV("sb-constr", sp.construction); _setV("sb-maxn", sp.max_names); _setV("sb-maxw", sp.max_weight);
+  _setV("sb-minpos", sp.min_position_pct); _setV("sb-maxsec", sp.max_sector_pct);
+  _setV("sb-minscore", sp.min_score); _setV("sb-lev", sp.leverage);
+  _setV("sb-topk", sp.preselect_top_k); _setV("sb-trs", sp.target_return_scale); _setV("sb-lambda", sp.risk_aversion_lambda);
+  _setV("sb-minprice", sp.min_price); _setV("sb-minadv", sp.min_adv_usd != null ? sp.min_adv_usd/1e6 : null);
+  _setChk("sb-edgar", sp.require_edgar !== false);
+  _setV("sb-betaw", sp.beta_window); _setV("sb-volw", sp.vol_window); _setV("sb-winsor", sp.winsor_pct);
+  _setV("sb-momlb", sp.mom_lookback); _setV("sb-momsk", sp.mom_skip);
+  _setV("sb-freq", sp.rebalance_frequency); _setV("sb-mode", sp.mode);
+  _setChk("sb-auto", s.auto_enabled);
+  if (sp.overlay && sp.overlay.mode){ _setV("sb-ovmode", sp.overlay.mode);
+    const p = sp.overlay.params || {}; _setV("sb-ovcov", p.coverage); _setV("sb-ovdelta", p.target_delta);
+    _setV("sb-ovwing", p.wing_delta); _setV("sb-ovdte1", p.min_dte_entry); _setV("sb-ovdte2", p.max_dte_entry); }
+  sbMsg(`loaded saved "${sp.name||account}"`, "var(--muted)");
+}
+
+// Collect the full spec body from the form. Blank numeric fields → omitted (inherit global).
+function sbCollectBody(){
+  const numv = id => { const el = $(id); if (!el) return null; const v = (el.value||"").trim(); return v === "" ? null : parseFloat(v); };
+  const intv = id => { const v = numv(id); return v == null ? null : Math.round(v); };
+  const body = { account: ($("sb-acct")||{}).value, name: (($("sb-name")||{}).value||"").trim() || undefined };
+  if (_SB_MODE === "formula"){ body.formula = (($("sb-formula")||{}).value||"").trim(); }
+  else {
+    const signals = {};
+    document.querySelectorAll(".sb-sig:checked").forEach(cb => {
+      const w = document.querySelector(`.sb-w[data-sig="${cb.value}"]`);
+      signals[cb.value] = parseFloat((w && w.value)||"0") || 0; });
+    body.signals = signals;
+  }
+  body.construction = ($("sb-constr")||{}).value || "optimizer";
+  body.max_names = intv("sb-maxn"); body.max_weight = numv("sb-maxw");
+  body.min_position_pct = numv("sb-minpos"); body.max_sector_pct = numv("sb-maxsec");
+  body.min_score = numv("sb-minscore"); body.leverage = numv("sb-lev");
+  body.preselect_top_k = intv("sb-topk"); body.target_return_scale = numv("sb-trs"); body.risk_aversion_lambda = numv("sb-lambda");
+  body.beta_window = intv("sb-betaw"); body.vol_window = intv("sb-volw"); body.winsor_pct = numv("sb-winsor");
+  body.mom_lookback = intv("sb-momlb"); body.mom_skip = intv("sb-momsk");
+  body.min_price = numv("sb-minprice"); const adv = numv("sb-minadv"); body.min_adv_usd = adv == null ? null : adv*1e6;
+  body.require_edgar = ($("sb-edgar")||{}).checked;
+  const ov = ($("sb-ovmode")||{}).value;
+  if (ov && ov !== "none"){ body.overlay = { mode: ov, market: "SPY", params: {
+    coverage: numv("sb-ovcov"), target_delta: numv("sb-ovdelta"), wing_delta: numv("sb-ovwing"),
+    min_dte_entry: intv("sb-ovdte1"), max_dte_entry: intv("sb-ovdte2") } }; }
+  body.rebalance_frequency = ($("sb-freq")||{}).value || "monthly";
+  body.mode = ($("sb-mode")||{}).value || "normal";
+  body.auto_enabled = ($("sb-auto")||{}).checked || false;
+  Object.keys(body).forEach(k => { if (body[k] == null) delete body[k]; });
+  return body;
+}
+
+function sbValidateScore(body){
+  if (_SB_MODE === "formula") return body.formula ? null : "enter a formula";
+  return (body.signals && Object.keys(body.signals).length) ? null : "pick at least one signal";
 }
 
 async function previewStrategy(){
   const tok = execToken(); if (!tok) return;
-  const signals = {};
-  document.querySelectorAll(".sb-sig:checked").forEach(cb => {
-    const w = document.querySelector(`.sb-w[data-sig="${cb.value}"]`);
-    signals[cb.value] = parseFloat((w && w.value) || "0") || 0;
-  });
-  if (!Object.keys(signals).length){ $("sb-msg").textContent = "pick at least one signal"; $("sb-msg").style.color = "var(--red)"; return; }
-  const body = { account: ($("sb-acct")||{}).value, signals,
-    construction: ($("sb-constr")||{}).value, leverage: parseFloat(($("sb-lev")||{}).value) || 1.0,
-    max_names: parseInt(($("sb-maxn")||{}).value) || 20, max_weight: parseFloat(($("sb-maxw")||{}).value) || 0.05 };
-  $("sb-msg").textContent = "previewing…"; $("sb-msg").style.color = "var(--muted)";
+  const body = sbCollectBody();
+  const bad = sbValidateScore(body); if (bad){ sbMsg(bad, "var(--red)"); return; }
+  sbMsg("previewing…", "var(--muted)");
   const r = await postJSON("/api/strategy/preview", tok, body);
   const res = $("sb-result");
-  if (!r || r.error){ $("sb-msg").textContent = (r && r.error) || "preview failed"; $("sb-msg").style.color = "var(--red)"; res.innerHTML = ""; return; }
-  if (r.status === "blocked_risk"){ $("sb-msg").textContent = "risk gate would block"; $("sb-msg").style.color = "var(--amber)";
+  if (!r || r.error){ sbMsg((r && r.error) || "preview failed", "var(--red)"); res.innerHTML = ""; return; }
+  if (r.status === "blocked_risk"){ sbMsg("risk gate would block", "var(--amber)");
     res.innerHTML = `<div class="exm-err" style="color:var(--amber)">${esc(r.reason||"blocked")}</div>`; return; }
-  if (r.status !== "dry_run"){ $("sb-msg").textContent = r.status || "no plan"; $("sb-msg").style.color = "var(--muted)"; res.innerHTML = ""; return; }
+  if (r.status !== "dry_run"){ sbMsg(r.status || "no plan", "var(--muted)"); res.innerHTML = ""; return; }
   const orders = r.orders || [];
   const gross = orders.reduce((a, o) => a + (o.notional || 0), 0);
+  sbMsg("", "var(--muted)");
   $("sb-msg").innerHTML = `<span style="color:var(--green)">would trade ${orders.length} names · ${usd(gross)} gross · ${(+r.leverage).toFixed(2)}× on ${usd(r.equity)}</span>`;
   const rows = orders.map(o => `<tr>
     <td style="padding:3px 10px 3px 0;font:600 11.5px var(--mono)">${esc(o.symbol)}</td>
@@ -2050,6 +2224,17 @@ async function previewStrategy(){
       <th style="text-align:right;padding:0 10px 5px;font:600 9.5px 'Space Grotesk';letter-spacing:.06em;color:var(--muted)">QTY</th>
       <th style="text-align:right;padding:0 0 5px 10px;font:600 9.5px 'Space Grotesk';letter-spacing:.06em;color:var(--muted)">NOTIONAL</th></tr></thead>
     <tbody>${rows}</tbody></table></div>`;
+}
+
+async function saveStrategy(){
+  const tok = execToken(); if (!tok) return;
+  const body = sbCollectBody();
+  const bad = sbValidateScore(body); if (bad){ sbMsg(bad, "var(--red)"); return; }
+  sbMsg("saving…", "var(--muted)");
+  const r = await postJSON("/api/strategy/save", tok, body);
+  if (!r || r.error){ sbMsg((r && r.error) || "save failed", "var(--red)"); return; }
+  sbMsg(`saved "${r.name}" · ${r.rebalance_frequency}${r.auto_enabled ? " · auto-run ON" : ""}`, "var(--green)");
+  toast(`strategy saved for ${r.account}`);
 }
 async function postJSON(path, tok, body){
   try {

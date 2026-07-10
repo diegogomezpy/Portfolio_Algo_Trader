@@ -983,28 +983,58 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
         err = _exec_gate(x_exec_token)
         if err:
             return err
-        from engine import account_runner, config_strategy, formula, signals as _sig
+        from engine import account_runner, config_strategy
         try:
-            sigs = {str(k): float(v) for k, v in (body.get("signals") or {}).items()}
-            expr = (body.get("formula") or "").strip()
-            if expr:
-                vocab = ({s["name"] for s in _sig.signal_specs()}
-                         | {f["name"] for f in _sig.field_specs()})
-                formula.validate(expr, vocab)               # FormulaError → surfaced below
-            elif not sigs:
-                return {"error": "pick at least one signal, or enter a formula"}
-            spec = config_strategy.StrategySpec(
-                name=str(body.get("name") or f"cfg-{body.get('account')}"),
-                signals=sigs, formula=expr or None,
-                construction=str(body.get("construction") or "optimizer"),
-                max_names=int(body.get("max_names") or 20),
-                max_weight=float(body.get("max_weight") or 0.05),
-                leverage=float(body.get("leverage") or 1.0),
-                min_score=float(body.get("min_score") or 0.0))
+            spec = _spec_from_body(body)
             strat = config_strategy.ConfigStrategy(spec)
             return await asyncio.to_thread(
                 account_runner.run_strategy_on_account, str(body.get("account")), strat,
                 db_engine=db_engine, settings=settings, dry_run=True)
+        except Exception as exc:  # noqa: BLE001 — surface the reason to the builder
+            return {"error": str(exc)}
+
+    def _spec_from_body(body: dict):
+        """Build (and validate) a StrategySpec from a builder POST body — the full parameter surface.
+        Raises with a human message the builder surfaces (unknown signal/field/function, empty spec)."""
+        from engine import config_strategy, formula, signals as _sig
+        d = dict(body or {})
+        d.setdefault("name", f"cfg-{d.get('account') or 'strategy'}")
+        sigs = {str(k): float(v) for k, v in (d.get("signals") or {}).items()}
+        expr = (d.get("formula") or "").strip()
+        if expr:
+            vocab = ({s["name"] for s in _sig.signal_specs()} | {f["name"] for f in _sig.field_specs()})
+            formula.validate(expr, vocab)                   # FormulaError → surfaced by caller
+        elif not sigs:
+            raise ValueError("pick at least one signal, or enter a formula")
+        d["signals"] = sigs
+        return config_strategy.spec_from_dict(d)
+
+    @app.get("/api/strategy/spec")
+    def strategy_spec_get(account: str) -> dict:
+        """The account's saved strategy spec (non-secret) for the builder to load, or {}."""
+        from engine import specstore
+        return specstore.get_spec(db_engine, account) or {}
+
+    @app.post("/api/strategy/save")
+    def strategy_save(body: dict = Body(...),  # noqa: B008
+                      x_exec_token: str | None = Header(default=None)) -> dict:
+        """Persist a strategy spec for an account (token-gated). Body is the same shape as preview
+        plus rebalance_frequency / mode / auto_enabled. Validates before saving."""
+        err = _exec_gate(x_exec_token)
+        if err:
+            return err
+        from engine import specstore
+        try:
+            account = str(body.get("account") or "").strip().lower()
+            if not account:
+                return {"error": "account is required"}
+            spec = _spec_from_body(body)
+            saved = specstore.save_spec(
+                db_engine, account, spec,
+                rebalance_frequency=str(body.get("rebalance_frequency") or "monthly"),
+                mode=str(body.get("mode") or "normal"),
+                auto_enabled=body.get("auto_enabled"))
+            return {"saved": True, **saved}
         except Exception as exc:  # noqa: BLE001 — surface the reason to the builder
             return {"error": str(exc)}
 

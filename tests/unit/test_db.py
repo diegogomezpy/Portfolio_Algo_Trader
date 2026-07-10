@@ -25,6 +25,7 @@ EXPECTED_TABLES = {
     "manual_actions",
     "overrides",
     "account_credentials",
+    "strategy_specs",
 }
 
 

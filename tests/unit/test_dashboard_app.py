@@ -567,8 +567,10 @@ def test_signals_endpoint_lists_the_builtin_palette():
     app = create_app(eng, live=False)
     out = _route(app, "/api/signals")()
     names = {s["name"] for s in out}
-    assert names == {"quality", "value", "low_beta", "low_vol"}
-    assert all("needs" in s for s in out)
+    # The four live factors plus the finer single-metric building blocks (FB2).
+    assert {"quality", "value", "low_beta", "low_vol"} <= names
+    assert {"roe", "gross_margin", "earnings_yield", "book_yield", "momentum"} <= names
+    assert all("needs" in s and "label" in s and "category" in s for s in out)
 
 
 def test_strategy_preview_token_gated_and_wires_spec(monkeypatch):
