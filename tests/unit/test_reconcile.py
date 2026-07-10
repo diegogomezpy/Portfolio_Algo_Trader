@@ -171,6 +171,40 @@ def test_reconcile_orders_inserts_unknown_option_order():
     assert row["rebalance_cycle"] is None
 
 
+def test_reconcile_orders_skips_multileg_combo_without_symbol():
+    # The 2026-07-09 crash: a multi-leg combo (the SPY overwrite spread) comes back from Alpaca as a
+    # PARENT order with symbol=None. orders.symbol is NOT NULL, so inserting it raised and aborted
+    # the whole reconcile — which ran AFTER the cycle had already traded, killing the rebalance's
+    # completion. It's recorded in options_lifecycle already; the equity blotter skips it.
+    eng = _engine()
+    client = _OrdersClient([
+        {"id": "ovw-1", "client_order_id": "ovw:2026-07-09:SPY:r1", "symbol": None, "side": None,
+         "qty": 3, "order_type": None, "status": "filled", "filled_qty": 3, "filled_avg_price": -5.42},
+        {"id": "opt-1", "symbol": "SLV260731C00057500", "side": "sell", "qty": 1, "order_type": "limit",
+         "status": "filled", "filled_qty": 1, "filled_avg_price": 1.19},   # single-leg still inserts
+    ])
+    n = reconcile.reconcile_orders(client, eng)          # must NOT raise
+    assert n == 1                                        # the combo skipped, the single-leg inserted
+    rows = _orders(eng)
+    assert "ovw-1" not in rows and "opt-1" in rows
+
+
+def test_reconcile_orders_one_bad_row_does_not_abort_the_sync(monkeypatch):
+    # Defense-in-depth: even an unforeseen malformed row is logged and skipped, never crashing the
+    # post-trade blotter sync (and thus the cycle).
+    eng = _engine()
+    good = {"id": "opt-2", "symbol": "IAU260731C00050000", "side": "sell", "qty": 1,
+            "order_type": "limit", "status": "filled", "filled_qty": 1, "filled_avg_price": 0.8}
+    real = reconcile._upsert_order_status
+    def flaky(db_engine, od):
+        if od.get("id") == "boom":
+            raise RuntimeError("surprise")
+        return real(db_engine, od)
+    monkeypatch.setattr(reconcile, "_upsert_order_status", flaky)
+    n = reconcile.reconcile_orders(_OrdersClient([{"id": "boom"}, good]), eng)
+    assert n == 1 and "opt-2" in _orders(eng)
+
+
 def test_reconcile_orders_resilient_to_get_orders_failure():
     eng = _engine()
     assert reconcile.reconcile_orders(_OrdersClient([], raise_get=True), eng) == 0   # logged, no raise

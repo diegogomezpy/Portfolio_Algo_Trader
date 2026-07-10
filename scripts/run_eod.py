@@ -452,7 +452,10 @@ def _run_cycle_locked(
         n_written = len(written or [])
 
     mon = monitor.monitor_once(client, db_engine, target_weights=weights.to_dict())
-    reconcile.reconcile_orders(client, db_engine, alert=alert)   # blotter ← Alpaca order statuses
+    try:                       # blotter sync runs AFTER the trades — it must never crash the cycle
+        reconcile.reconcile_orders(client, db_engine, alert=alert)   # blotter ← Alpaca order statuses
+    except Exception as exc:   # noqa: BLE001
+        log.error("order reconcile failed post-trade (non-fatal)", extra={"error": str(exc)})
     try:                       # reporting must never crash a cycle that already traded
         breakdown = _format_breakdown(report, written, skipped)   # per-asset / per-call detail
         if alert:
@@ -756,7 +759,10 @@ def daily_job(
     # This month's rebalance already landed: keep the DB honest, finish any still-deferred residual,
     # run the overlay safety pass, snapshot.
     reconcile.reconcile(client, db_engine, alert=alert)
-    reconcile.reconcile_orders(client, db_engine, alert=alert)   # blotter ← Alpaca order statuses
+    try:                       # blotter sync must never crash the daily job (it runs post-trade)
+        reconcile.reconcile_orders(client, db_engine, alert=alert)   # blotter ← Alpaca order statuses
+    except Exception as exc:   # noqa: BLE001
+        log.error("order reconcile failed (non-fatal)", extra={"error": str(exc)})
     try:                       # cross-day: complete still-deferred names that remain in the target
         pending_work_fn(client, broker, db_engine, settings=settings, as_of=as_of, alert=alert)
     except Exception as exc:   # noqa: BLE001 — a top-up failure must not crash the daily job

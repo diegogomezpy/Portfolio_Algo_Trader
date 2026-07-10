@@ -138,7 +138,16 @@ def reconcile_orders(client, db_engine, *, status: str = "all", limit: int = 200
     except Exception as exc:  # noqa: BLE001 — blotter parity must never crash the job
         log.warning("order reconcile skipped; get_orders failed", extra={"error": str(exc)})
         return 0
-    n = sum(1 for od in live if _upsert_order_status(db_engine, od))
+    # reconcile_orders runs AFTER the cycle has already traded (run_eod), so a single malformed row
+    # must never propagate and abort the cycle's completion. Guard each upsert individually.
+    n = 0
+    for od in live:
+        try:
+            if _upsert_order_status(db_engine, od):
+                n += 1
+        except Exception as exc:  # noqa: BLE001 — log + skip the row; never crash the blotter sync
+            log.warning("order reconcile: skipped a row",
+                        extra={"id": od.get("id"), "error": str(exc)})
     if n:
         log.info("order reconcile: blotter synced to Alpaca", extra={"reconciled": n, "fetched": len(live)})
     return n
@@ -163,11 +172,20 @@ def _upsert_order_status(db_engine, od: dict) -> bool:
         exists = conn.execute(select(orders_t.c.id).where(orders_t.c.id == oid)).first()
         if exists:
             conn.execute(update(orders_t).where(orders_t.c.id == oid).values(**mutable))
-        else:                                            # order the executor never persisted (e.g. options)
-            conn.execute(insert(orders_t).values(
-                id=oid, client_order_id=od.get("client_order_id"), rebalance_cycle=None,
-                symbol=od.get("symbol"), side=od.get("side"), qty=od.get("qty"),
-                order_type=od.get("order_type"), **mutable))
+            return True
+        # A new order the executor never persisted (e.g. options). A multi-leg / combo order — the
+        # SPY overwrite spread — comes back from Alpaca as a PARENT with symbol=None (only its legs
+        # carry symbols); the equity `orders` blotter (symbol NOT NULL) can't represent a combo, and
+        # it's already recorded in options_lifecycle + the premium ledger. Skip it rather than let
+        # the NOT NULL violation abort the whole reconcile (which ran post-trade and killed the
+        # cycle's completion). Single-leg option orders carry their own OCC symbol and insert fine.
+        symbol = od.get("symbol")
+        if not symbol:
+            return False
+        conn.execute(insert(orders_t).values(
+            id=oid, client_order_id=od.get("client_order_id"), rebalance_cycle=None,
+            symbol=symbol, side=od.get("side"), qty=od.get("qty"),
+            order_type=od.get("order_type"), **mutable))
     return True
 
 
