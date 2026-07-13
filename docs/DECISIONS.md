@@ -1016,4 +1016,42 @@ strategies on shared infrastructure. Three linked choices, specified in full in
    never in Postgres/backups. The engine reads at run time; the assistant is never in the value path.
 
 **Build order (ADR):** A keystone (Strategy interface + registry + current strategy as first plugin)
-→ B per-account plumbing → C credentials → D platform dashboard. Status 2026-07-08: **A in progress.**
+→ B per-account plumbing → C credentials → D platform dashboard.
+
+**Status 2026-07-10 — BUILT + DEPLOYED.** All four phases plus the "strategies on the fly" north star
+shipped: the `Strategy` plugin + registry (A), per-account tracked sleeves + isolated
+`account_runner` (B), a composable signal library + sandboxed formula engine + declarative
+`ConfigStrategy` with a per-spec settings overlay + spec persistence + an autonomous per-account
+scheduler, and the dashboard **Builder** studio (D). Full reference: **[PLATFORM.md](PLATFORM.md)**.
+**Amendment to choice 3 (creds):** Secret Manager was superseded by **Fernet-encrypted Postgres**
+(`account_credentials`, key in `.cred_kek` off the DB) so accounts can be added 100% from the
+dashboard with no VM/gcloud step (zero-setup); migrate to Secret Manager before go-live (Phase 7).
+The primary book was never taken off `low_beta_overwrite`; the whole studio is isolated to
+non-primary accounts.
+
+---
+
+## D38 — Public dashboard: open to view, token-gated to operate
+
+**Context (2026-07-10).** The repo went public and the dashboard is now a showcase. Previously the
+whole site sat behind a Caddy HTTP basic-auth password (user `viewer`); execution was *separately*
+gated inside the app by `SEPI_EXEC_TOKEN`.
+
+**Decision.** Remove the view password entirely — the fund is openly viewable (NAV, holdings,
+performance, factor scores, running config, the builder palette). Keep **all** mutation and
+credential access gated by `SEPI_EXEC_TOKEN` (`X-Exec-Token`, constant-time `hmac.compare_digest`,
+fails closed when unset). An adversarial audit confirmed the two are independent: no unauthenticated
+visitor can change state, read a secret, or read arbitrary files. Beyond the pure view surface, the
+**account-management reads** (`GET /api/accounts`, `GET /api/accounts/{slug}/state`) were *also*
+token-gated in this change — they expose partial API-key fingerprints + per-sleeve balances and make
+real-key Alpaca calls, so they belong with "operate", not "view".
+
+**Blast radius.** `deploy/Caddyfile` drops `basic_auth`; `setup_funnel.sh` no longer prompts for a
+password; `engine.alerts._dashboard_footer` links the URL only (no `login:` line); `public_user` and
+`DASHBOARD_PASSWORD` are retired (removed from settings.yaml + fetch_secrets.sh). The proxy is now a
+plain compressing reverse proxy in front of the public app.
+
+**Open (accepted).** With Caddy auth gone the entire *read* surface is unauthenticated and there is no
+rate-limiting, so anonymous callers can drive repeated external fetches (Alpaca/yfinance) via cache-miss
+GETs using the operator's data keys. Acceptable for a paper showcase; add a reverse-proxy rate limit
+before go-live.

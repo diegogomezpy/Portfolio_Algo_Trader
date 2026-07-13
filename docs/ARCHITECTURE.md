@@ -356,6 +356,27 @@ Runs continuously every 60 seconds between rebalances.
 - Writes portfolio snapshot to PostgreSQL `snapshots` table
 - Feeds data to dashboard via PostgreSQL
 
+### Strategy studio (`engine/{strategy,signals,formula,config_strategy,account_runner,specstore,scheduler}.py`)
+
+The on-the-fly, declarative strategy platform layered on top of the fixed book (ADR-001 / D37). The
+primary book is untouched — every path here is isolated to non-primary accounts. Full reference:
+**[PLATFORM.md](PLATFORM.md)**. In brief:
+
+- `strategy.py` — the `Strategy` protocol (`generate() → TargetBook`) + registry; the pipeline and
+  backtest run *around* it, so backtest↔live parity holds by construction.
+- `signals.py` — the composable signal library (nine z-scored signals + nine `raw_*` fields); the four
+  factor signals are byte-identical to `factors.py` (parity-tested).
+- `formula.py` — a **sandboxed** (AST allow-list, not `eval`) arithmetic mini-language over that
+  vocabulary; attribute access / imports / subscripts / lambdas / comprehensions are rejected.
+- `config_strategy.py` — `StrategySpec` (strategy as data) + `ConfigStrategy`; `effective_settings`
+  overlays a spec's caps/leverage/windows onto the exact leaves the optimizer + risk gate read.
+- `account_runner.py` — runs a strategy on one non-primary account in isolation (own client/broker,
+  no reconcile, refuses primary); `dry_run` is the builder's preview.
+- `specstore.py` — one `StrategySpec` per account in `strategy_specs` (JSON), with cadence + an
+  `auto_enabled` flag + a `last_run` idempotency lease.
+- `scheduler.py` — the autonomous per-account loop (`run_scheduled`), called by the dashboard monitor;
+  cadence-gated, market-gated, opt-in (defaults off), separate from the primary book's `run_eod`.
+
 ---
 
 ## Data stores

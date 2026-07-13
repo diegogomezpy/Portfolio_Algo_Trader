@@ -1,11 +1,19 @@
 # ADR-001: From single-strategy engine to a multi-strategy platform
 
-**Status:** Accepted
-**Date:** 2026-07-08 (proposed and accepted)
+**Status:** Accepted → **Built + deployed (2026-07-10)**
+**Date:** 2026-07-08 (proposed and accepted); 2026-07-10 (shipped)
 **Deciders:** Diego (owner)
 **Supersedes / relates to:** extends the module boundaries in [ARCHITECTURE.md](../ARCHITECTURE.md);
 sits above the execution decisions D35 (launch hardening) and the 2026-07-06 execution X-series.
-Recorded as `D37` in [DECISIONS.md](../DECISIONS.md).
+Recorded as `D37` in [DECISIONS.md](../DECISIONS.md); the strategy studio as built is documented in
+[PLATFORM.md](../PLATFORM.md).
+
+> **As-built note.** All four phases shipped (see D37 status). **Fork 3 (credentials) changed:** the
+> Secret-Manager plan below was superseded by **Fernet-encrypted Postgres** so accounts can be added
+> entirely from the dashboard with no gcloud step — migrate to Secret Manager before go-live. The
+> declarative *config strategy* (Fork 1 Option C, deferred below) became the actual destination: a
+> signal library + sandboxed formula engine + `ConfigStrategy` + the dashboard Builder. The dashboard
+> is now publicly viewable with execution token-gated (D38).
 
 ---
 
