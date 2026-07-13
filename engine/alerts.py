@@ -170,17 +170,14 @@ def _portfolio_context(db_engine) -> str:
 
 
 def _dashboard_footer(settings) -> str:
-    """Link + login for the public dashboard. URL/user come from ``settings.dashboard`` (not
-    secret); the password is read from the ``DASHBOARD_PASSWORD`` env var (never committed) and
-    appended when present. Returns ``""`` when no ``public_url`` is configured."""
+    """Link to the public dashboard. ``public_url`` comes from ``settings.dashboard`` (not secret).
+    The dashboard is openly viewable (no login) — execution stays gated by SEPI_EXEC_TOKEN inside
+    the app — so there is no credential to append. Returns ``""`` when no ``public_url`` is set."""
     d = getattr(settings, "dashboard", None)
     url = str(getattr(d, "public_url", "") or "").strip()
     if not url:
         return ""
-    user = str(getattr(d, "public_user", "viewer") or "viewer").strip()
-    pw = os.environ.get("DASHBOARD_PASSWORD", "").strip()
-    login = f"  login: {user} / {pw}" if pw else f"  login: {user}"
-    return f"— Dashboard —\n  {url}\n{login}"
+    return f"— Dashboard —\n  {url}"
 
 
 def _email_body(message: str, db_engine, settings) -> str:

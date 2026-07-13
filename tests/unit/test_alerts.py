@@ -101,7 +101,7 @@ def test_send_failure_records_undelivered_and_does_not_raise():
 
 def _settings():
     return SimpleNamespace(dashboard=SimpleNamespace(
-        public_url="https://sharpe-engine.example.ts.net", public_user="viewer"))
+        public_url="https://sharpe-engine.example.ts.net"))
 
 
 def test_email_body_adds_portfolio_snapshot_and_dashboard_link(monkeypatch):
@@ -113,7 +113,6 @@ def test_email_body_adds_portfolio_snapshot_and_dashboard_link(monkeypatch):
         c.execute(insert(db.rebalance_log).values(
             ts=datetime(2026, 7, 1, 20, 10), trigger_reason="monthly",
             target_weights={"AAPL": 0.25}, risk_gate_passed=True, risk_gate_reason="ok"))
-    monkeypatch.setenv("DASHBOARD_PASSWORD", "s3cret")
     sent = []
     alert = alerts.make_alerter(eng, _settings(), send=lambda body, *_: sent.append(body), dry_run=False)
     alert("rebalance 2026-07-01 complete — equity: 2/2 orders filled")
@@ -122,15 +121,13 @@ def test_email_body_adds_portfolio_snapshot_and_dashboard_link(monkeypatch):
     assert "NAV" in body and "$206,540" in body                          # portfolio snapshot
     assert "0.50x" in body and "Positions   2" in body and "4.0%" in body
     assert "Last rebal  2026-07-01" in body
-    assert "https://sharpe-engine.example.ts.net" in body                # dashboard link…
-    assert "viewer / s3cret" in body                                     # …with the login
+    assert "https://sharpe-engine.example.ts.net" in body                # dashboard link (public, no login)
     # the DB still stores the terse original, not the enriched email body
     assert _rows(eng)[0]["message"] == "rebalance 2026-07-01 complete — equity: 2/2 orders filled"
 
 
-def test_dashboard_footer_omits_password_when_unset(monkeypatch):
-    monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
+def test_dashboard_footer_is_url_only_no_login():
     foot = alerts._dashboard_footer(_settings())
-    assert "https://sharpe-engine.example.ts.net" in foot and "login: viewer" in foot
-    assert " / " not in foot                                             # no password leaked
+    assert "https://sharpe-engine.example.ts.net" in foot
+    assert "login" not in foot and "viewer" not in foot                  # public dashboard — no credentials
     assert alerts._dashboard_footer(SimpleNamespace()) == ""             # no public_url → no footer

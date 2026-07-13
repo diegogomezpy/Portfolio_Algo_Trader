@@ -135,9 +135,20 @@ async function get(p){
   try { const r = await fetch(p); return r.ok ? await r.json() : null; } catch { return null; }
 }
 
+// Token-attaching GET for the operator-only account-management reads (/api/accounts,
+// /api/accounts/<slug>/state). The dashboard is publicly viewable, but those endpoints expose
+// broker-credential metadata + make real-key Alpaca calls, so they're token-gated server-side.
+// Attaches the stored exec token WITHOUT prompting — a public viewer (no token) just gets an
+// error the callers treat as "no accounts", so the fund showcase still renders for everyone.
+async function getAuthed(p){
+  const tok = localStorage.getItem("sepi_exec_token") || "";
+  try { const r = await fetch(p, { headers: tok ? { "X-Exec-Token": tok } : {} });
+    return r.ok ? await r.json() : null; } catch { return null; }
+}
+
 async function populateAccountSwitcher(){
   const sel = $("acctSwitcher"); if (!sel) return;
-  const accts = await get("/api/accounts");
+  const accts = await getAuthed("/api/accounts");
   const opts = [{slug: "primary", label: "Primary book"}].concat(
     (Array.isArray(accts) ? accts : []).filter(a => a && a.slug)
       .map(a => ({slug: a.slug, label: a.label || a.slug})));
@@ -1913,7 +1924,7 @@ async function loadExecute(){
 
 // ---- Accounts tab: dashboard-managed encrypted broker credentials (Phase C) ----
 async function loadAccounts(){
-  const rows = await get("/api/accounts");
+  const rows = await getAuthed("/api/accounts");
   renderAccounts(rows);
   // Auto-check each account once (so you SEE its status without clicking), cached in _ACCT_STATE
   // so the governed re-render doesn't re-hit Alpaca every tick.
@@ -1926,7 +1937,7 @@ async function loadAccounts(){
 // running right now (its factors/caps/overlay/cadence), then the composer that previews a config
 // strategy against a chosen account. Its own top-level tab (moved out of Accounts). ----
 async function loadBuilder(){
-  const [cfg, accts] = await Promise.all([get("/api/config"), get("/api/accounts")]);
+  const [cfg, accts] = await Promise.all([get("/api/config"), getAuthed("/api/accounts")]);
   renderPrimaryConfig(cfg);
   renderStrategyBuilder(Array.isArray(accts) ? accts : [], cfg);
 }
@@ -2295,7 +2306,9 @@ function renderAccounts(rows){
     if (focusedInput || dirty) return;
   }
   host._built = true;
-  rows = Array.isArray(rows) ? rows : [];
+  // Keep only real account rows: a public viewer (no exec token) gets the gated [{error}] response,
+  // which has no slug — drop it so the roster reads empty rather than showing a broken row.
+  rows = (Array.isArray(rows) ? rows : []).filter(a => a && a.slug);
   const acctRow = (a) => `<div style="display:grid;grid-template-columns:1.4fr .8fr .9fr .7fr auto;gap:10px;align-items:center;padding:9px 0;border-top:1px solid var(--line-soft)">
     <span><span style="font:600 12px var(--sans);color:var(--fg)">${esc(a.label||a.slug)}</span>
       <span style="font:400 10px var(--mono);color:var(--muted)"> · ${esc(a.slug)}</span></span>
@@ -2346,7 +2359,7 @@ async function addAccount(){
   // Clear the secret material from the DOM immediately on success.
   if (ok){ ["acKey","acSecret","acCapital","acLev","acLabel","acSlug"].forEach(id => { if ($(id)) $(id).value = ""; }); }
   toast(ok ? `account ${r.slug} added` : (r && r.error || "add failed"), !ok);
-  renderAccounts(await get("/api/accounts"));
+  renderAccounts(await getAuthed("/api/accounts"));
   if (ok){ delete _ACCT_STATE[r.slug]; viewAccount(r.slug); populateAccountSwitcher(); }  // auto-check + add to switcher
 }
 
@@ -2354,7 +2367,7 @@ async function viewAccount(slug){
   const paint = (st) => { _ACCT_STATE[slug] = st; const cell = $("acs-"+slug);
     if (cell){ cell.textContent = st.text; cell.style.color = st.color; cell.title = st.title || ""; } };
   paint({ text: "checking…", color: "var(--muted)" });
-  const s = await get(`/api/accounts/${encodeURIComponent(slug)}/state`);
+  const s = await getAuthed(`/api/accounts/${encodeURIComponent(slug)}/state`);
   if (s && s.ok){
     paint({ text: `${usd(s.equity)} · ${s.positions}p · ${s.open_orders}o`, color: "var(--green)",
             title: `equity ${usd(s.equity)} · ${s.positions} positions · ${s.open_orders} open orders` });
@@ -2373,7 +2386,7 @@ async function removeAccount(slug){
   delete _ACCT_STATE[slug];
   if (SELECTED_ACCOUNT === slug) onAccountSwitch("primary");   // was viewing it → fall back to primary
   toast(`account ${slug} removed`);
-  renderAccounts(await get("/api/accounts"));
+  renderAccounts(await getAuthed("/api/accounts"));
   populateAccountSwitcher();
 }
 

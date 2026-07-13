@@ -501,7 +501,8 @@ def test_accounts_add_is_token_gated_then_stores_masked(monkeypatch):
     assert out["added"] is True and out["key_fingerprint"] == "PKL…ZZZZ"
     assert "api_secret" not in out and "api_key" not in out       # no secret echoed
 
-    accts = lst()
+    assert lst(x_exec_token="nope")[0].get("unauthorized") is True    # roster is token-gated too
+    accts = lst(x_exec_token="sekrit")
     assert len(accts) == 1 and accts[0]["slug"] == "trend"
     assert accts[0]["label"] == "Trend" and accts[0]["capital"] == 250000
     assert "api_secret" not in accts[0] and "api_key" not in accts[0]
@@ -520,7 +521,7 @@ def test_accounts_add_validates_and_remove(monkeypatch):
     assert "error" in add(body={"slug": "", "api_key": "k", "api_secret": "s"}, x_exec_token="sekrit")
     add(body={"slug": "a", "api_key": "PKAAAA1111", "api_secret": "s"}, x_exec_token="sekrit")
     assert rm(body={"slug": "a"}, x_exec_token="sekrit") == {"removed": True}
-    assert _route(app, "/api/accounts")() == []
+    assert _route(app, "/api/accounts")(x_exec_token="sekrit") == []
 
 
 def test_accounts_routes_registered():

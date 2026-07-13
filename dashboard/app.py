@@ -1112,8 +1112,13 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
     # never logs or echoes the key/secret — only a masked fingerprint surfaces.
     # ------------------------------------------------------------------ #
     @app.get("/api/accounts")
-    def accounts_list() -> list:
-        """Registered accounts as non-secret metadata (slug, label, masked fingerprint, …)."""
+    def accounts_list(x_exec_token: str | None = Header(default=None)) -> list:
+        """Registered accounts as non-secret metadata (slug, label, masked fingerprint, …).
+        TOKEN-GATED: the dashboard is publicly viewable, but the account roster exposes partial
+        API-key fingerprints + paper/live per sleeve — account management is operator-only."""
+        err = _exec_gate(x_exec_token)
+        if err:
+            return [err]
         from engine import credstore
         try:
             return credstore.list_accounts(db_engine)
@@ -1150,9 +1155,14 @@ def create_app(db_engine=None, *, env: str = "paper", settings=None, client=None
         return {"removed": credstore.remove_account(db_engine, str(body.get("slug", "")))}
 
     @app.get("/api/accounts/{slug}/state")
-    def accounts_state(slug: str) -> dict:
+    def accounts_state(slug: str, x_exec_token: str | None = Header(default=None)) -> dict:
         """Read-only snapshot of one account (NAV / #positions / #open orders) by building a
-        throwaway client from its stored creds. Never returns credentials."""
+        throwaway client from its stored creds. Never returns credentials. TOKEN-GATED: it decrypts
+        the sleeve's creds and makes live Alpaca calls with them, so on a public dashboard it must
+        not be anonymously reachable (per-sleeve balances + real-key call amplification)."""
+        err = _exec_gate(x_exec_token)
+        if err:
+            return err
         if client is None:
             return {"error": "dashboard is Postgres-only (no broker client)"}
         from engine import credstore

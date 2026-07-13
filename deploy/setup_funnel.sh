@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Expose the dashboard publicly behind a password: Caddy basic-auth proxy + Tailscale Funnel.
-# Run ON THE VM. Installs Caddy + Tailscale, prompts for a password, configures the auth proxy.
+# Expose the dashboard publicly: a compressing Caddy reverse proxy + Tailscale Funnel. The dashboard
+# is openly VIEWABLE (no login) — execution/account management is gated inside the app by
+# SEPI_EXEC_TOKEN, not here. Run ON THE VM. Installs Caddy + Tailscale, installs the proxy config.
 # The two interactive Tailscale steps (account login + enabling Funnel) are printed at the end.
 #
 #   bash deploy/setup_funnel.sh
@@ -14,17 +15,15 @@ curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo 
 sudo apt-get update && sudo apt-get install -y caddy
 command -v tailscale >/dev/null 2>&1 || curl -fsSL https://tailscale.com/install.sh | sh
 
-echo "== configuring the password gate (user: viewer) =="
-read -rs -p "Pick a dashboard password: " DPW; echo
-HASH="$(caddy hash-password --plaintext "$DPW")"
-sed "s|__BCRYPT_HASH__|$HASH|" "$APP_DIR/deploy/Caddyfile" | sudo tee /etc/caddy/Caddyfile >/dev/null
+echo "== configuring the reverse proxy (public, no view password) =="
+sudo tee /etc/caddy/Caddyfile < "$APP_DIR/deploy/Caddyfile" >/dev/null
 sudo systemctl restart caddy && sleep 1
-echo -n "  auth check (expect 401 then 200): "
-echo "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/api/meta) / $(curl -s -o /dev/null -w '%{http_code}' -u "viewer:$DPW" localhost:8080/api/meta)"
+echo -n "  proxy check (expect 200): "
+echo "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/api/meta)"
 
 cat <<'NEXT'
 
-== Caddy is gating the dashboard on :8080. Two interactive Tailscale steps remain: ==
+== Caddy is proxying the dashboard on :8080. Two interactive Tailscale steps remain: ==
   1. sudo tailscale up            # opens a browser link; sign into a (free) Tailscale account
   2. sudo tailscale funnel --bg 8080
      # if it says Funnel/HTTPS isn't enabled, open the link it prints + enable HTTPS certs at

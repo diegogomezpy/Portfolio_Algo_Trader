@@ -29,10 +29,6 @@ ALPACA_BASE_URL=https://paper-api.alpaca.markets
 ALPACA_DATA_URL=https://data.alpaca.markets
 DATABASE_URL=postgresql:///sharpe_engine
 SMTP_PASSWORD=$(get smtp-password)
-# Optional — the Caddy basic-auth password, included in alert emails as the dashboard login.
-# Absent secret ⇒ empty ⇒ emails just omit the password. Set it with:
-#   printf %s '<caddy password>' | gcloud secrets create dashboard-password --data-file=- --replication-policy=automatic
-DASHBOARD_PASSWORD=$(get dashboard-password 2>/dev/null || true)
 EOF
 chmod 600 "$ENV_FILE"
 echo "wrote $ENV_FILE (mode 600) from Secret Manager [project=$PROJECT]"

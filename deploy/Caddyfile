@@ -1,17 +1,13 @@
-# Caddy reverse proxy that puts HTTP Basic Auth in front of the (auth-less) dashboard so it can
-# be safely exposed to the public internet via `tailscale funnel 8080`. Tailscale Funnel
-# terminates TLS and forwards to this local :8080; Caddy adds the password gate and proxies to
-# the dashboard on :8000.
-#
-# Replace __BCRYPT_HASH__ with the output of:  caddy hash-password --plaintext '<password>'
-# (deploy/setup_funnel.sh does this for you.) Viewers log in as user "viewer".
+# Caddy reverse proxy in front of the dashboard. The dashboard is PUBLICLY VIEWABLE (no login) —
+# Tailscale Funnel terminates TLS and forwards to this local :8080, which compresses + caches and
+# proxies to the dashboard on :8000. There is deliberately NO view password: anyone with the link
+# can read the fund's live book. EXECUTION and account management are gated separately, inside the
+# app, by the SEPI_EXEC_TOKEN (`X-Exec-Token` header) — removing this proxy's auth never weakened
+# that. (deploy/setup_funnel.sh installs this file verbatim.)
 :8080 {
 	# Compress everything ≥ ~1KB (audit W4): the dashboard shipped 185KB of raw HTML per load
 	# before this. zstd preferred, gzip fallback.
 	encode zstd gzip
-	basic_auth {
-		viewer __BCRYPT_HASH__
-	}
 	# Static assets are cache-busted with ?v=N query params, so long client caching is safe.
 	@static path /static/*
 	header @static Cache-Control "public, max-age=604800"

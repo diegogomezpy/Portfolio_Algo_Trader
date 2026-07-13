@@ -200,29 +200,31 @@ so it's never exposed publicly. Two ways in:
   `gcloud compute start-iap-tunnel "$VM" 8000 --local-host-port=localhost:8000 --zone="$ZONE"`
   (grant yourself `roles/iap.tunnelResourceAccessor`; no SSH key juggling).
 
-Do **not** open port 8000 to `0.0.0.0` — the app has no login. To share it, use the password +
-Funnel setup below rather than exposing the port directly.
+To share the dashboard, use the Funnel setup below rather than opening port 8000 to `0.0.0.0`
+directly. The dashboard is publicly **viewable** with no login — but every state-changing action
+(trades, account add/remove, strategy save/run) and the account-management reads stay gated inside
+the app by `SEPI_EXEC_TOKEN` (the `X-Exec-Token` header), independent of the proxy.
 
-### Share it publicly (Tailscale Funnel + password)
+### Share it publicly (Tailscale Funnel)
 
-> **Live deployment:** **https://sharpe-engine.tailc7136e.ts.net** — log in as user `viewer`
-> with the password set during `setup_funnel.sh` (Tailscale node IP `100.91.143.85`). Keep
-> Tailscale key-expiry disabled on the node or the URL lapses (~180 days default).
+> **Live deployment:** **https://sharpe-engine.tailc7136e.ts.net** — openly viewable, no login
+> (Tailscale node IP `100.91.143.85`). Keep Tailscale key-expiry disabled on the node or the URL
+> lapses (~180 days default).
 
 A free, stable, HTTPS public URL with no domain required — `https://<host>.<tailnet>.ts.net` —
-with a password gate (Caddy basic auth) in front of the auth-less dashboard. Run on the VM:
+via a compressing Caddy reverse proxy in front of the dashboard. Run on the VM:
 
 ```bash
-cd ~/Portfolio_Algo_Trader && bash deploy/setup_funnel.sh   # installs Caddy+Tailscale, sets the password
+cd ~/Portfolio_Algo_Trader && bash deploy/setup_funnel.sh   # installs Caddy+Tailscale, configures the proxy
 sudo tailscale up                                            # sign into a free Tailscale account (browser link)
 sudo tailscale funnel --bg 8080                              # enable Funnel/HTTPS if it prompts, then re-run
 tailscale funnel status                                      # prints your public URL
 ```
 
-Chain: `Funnel (public HTTPS) → Caddy :8080 (basic auth, user "viewer") → dashboard :8000`. Share the
-URL + the password; viewers need no Tailscale account. **In the Tailscale admin, disable key expiry on
-this machine** so the URL doesn't lapse (~180 days default). To take it offline:
-`sudo tailscale funnel --https=443 off`. To rotate the password, re-run `setup_funnel.sh`.
+Chain: `Funnel (public HTTPS) → Caddy :8080 (compress/cache, no auth) → dashboard :8000`. Share the
+URL — anyone with the link can view the fund; no Tailscale account needed. Execution still requires
+the exec token. **In the Tailscale admin, disable key expiry on this machine** so the URL doesn't
+lapse (~180 days default). To take it offline: `sudo tailscale funnel --https=443 off`.
 
 ## Ongoing operations
 
