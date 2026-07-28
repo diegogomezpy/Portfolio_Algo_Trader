@@ -75,3 +75,45 @@ pass (steady state is ~1 file/day), and a regression test locks both properties.
 **Still open (deliberate):** backtest still models per-name calls (SPY-spread validation
 pending); consolidated price-panel parquet; EDGAR quarterly refetch scoped to the liquid
 universe; delta-aware overwrite sizing option; IV-regime coverage modulation.
+
+---
+
+## 2026-07-10 — Reconcile MLEG combo hotfix (post-trade blotter crash)
+
+Commit `17a63e2`. 610 tests.
+
+**Bug fixed:**
+- **B8** The 2026-07-09 monthly rebalance **traded** (equities + the SPY overwrite spread both
+  filled), then "failed to complete": `reconcile_orders` — the post-trade blotter sync — tried to
+  INSERT the spread's Alpaca order into `orders`, but a multi-leg (MLEG) combo comes back from Alpaca
+  as a **parent with `symbol=None`** (only its legs carry symbols). `orders.symbol` is `NOT NULL`, so
+  the insert raised `NotNullViolation`; unguarded, it aborted the whole cycle *after* it had already
+  traded — and recurred on every retry. Three-layer fix: `_upsert_order_status` skips a new order with
+  no symbol (a combo is already in `options_lifecycle` + the premium ledger; the equity blotter can't
+  represent it); `reconcile_orders` now guards each row (one malformed row is logged + skipped, never
+  crashes the sync); and `run_eod` wraps both `reconcile_orders` calls so nothing post-trade can abort
+  a cycle that already traded. Single-leg option orders (real OCC symbol) still insert. No data repair
+  needed — the spread's premium journaled correctly (`covered_calls` uses `abs(px)`); only the
+  equity-blotter combo row + the completion alert were lost.
+
+---
+
+## 2026-07-13 — Public-dashboard adversarial security audit (D38)
+
+Alongside D38 (commit `d8f69e9`): the repo went public and the dashboard is now open to view, with
+only mutation + credential access behind `SEPI_EXEC_TOKEN`. An adversarial audit (route-gating map,
+bypass hunt, auth blast-radius, doc fact-inventory) confirmed no anonymous visitor can mutate state,
+read a secret, or read arbitrary files — the view and operate surfaces are independent.
+
+- **S1** The audit found `GET /api/accounts` and `GET /api/accounts/{slug}/state` on the wrong side of
+  the view/operate line: they are *reads*, but the roster exposes partial API-key fingerprints +
+  paper/live per sleeve, and `/state` decrypts a sleeve's stored creds and makes live **real-key**
+  Alpaca calls. Both were moved behind `_exec_gate` (same `SEPI_EXEC_TOKEN`, `X-Exec-Token` header,
+  constant-time `hmac.compare_digest`, fails closed when unset), joining the already-gated mutations
+  (`/api/exec/*`, `/api/accounts/add|remove`, `/api/strategy/save|run`). They belong with "operate",
+  not "view".
+
+**Still open (accepted):** with the Caddy view-password gone the entire *read* surface is
+unauthenticated and un-rate-limited, so anonymous cache-miss GETs can drive repeated Alpaca/yfinance
+fetches on the operator's data keys. Acceptable for a paper showcase; add a reverse-proxy rate limit
+before go-live. See D38.

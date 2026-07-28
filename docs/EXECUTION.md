@@ -32,6 +32,7 @@ Every fill is judged by **implementation shortfall** against a spread-guarded **
 | Orchestration + cross-day retry | `scripts/run_eod.py` (`run_cycle`, `daily_job`, `work_pending_adjustments`) |
 | Position/order reconciliation | `engine/reconcile.py` (`reconcile`, `reconcile_orders`) |
 | Slippage measurement | `dashboard/data.py` (`arrival_reference`, `_slippage_core`), `dashboard/app.py` (`_arrival_mid`) |
+| Per-account (non-primary) execution | `engine/account_runner.py` (`run_strategy_on_account`) — testbed sleeves (§10.2) |
 
 ---
 
@@ -194,6 +195,14 @@ refuse (without `force`) while another execution looks in-flight — a `manual_a
   (after the close, or before 13:00 ET). Verify with a live `get_orders(status="open")` == 0 first.
 - **Reconciliation:** `reconcile` corrects DB positions to Alpaca (Alpaca is truth); `reconcile_orders`
   syncs the `orders` table to Alpaca's current order statuses each cycle/day (blotter parity).
+- **Multi-leg blotter guard (2026-07-10):** the SPY-overwrite spread (§9) comes back from Alpaca as a
+  **multi-leg (MLEG) parent with `symbol=None`** — only its legs carry symbols — but `orders.symbol` is
+  `NOT NULL`. `_upsert_order_status` **skips a new order with no symbol** (the combo is already in
+  `options_lifecycle` + the premium ledger; the equity blotter can't represent it — single-leg option
+  orders carry a real OCC symbol and still insert). `reconcile_orders` also **row-guards each upsert**
+  (one malformed row is logged + skipped, never crashing the sync), and `run_eod` **wraps both
+  `reconcile_orders` calls** so a post-trade blotter failure can never abort a cycle that has already
+  traded (`17a63e2`).
 
 ---
 
@@ -204,6 +213,29 @@ less on a sell), reported in bps of the reference and in dollars, notional-weigh
 is the spread-guarded arrival price at submit (§6), reconstructed on the dashboard from historical
 NBBO + the nearest trade. Benchmarking against our own marketable limit is wrong — it's padded to
 the touch, so a fill inside it looks like a fake "gain" (this produced INBX's bogus −\$1,470).
+
+---
+
+## 10.2 Per-account (non-primary) execution
+
+The primary book trades through `run_cycle`. A **tracked sleeve / testbed** strategy instead trades a
+*non-primary* account through `engine/account_runner.py` (`run_strategy_on_account`), which mirrors
+`run_cycle`'s size → risk-gate → plan → execute → snapshot on the same proven executor
+(`plan_orders` / `submit_and_track` / `submit_express`), with deliberate isolation:
+
+- **Its own client + broker, built from `credstore`** — every order physically routes to *that* Alpaca
+  account and can never touch the primary book; the runner refuses the primary account outright.
+- **Effective settings per spec.** A `ConfigStrategy` carries parameter overrides; the runner applies
+  `config_strategy.effective_settings(settings, spec)`, mapping the spec's caps / leverage / factor
+  windows / universe filters onto the same leaves **both** the optimizer and the pre-trade risk gate
+  read — so a builder-chosen 8% name cap or a different leverage isn't vetoed by the global 5% / 2×
+  defaults on that sleeve.
+- **No `reconcile`.** `reconcile` is single-account and writes shared position state, so the sleeve
+  runs none; it is engine-sole-traded on its own isolated account. The snapshot and `cycle_key` are
+  account-namespaced (`acct:<slug>:<date>`).
+
+Equity-only for now (per-account overlay execution is a later piece). See **[PLATFORM.md](PLATFORM.md)**
+(ADR-001 / D37) for the full strategy-studio reference.
 
 ---
 
@@ -245,6 +277,7 @@ ADV tier; it should stay consistent with the live tiers above.
 | Transient poll/read hiccup | Order left open, re-polled; reconcile corrects from Alpaca |
 | Console action during a rebalance chase | Refused without `force` (in-flight guard) |
 | Alpaca unreachable | `reconcile` blocks the pipeline (no trading on stale state) |
+| Post-trade order-reconcile row malformed (MLEG combo, `symbol`=None) | Logged + skipped (row-guard); `run_eod` wraps the call so the already-traded cycle still completes (§10) |
 
 ---
 
@@ -267,6 +300,9 @@ ADV tier; it should stay consistent with the live tiers above.
   the NYSE cutoff + auction verify rows (§8); option patience ladder + SPY-spread net-credit
   chase (§9); session-aware express with collar + extended-hours legs; console/rebalance
   in-flight guard (§9).
+- **2026-07-10 MLEG blotter guard** (`17a63e2`): a multi-leg overwrite combo returns as a parent with
+  `symbol=None`; `_upsert_order_status` skips it, `reconcile_orders` row-guards each row, and `run_eod`
+  wraps both calls so a post-trade blotter failure can't abort an already-traded cycle (§10, §12).
 
 Deploys touch the live trading path + start the feed thread — restart only in a no-open-orders
 window (§10), verifying `get_orders(status="open") == 0` first (`update.sh` now lists the

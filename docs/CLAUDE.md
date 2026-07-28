@@ -60,7 +60,13 @@ sharpe-engine/
 │   ├── execute.py             ← order routing + execution (Phase 3 ✅)
 │   ├── risk.py                ← pre-trade risk gate (Phase 3 ✅)
 │   ├── monitor.py             ← NAV tracking + drift telemetry (Phase 3 ✅)
-│   └── alerts.py              ← DB-recorded, dry-run-capable email alerts (Phase 5 ✅)
+│   ├── alerts.py              ← DB-recorded, dry-run-capable email alerts (Phase 5 ✅)
+│   ├── signals.py             ← composable signal library: z-scored traits + raw fields (D37)
+│   ├── formula.py             ← sandboxed AST formula engine over the signal vocabulary (D37)
+│   ├── config_strategy.py     ← StrategySpec → runnable strategy (spec-as-data + settings overlay) (D37)
+│   ├── account_runner.py      ← run a strategy on ONE non-primary, isolated account (D37)
+│   ├── specstore.py           ← per-account StrategySpec persistence (strategy_specs table) (D37)
+│   └── scheduler.py           ← autonomous per-account rebalance scheduler (auto_enabled sleeves) (D37)
 ├── dashboard/                 ← live dashboard (Phase 5 ✅)
 │   ├── app.py                 ← FastAPI backend (Postgres reads + self-updating monitor/live-orders layer)
 │   ├── data.py                ← dashboard read queries
@@ -81,6 +87,22 @@ sharpe-engine/
 │   └── settings.yaml          ← all tuneable parameters
 └── requirements.txt
 ```
+
+---
+
+## Strategy studio / multi-account platform
+
+Beyond the fixed `low_beta_overwrite` book, the engine is also a small **platform** for building
+systematic strategies as *data*: pick signals (or write a sandboxed formula), set the
+construction/risk knobs on a `StrategySpec`, and run it on its own isolated Alpaca account. The
+primary book is untouched — every builder path is isolated to non-primary accounts, and the live
+factor signals are parity-tested byte-for-byte against `engine.factors`. Full reference:
+**[docs/PLATFORM.md](PLATFORM.md)**; the decision is **D37** /
+**[ADR-001](adr/ADR-001-multi-strategy-platform.md)**.
+
+The dashboard is now **publicly viewable** (open read surface); all execution *and* account-management
+endpoints stay gated by `SEPI_EXEC_TOKEN` (`X-Exec-Token`, constant-time compare, fails closed when
+unset) — see **D38**.
 
 ---
 

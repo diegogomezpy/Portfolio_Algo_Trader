@@ -7,6 +7,9 @@ active and never build ahead of it.
 **Active phase: 3–5** (execution engine, covered-call overlay, and dashboard/alerting are
 all code-complete and tested; the one remaining gate across them is live-paper verification
 by Diego). Phases 0–2b are ✅. Status legend: ✅ done · 🔄 in progress · ⬜ not started.
+The multi-strategy **platform / strategy studio** (Phase P, ADR-001 / D37) shipped on top of Phase 5
+as an orthogonal track — it runs only on non-primary accounts and does not gate the numbered go-live
+roadmap (Phases 6–8).
 
 ---
 
@@ -24,6 +27,7 @@ by Diego). Phases 0–2b are ✅. Status legend: ✅ done · 🔄 in progress ·
 | 6 | Crypto allocation | Crypto positions added to paper portfolio | ⬜ |
 | 7 | Go-live | User-defined gate criteria met | ⬜ |
 | 8 | Leverage (TBD) | Live track record validated, firm approval | ⬜ |
+| P | Multi-strategy platform + strategy studio (ADR-001 / D37) | Pluggable strategies + config/formula strategy builder, isolated per-account, autonomous scheduler | ✅ (orthogonal track, built + deployed 2026-07-13) |
 
 ---
 
@@ -530,6 +534,67 @@ changes between paper and live. This is by design.
 2. Add margin utilization check to risk gate
 3. Add margin cost (interest rate × borrowed amount) to P&L attribution
 4. Update dashboard to show gross vs net exposure
+
+---
+
+## Phase P — Multi-strategy platform + strategy studio
+
+**Goal:** Turn the single fixed book into a small platform for building systematic strategies
+*as data* — a signal/formula vocabulary, declarative config strategies, isolated per-account
+execution, persistence, and an autonomous scheduler — with the primary `low_beta_overwrite` book
+left untouched. Full design in [PLATFORM.md](PLATFORM.md) and
+[ADR-001](adr/ADR-001-multi-strategy-platform.md) (D37/D38); this section is the build record only.
+
+**Status (2026-07-13):** ✅ Built + deployed (ADR-001, all four phases; D37). An orthogonal track that
+sits on top of Phase 5 — it runs only on non-primary accounts and does not gate Phases 6–8.
+
+**Build:**
+
+1. ✅ `engine/strategy.py` — `Strategy` protocol + `TargetBook`/`StrategyContext` + self-registering
+   registry; the live book refactored (not rewritten) into
+   `engine/strategies/low_beta_overwrite.py` as the first plugin, `run_cycle` driving off it, the SPY
+   overwrite routed through `TargetBook.overlay` (ADR-001 Phase A).
+2. ✅ Account-per-strategy plumbing: account-tagged snapshots + a per-account monitor loop
+   (`PRIMARY_ACCOUNT="primary"` in `engine/monitor.py`), a header account switcher, and a
+   Fernet-encrypted per-account credential store (`engine/credstore.py`) — accounts added/managed from
+   the dashboard with no VM step (ADR-001 Phase B/C; the Secret-Manager plan was superseded by Fernet
+   Postgres, to migrate before go-live — D37 as-built note).
+3. ✅ `engine/signals.py` — composable signal library: 9 z-scored signals (`quality`, `value`,
+   `low_beta`, `low_vol`, `roe`, `gross_margin`, `earnings_yield`, `book_yield`, `momentum`; the first
+   four parity-tested byte-identical to `engine.factors`) plus a disjoint `raw_*` field vocabulary;
+   `compose()` blends the selection exactly as `factors.compute_factor_scores`.
+4. ✅ `engine/formula.py` — sandboxed formula engine: an `ast.parse(mode="eval")` allow-list walker
+   (**not** `eval`), arithmetic + a single comparison + `z/rank/winsor/clip/where/log/…` over the
+   vocabulary, everything else raising `FormulaError`; `validate` / `referenced_names` /
+   `function_specs` back the editor.
+5. ✅ `engine/config_strategy.py` — declarative `StrategySpec` (a `signals` blend *or* a `formula`,
+   formula taking precedence, plus construction/overlay/operational knobs) + `ConfigStrategy` (an
+   on-the-fly `Strategy`) + `construct_weights` (cap-respecting top-N that holds cash rather than
+   renormalizing past `max_weight`) + `effective_settings`, which overlays the spec's
+   caps/leverage/windows onto the same leaves the optimizer AND the pre-trade risk gate read (never for
+   the primary book).
+6. ✅ `engine/account_runner.py` — isolated per-account executor: `run_strategy_on_account` mirrors
+   `run_cycle`'s size → risk-gate → plan → execute → snapshot on one non-primary account (its own
+   client/broker from `credstore`), skips reconcile, refuses `PRIMARY_ACCOUNT`, applies the spec's
+   `effective_settings`, and supports `dry_run` (the builder preview, no orders submitted).
+7. ✅ Persistence — `engine/specstore.py` over the `strategy_specs` table (`engine/db.py`): one active
+   spec per account, `auto_enabled` defaulting false, `last_run` as the scheduler idempotency lease,
+   created on demand via `create(checkfirst=True)` (no VM migration). No secrets stored here.
+8. ✅ Dashboard **Builder** tab (FB1–FB5): builder its own tab + live primary-book config card (FB1),
+   raw-field vocabulary + sandboxed formula editor (FB2/FB3), full parameter surface + per-spec
+   settings overlay + expanded studio (FB4), autonomous scheduler + manual "Run now" (FB5). Endpoints
+   `GET /api/signals`, `/api/formula/vocab`, `POST /api/strategy/{preview,save,run}` — public read
+   surface, execution/account endpoints gated by `SEPI_EXEC_TOKEN` (D38).
+9. ✅ `engine/scheduler.py` — autonomous per-account scheduler: `run_scheduled` (called each dashboard
+   monitor pass) trades every due, `auto_enabled` sleeve once per period (`is_due`:
+   daily/weekly/monthly), waits for the `rebalance_hour_et` mid-session window, skips if the market
+   clock can't confirm open, refuses the primary book, and stamps `mark_run` only after a run returns
+   (a transient failure retries next pass).
+
+**Gate:** Built + deployed 2026-07-13 (ADR-001). The primary book stays on `run_eod` and is held to
+parity; every builder path is isolated to non-primary accounts and fails closed without
+`SEPI_EXEC_TOKEN`. See PLATFORM.md for the composition vocabulary, formula grammar, security model, and
+full API surface.
 
 ---
 

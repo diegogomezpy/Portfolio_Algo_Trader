@@ -182,6 +182,47 @@ mid-month, or to skip waiting for the catch-up), run a one-shot during market ho
 
 ---
 
+## `scripts/run_config_strategy.py` — run a config strategy on a non-primary account
+
+The command-line sibling of the dashboard Builder's **Run now** button: authors a `StrategySpec` from
+the flags below, wraps it in a `ConfigStrategy`, and trades it on **one non-primary account** via
+`engine.account_runner.run_strategy_on_account`. That account gets its **own** Alpaca client + broker
+built from its stored credentials (the credstore), so every order routes only to *that* account and
+the primary book is never touched — the runner **refuses `--account primary`** (the primary book keeps
+trading through `run_eod`). It mirrors the live cycle (size → risk gate → plan → execute → snapshot)
+but runs **no `reconcile`** and namespaces its snapshot `cycle_key` as `acct:<slug>:<date>`. Start with
+`--dry-run` to print the sized order plan and submit nothing. Trades that account's own (paper) Alpaca
+account, operator-triggered, one account at a time — the config-strategy platform layer (ADR-001 / D37;
+see `PLATFORM.md`).
+
+```bash
+# Preview the sized plan for the 'trend' test account — submits NOTHING
+./.venv/bin/python scripts/run_config_strategy.py --env paper --account trend \
+    --signals low_vol=0.5,low_beta=0.5 --max-names 15 --leverage 1.0 --dry-run
+
+# Same spec, live-fire: places orders on THAT account only
+./.venv/bin/python scripts/run_config_strategy.py --env paper --account trend \
+    --signals low_vol=0.5,low_beta=0.5 --max-names 15 --leverage 1.0
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--env {paper,live}` | — | **Required.** Secrets file to load. |
+| `--account SLUG` | — | **Required.** credstore account slug to trade — **never `primary`** (refused; the primary book trades via `run_eod`). |
+| `--signals CSV` | — | **Required.** Comma list of `name=weight` from the 9-signal library (`quality`, `value`, `low_beta`, `low_vol`, `roe`, `gross_margin`, `earnings_yield`, `book_yield`, `momentum`), e.g. `low_vol=0.5,low_beta=0.5`. Full vocabulary + the formula alternative: `PLATFORM.md`. |
+| `--name NAME` | `cfg-<account>` | Strategy name recorded on the run. |
+| `--max-names N` | `20` | Max number of names held. |
+| `--max-weight W` | `0.05` | Per-name weight cap (fraction of the deployable base). |
+| `--leverage L` | `1.0` | Leverage applied at sizing (`nav = equity × leverage`). |
+| `--min-score S` | `0.0` | Hold only names scoring above this (long-only). |
+| `--construction {optimizer,topn}` | `optimizer` | `optimizer` respects the sector/name caps (tradeable); `topn` is a simple score-weighted top-N. |
+| `--mode {normal,express}` | `normal` | Execution mode passed to the runner. |
+| `--dry-run` | off | Print the sized order plan and submit nothing (the safe preview). |
+
+Prints the run summary — or, with `--dry-run`, the sized order plan — as JSON to stdout.
+
+---
+
 ## `scripts/killswitch.py` — emergency halt / flatten
 
 One auditable command for emergencies (instead of juggling `systemctl` flags). Both actions
